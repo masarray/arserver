@@ -43,20 +43,21 @@
             </StackPanel>
         </Grid>
 
-        <!-- Three-product-zone navigation: Explorer, Modbus, Diagnostics. -->
+        <!-- Gateway navigation: Explorer, Modbus, MQTT, Diagnostics. -->
         <Grid Grid.Row="1" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <Border x:Name="WorkflowNavShell" Width="620" Height="42" HorizontalAlignment="Left" Background="#E7ECF5" CornerRadius="21" Padding="4" Effect="{StaticResource SoftShadow}">
+            <Border x:Name="WorkflowNavShell" Width="760" Height="42" HorizontalAlignment="Left" Background="#E7ECF5" CornerRadius="21" Padding="4" Effect="{StaticResource SoftShadow}">
                 <Grid x:Name="WorkflowNavGrid" ClipToBounds="True">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <Border x:Name="WorkflowPill" Grid.ColumnSpan="3" Width="198" Height="34" HorizontalAlignment="Left" VerticalAlignment="Center" CornerRadius="17" Background="{StaticResource Accent}" RenderTransformOrigin="0.5,0.5">
+                    <Border x:Name="WorkflowPill" Grid.ColumnSpan="4" Width="182" Height="34" HorizontalAlignment="Left" VerticalAlignment="Center" CornerRadius="17" Background="{StaticResource Accent}" RenderTransformOrigin="0.5,0.5">
                         <Border.RenderTransform>
                             <TransformGroup>
                                 <ScaleTransform x:Name="WorkflowPillScale" ScaleX="1" ScaleY="1"/>
@@ -69,7 +70,8 @@
                     </Border>
                     <Button x:Name="NavConnectButton" Grid.Column="0" Content="IEC 61850 Explorer" Tag="0" Click="NavButton_Click" Style="{StaticResource SegmentedNavButton}"/>
                     <Button x:Name="NavRuntimeButton" Grid.Column="1" Content="Modbus Server" Tag="1" Click="NavButton_Click" Style="{StaticResource SegmentedNavButton}"/>
-                    <Button x:Name="NavDiagnosticsButton" Grid.Column="2" Content="Diagnostics" Tag="2" Click="NavButton_Click" Style="{StaticResource SegmentedNavButton}"/>
+                    <Button x:Name="NavMqttButton" Grid.Column="2" Content="MQTT Topics" Tag="2" Click="NavButton_Click" Style="{StaticResource SegmentedNavButton}"/>
+                    <Button x:Name="NavDiagnosticsButton" Grid.Column="3" Content="Diagnostics" Tag="3" Click="NavButton_Click" Style="{StaticResource SegmentedNavButton}"/>
                 </Grid>
             </Border>
             <WrapPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center">
@@ -308,17 +310,7 @@
                             </WrapPanel>
                             <WrapPanel Margin="0,10,0,0" VerticalAlignment="Center">
                                 <CheckBox Content="Modbus TCP" IsChecked="{Binding EnableModbusTcp, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center" Margin="0,0,18,0"/>
-                                <CheckBox Content="MQTT" IsChecked="{Binding MqttSettings.IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center" Margin="0,0,14,0"/>
-                                <TextBlock Text="Broker" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <TextBox Text="{Binding MqttSettings.BrokerHost, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="128" MinHeight="30" Padding="9,5" IsEnabled="{Binding IsProjectEditable}" Margin="0,0,8,0"/>
-                                <TextBlock Text="Port" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <TextBox Text="{Binding MqttSettings.BrokerPort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="64" MinHeight="30" Padding="9,5" IsEnabled="{Binding IsProjectEditable}" Margin="0,0,8,0"/>
-                                <TextBlock Text="Root" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <TextBox Text="{Binding MqttSettings.TopicRoot, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="112" MinHeight="30" Padding="9,5" IsEnabled="{Binding IsProjectEditable}" Margin="0,0,8,0"/>
-                                <TextBlock Text="QoS" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <TextBox Text="{Binding MqttSettings.QualityOfService, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="42" MinHeight="30" Padding="9,5" IsEnabled="{Binding IsProjectEditable}" Margin="0,0,10,0"/>
-                                <CheckBox Content="Retain last value" IsChecked="{Binding MqttSettings.RetainLastValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                                <CheckBox Content="JSON state" IsChecked="{Binding MqttSettings.PublishJsonState, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center"/>
+                                <TextBlock Text="Modbus publishes only rows checked in the Modbus column. MQTT routing is managed in the MQTT Topics tab." Style="{StaticResource Caption}" VerticalAlignment="Center"/>
                             </WrapPanel>
                         </StackPanel>
                     </Border>
@@ -339,7 +331,7 @@
                             </Grid>
                             <DataGrid ItemsSource="{Binding PublishedModbusBindings}" SelectedItem="{Binding SelectedBinding, Mode=TwoWay}" Style="{StaticResource ModernDataGrid}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ToolTip="Select a row and press Ctrl+C to copy it for debugging.">
                                 <DataGrid.Columns>
-                                    <DataGridCheckBoxColumn Header="On" Binding="{Binding IsEnabled, UpdateSourceTrigger=PropertyChanged}" Width="42*" MinWidth="40"/>
+                                    <DataGridCheckBoxColumn Header="Modbus" Binding="{Binding PublishToModbus, UpdateSourceTrigger=PropertyChanged}" Width="58*" MinWidth="56"/>
                                     <DataGridTextColumn Header="IED" Binding="{Binding IedName}" Width="115*" MinWidth="96" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="Signal" Binding="{Binding SignalName, UpdateSourceTrigger=PropertyChanged}" Width="165*" MinWidth="150"/>
                                     <DataGridTextColumn Header="Value" Binding="{Binding CurrentValue}" Width="85*" MinWidth="76" IsReadOnly="True"/>
@@ -371,6 +363,97 @@
                             </DataGrid>
                         </Border>
                     </Expander>
+                </Grid>
+            </TabItem>
+
+            <!-- MQTT TOPICS -->
+            <TabItem Header="MQTT Topics">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="14" Margin="0,0,0,10">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Row="0" Grid.Column="0">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Border Width="28" Height="28" CornerRadius="14" Background="#ECFDF5" BorderBrush="#BBF7D0" BorderThickness="1" Margin="0,0,10,0">
+                                        <TextBlock Text="MQ" Foreground="#047857" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel>
+                                        <TextBlock Text="MQTT Publisher" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                        <TextBlock Text="Route IEC 61850 signals into broker topics independently from the Modbus map." FontSize="12.4" Foreground="{StaticResource Muted}" Margin="0,2,0,0"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <WrapPanel Grid.Row="0" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Border Background="#F8FAFC" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="15" Padding="10,6" Margin="0,0,8,0">
+                                    <TextBlock Text="{Binding MqttEndpointText}" FontSize="12.5" Foreground="{StaticResource Ink}"/>
+                                </Border>
+                                <Border Background="#F8FAFC" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="15" Padding="10,6">
+                                    <TextBlock Text="{Binding MqttTrafficText}" FontSize="12.5" Foreground="{StaticResource Ink}"/>
+                                </Border>
+                            </WrapPanel>
+
+                            <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,14,0,0" VerticalAlignment="Center">
+                                <CheckBox Content="Enable MQTT" IsChecked="{Binding MqttSettings.IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                                <TextBlock Text="Broker" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Text="{Binding MqttSettings.BrokerHost, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="150" MinHeight="30" Padding="9,5" IsEnabled="{Binding IsProjectEditable}" Margin="0,0,10,0"/>
+                                <TextBlock Text="Port" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Text="{Binding MqttSettings.BrokerPort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="70" MinHeight="30" Padding="9,5" IsEnabled="{Binding IsProjectEditable}" Margin="0,0,10,0"/>
+                                <TextBlock Text="Root" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Text="{Binding MqttSettings.TopicRoot, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="140" MinHeight="30" Padding="9,5" IsEnabled="{Binding IsProjectEditable}" Margin="0,0,10,0"/>
+                                <TextBlock Text="QoS" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Text="{Binding MqttSettings.QualityOfService, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="46" MinHeight="30" Padding="9,5" IsEnabled="{Binding IsProjectEditable}" Margin="0,0,12,0"/>
+                                <CheckBox Content="Retain" IsChecked="{Binding MqttSettings.RetainLastValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                <CheckBox Content="JSON state" IsChecked="{Binding MqttSettings.PublishJsonState, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center"/>
+                            </WrapPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="1" Style="{StaticResource Card}" Padding="10" Margin="0,0,0,10">
+                        <DockPanel>
+                            <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="Published MQTT Topics" FontSize="15.5" FontWeight="SemiBold"/>
+                                    <TextBlock Text="  -  checked rows publish value, quality, status, and optional JSON state" Foreground="{StaticResource Muted}" FontSize="12.2" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <WrapPanel Grid.Column="1">
+                                    <Button Content="Validate" Style="{StaticResource SoftButton}" Click="Validate_Click" Margin="0,0,8,0"/>
+                                    <Button Content="Save" Style="{StaticResource PrimaryButton}" Click="SaveProject_Click"/>
+                                </WrapPanel>
+                            </Grid>
+                            <DataGrid ItemsSource="{Binding PublishedModbusBindings}" SelectedItem="{Binding SelectedBinding, Mode=TwoWay}" Style="{StaticResource ModernDataGrid}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ToolTip="Use MQTT checkbox and optional topic override to route only selected signals to the broker.">
+                                <DataGrid.Columns>
+                                    <DataGridCheckBoxColumn Header="MQTT" Binding="{Binding PublishToMqtt, UpdateSourceTrigger=PropertyChanged}" Width="54*" MinWidth="52"/>
+                                    <DataGridTextColumn Header="IED" Binding="{Binding IedName}" Width="115*" MinWidth="96" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Signal" Binding="{Binding SignalName, UpdateSourceTrigger=PropertyChanged}" Width="170*" MinWidth="150"/>
+                                    <DataGridTextColumn Header="Topic Tag" Binding="{Binding MqttTopic, UpdateSourceTrigger=PropertyChanged}" Width="170*" MinWidth="150"/>
+                                    <DataGridTextColumn Header="Value" Binding="{Binding CurrentValue}" Width="85*" MinWidth="76" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Q" Binding="{Binding Quality}" Width="70*" MinWidth="58" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="115*" MinWidth="92" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="IEC Reference" Binding="{Binding IecReference}" Width="240*" MinWidth="190" IsReadOnly="True"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+                    </Border>
+
+                    <Border Grid.Row="2" CornerRadius="14" Background="#F8FAFC" Padding="12,8" BorderBrush="{StaticResource Line}" BorderThickness="1">
+                        <TextBlock Text="Topic shape: root / IED / topic-tag / value|quality|status|state. Leave Topic Tag empty to use FUXA tag or signal name." Foreground="{StaticResource Muted}" FontSize="12.4"/>
+                    </Border>
                 </Grid>
             </TabItem>
 

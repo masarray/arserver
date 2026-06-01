@@ -92,12 +92,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         get => _mqttSettings;
         set
         {
-            if (Set(ref _mqttSettings, value))
-            {
-                Raise(nameof(MqttEndpointText));
-                Raise(nameof(MqttTrafficText));
-                Raise(nameof(RuntimeInsightText));
-            }
+            value ??= new MqttGatewaySettings();
+            if (ReferenceEquals(_mqttSettings, value))
+                return;
+
+            _mqttSettings.PropertyChanged -= MqttSettings_PropertyChanged;
+            _mqttSettings = value;
+            _mqttSettings.PropertyChanged += MqttSettings_PropertyChanged;
+            Raise(nameof(MqttSettings));
+            Raise(nameof(MqttEndpointText));
+            Raise(nameof(MqttTrafficText));
+            Raise(nameof(RuntimeInsightText));
         }
     }
     public string IedConnectionStatus
@@ -211,7 +216,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         : $"Showing {SignalsView.Cast<object>().Count()} smart SCADA signals of {Signals.Count} discovered attributes";
     public string ModbusEndpointText => EnableModbusTcp ? $"{ModbusBindAddress}:{ModbusPort} / UID {ModbusUnitId}" : "Modbus disabled";
     public string MqttEndpointText => MqttSettings.IsEnabled ? $"{MqttSettings.BrokerHost}:{MqttSettings.BrokerPort} / {MqttSettings.TopicRoot}" : "MQTT disabled";
-    public string RuntimeInsightText => RuntimeStatusText == "Running" ? $"Publishing {PublishedModbusBindings.Count(b => b.IsEnabled)} bindings via {RuntimeOutputText}" : $"Ready: {RuntimeOutputText}";
+    public string RuntimeInsightText => RuntimeStatusText == "Running" ? $"Publishing {ActiveOutputBindingCount} routed binding(s) via {RuntimeOutputText}" : $"Ready: {RuntimeOutputText}";
     public string IecInsightText => $"{IedConnectionStatus} / {SignalCount} discovered";
     public string ModbusTrafficText => $"{ModbusClientCount} client(s), {ModbusReadCount} read(s)";
     public string MqttTrafficText => MqttSettings.IsEnabled ? $"{(MqttConnected ? "connected" : "offline")}, {MqttPublishedCount} pub(s), {MqttDroppedCount} drop(s)" : "disabled";
@@ -224,6 +229,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         (false, true) => "MQTT",
         _ => "no output"
     };
+    private int ActiveOutputBindingCount => PublishedModbusBindings.Count(IsRoutedBinding);
+    private int ModbusBindingCount => PublishedModbusBindings.Count(b => b.IsEnabled && b.PublishToModbus);
+    private int MqttBindingCount => PublishedModbusBindings.Count(b => b.IsEnabled && b.PublishToMqtt);
+    private static bool IsRoutedBinding(BindingItem binding) => binding.IsEnabled && (binding.PublishToModbus || binding.PublishToMqtt);
 
     public BindingItem? SelectedBinding
     {
@@ -263,6 +272,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.LogicalNode), ListSortDirection.Ascending));
         SignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.Name), ListSortDirection.Ascending));
         DataContext = this;
+        MqttSettings.PropertyChanged += MqttSettings_PropertyChanged;
         Relays.CollectionChanged += Relays_CollectionChanged;
         Loaded += MainWindow_Loaded;
         _activityResetTimer.Tick += ActivityResetTimer_Tick;
@@ -280,10 +290,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Raise(nameof(ActiveRelaySubtitle));
     }
 
+    private void MqttSettings_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        Raise(nameof(MqttEndpointText));
+        Raise(nameof(MqttTrafficText));
+        Raise(nameof(RuntimeInsightText));
+    }
+
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         _navButtons.Clear();
-        _navButtons.AddRange(new[] { NavConnectButton, NavRuntimeButton, NavDiagnosticsButton });
+        _navButtons.AddRange(new[] { NavConnectButton, NavRuntimeButton, NavMqttButton, NavDiagnosticsButton });
         WorkflowNavShell.SizeChanged += (_, _) => MoveWorkflowPill(MainTabs.SelectedIndex, false);
         RuntimeToggleShell.SizeChanged += (_, _) => MoveRuntimeToggle(RuntimeStatusText == "Running", false);
 
@@ -373,7 +390,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     AddLog("ERROR", "IEC61850", "IEC61850 connection failed.");
 
                 AddLog("INFO", "Operator Hint", "No mock signals are shown in Real mode. Fix network/MMS endpoint first, then Connect & Discover again.");
-                NavigateToTab(2);
+                NavigateToTab(3);
                 return;
             }
 
@@ -702,15 +719,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             errors.Add("Modbus TCP port must be 1..65535.");
         if (EnableModbusTcp && (ModbusUnitId < 1 || ModbusUnitId > 247))
             errors.Add("Modbus Unit ID must be 1..247.");
+        if (EnableModbusTcp && ModbusBindingCount == 0)
+            errors.Add("Modbus TCP is enabled, but no active signal is routed to Modbus.");
         if (MqttSettings.IsEnabled && string.IsNullOrWhiteSpace(MqttSettings.BrokerHost))
             errors.Add("MQTT broker host is required when MQTT is enabled.");
         if (MqttSettings.IsEnabled && (MqttSettings.BrokerPort <= 0 || MqttSettings.BrokerPort > 65535))
             errors.Add("MQTT broker port must be 1..65535.");
+        if (MqttSettings.IsEnabled && MqttBindingCount == 0)
+            errors.Add("MQTT is enabled, but no active signal is routed to MQTT.");
 
-        foreach (var binding in PublishedModbusBindings.Where(b => b.IsEnabled))
+        foreach (var binding in PublishedModbusBindings.Where(IsRoutedBinding))
         {
             if (string.IsNullOrWhiteSpace(binding.SignalName)) errors.Add("There is a binding with an empty signal label.");
             if (string.IsNullOrWhiteSpace(binding.IecReference)) errors.Add($"{binding.SignalName}: IEC reference is empty.");
+
+            if (!binding.PublishToModbus)
+                continue;
+
             if (binding.ModbusAddress <= 0) errors.Add($"{binding.SignalName}: invalid Modbus address.");
             if (binding.ModbusDataType == "Float32" && binding.ModbusArea is "Coil" or "DiscreteInput")
                 errors.Add($"{binding.SignalName}: Float32 is not valid for {binding.ModbusArea}. Use HoldingRegister/InputRegister.");
@@ -732,7 +757,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (errors.Count == 0)
         {
-            AddLog("INFO", "Validation", "Binding validation OK. ArServer auto-arranged multi-IED Modbus blocks with no overlap.");
+            AddLog("INFO", "Validation", $"Binding validation OK. Modbus routed: {ModbusBindingCount}, MQTT routed: {MqttBindingCount}.");
             return true;
         }
 
@@ -742,7 +767,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             AddLog("WARN", "Validation", $"{errors.Count - grouped.Count} additional validation warning(s) suppressed. Fix the first warnings or rebuild binding.");
 
         if (showMessage)
-            NavigateToTab(2);
+            NavigateToTab(3);
 
         return false;
     }
@@ -887,7 +912,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
 
             var runtimeRelayCount = PublishedModbusBindings
-                .Where(b => b.IsEnabled)
+                .Where(IsRoutedBinding)
                 .Select(b => string.IsNullOrWhiteSpace(b.RelayId) ? "__single__" : b.RelayId)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Count();
@@ -1982,6 +2007,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             IedName = b.IedName,
             RelayIpAddress = b.RelayIpAddress,
             IsEnabled = b.IsEnabled,
+            PublishToModbus = b.PublishToModbus,
+            PublishToMqtt = b.PublishToMqtt,
             SignalName = b.SignalName,
             IecReference = b.IecReference,
             FunctionalConstraint = b.FunctionalConstraint,
@@ -2001,6 +2028,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Scale = b.Scale,
             Offset = b.Offset,
             FuxaTagName = b.FuxaTagName,
+            MqttTopic = b.MqttTopic,
             CurrentValue = b.CurrentValue,
             Quality = b.Quality,
             Status = b.Status,
@@ -2254,7 +2282,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private (string IpAddress, int Port) ResolveSingleRuntimeEndpoint()
     {
-        var binding = PublishedModbusBindings.FirstOrDefault(b => b.IsEnabled) ?? PublishedModbusBindings.FirstOrDefault();
+        var binding = PublishedModbusBindings.FirstOrDefault(IsRoutedBinding) ?? PublishedModbusBindings.FirstOrDefault();
         var relay = binding == null
             ? SelectedRelay
             : Relays.FirstOrDefault(r => !string.IsNullOrWhiteSpace(binding.RelayId) && string.Equals(r.RelayId, binding.RelayId, StringComparison.OrdinalIgnoreCase))
@@ -2432,7 +2460,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 try
                 {
-                    NavigateToTab(2);
+                    NavigateToTab(3);
                 }
                 finally
                 {

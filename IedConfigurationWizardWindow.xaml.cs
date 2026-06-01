@@ -386,6 +386,8 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         return new BindingItem
         {
             IsEnabled = source.IsEnabled,
+            PublishToModbus = source.PublishToModbus,
+            PublishToMqtt = source.PublishToMqtt,
             SignalName = source.SignalName,
             IecReference = source.IecReference,
             FunctionalConstraint = source.FunctionalConstraint,
@@ -405,6 +407,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
             Scale = source.Scale,
             Offset = source.Offset,
             FuxaTagName = source.FuxaTagName,
+            MqttTopic = source.MqttTopic,
             CurrentValue = source.CurrentValue,
             Quality = source.Quality,
             Status = source.Status,

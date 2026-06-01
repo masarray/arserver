@@ -70,7 +70,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
         _iecClientFactory = iecClientFactory;
         _enableModbusTcp = enableModbusTcp;
         _mqttSettings = mqttSettings;
-        _bindings = bindings.Where(b => b.IsEnabled).ToList();
+        _bindings = bindings.Where(b => b.IsEnabled && (b.PublishToModbus || b.PublishToMqtt)).ToList();
         _relayIndex = relays
             .Where(r => !string.IsNullOrWhiteSpace(r.RelayId))
             .GroupBy(r => r.RelayId, StringComparer.OrdinalIgnoreCase)
@@ -297,7 +297,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
                     binding.Status = "IEC Disconnected";
                     if (ShouldLogReadWarning(binding))
                         Log("WARN", "IEC61850", $"{binding.IedName} {binding.RelayIpAddress}: MMS client not connected for {binding.SignalName}.");
-                    _mqttPublisher.EnqueueBinding(binding, null, binding.CurrentValue);
+                    PublishBindingToMqtt(binding, null, binding.CurrentValue);
                     BindingUpdated?.Invoke(binding);
                     continue;
                 }
@@ -320,7 +320,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
                         if (ShouldLogReadWarning(binding))
                             Log("WARN", "IEC61850", $"{binding.IedName}: {binding.SignalName} not readable by MMS. IEC object: {binding.IecReference} [{binding.FunctionalConstraint}]");
 
-                        _mqttPublisher.EnqueueBinding(binding, null, binding.CurrentValue);
+                        PublishBindingToMqtt(binding, null, binding.CurrentValue);
                         BindingUpdated?.Invoke(binding);
                         continue;
                     }
@@ -341,7 +341,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
                         !string.Equals(oldQuality, binding.Quality, StringComparison.OrdinalIgnoreCase) ||
                         !string.Equals(oldStatus, binding.Status, StringComparison.OrdinalIgnoreCase))
                     {
-                        _mqttPublisher.EnqueueBinding(binding, value, display);
+                        PublishBindingToMqtt(binding, value, display);
                     }
 
                     if (changed && ShouldLogValueChange(binding))
@@ -361,13 +361,13 @@ public sealed class BridgeRuntime : IAsyncDisposable
                             Log("WARN", "IEC61850", $"Runtime read paused for {binding.IedName}: IEC61850 client is disconnected.");
                             _iecDisconnectedLogged = true;
                         }
-                        _mqttPublisher.EnqueueBinding(binding, null, binding.CurrentValue);
+                        PublishBindingToMqtt(binding, null, binding.CurrentValue);
                         continue;
                     }
 
                     if (ShouldLogReadWarning(binding))
                         Log("ERROR", "IEC61850", $"{binding.IedName}: {binding.SignalName}: {ex.Message}");
-                    _mqttPublisher.EnqueueBinding(binding, null, binding.CurrentValue);
+                    PublishBindingToMqtt(binding, null, binding.CurrentValue);
                 }
             }
 
@@ -379,7 +379,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
                 {
                     binding.Status = "Stale";
                     Log("WARN", "Runtime", $"{binding.IedName}: {binding.SignalName} stale > {binding.StaleTimeoutMs} ms.");
-                    _mqttPublisher.EnqueueBinding(binding, null, binding.CurrentValue);
+                    PublishBindingToMqtt(binding, null, binding.CurrentValue);
                 }
             }
 
@@ -465,7 +465,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
     private void WriteBindingToModbus(BindingItem binding, object? value)
     {
-        if (!_enableModbusTcp)
+        if (!_enableModbusTcp || !binding.PublishToModbus)
             return;
 
         var numeric = ToDouble(value, binding.IecDataType);
@@ -489,6 +489,14 @@ public sealed class BridgeRuntime : IAsyncDisposable
                 _modbusServer.WriteDiscreteInput(binding.ModbusAddress, ToBool(value));
                 break;
         }
+    }
+
+    private void PublishBindingToMqtt(BindingItem binding, object? value, string displayValue)
+    {
+        if (!binding.PublishToMqtt)
+            return;
+
+        _mqttPublisher.EnqueueBinding(binding, value, displayValue);
     }
 
 

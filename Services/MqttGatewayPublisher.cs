@@ -198,6 +198,7 @@ public sealed class MqttGatewayPublisher : IAsyncDisposable
 
     private static string ResolveTagName(BindingItem binding)
     {
+        if (!string.IsNullOrWhiteSpace(binding.MqttTopic)) return binding.MqttTopic;
         if (!string.IsNullOrWhiteSpace(binding.FuxaTagName)) return binding.FuxaTagName;
         if (!string.IsNullOrWhiteSpace(binding.SignalName)) return binding.SignalName;
         return binding.IecReference;

@@ -3,6 +3,8 @@ namespace Ari61850Bridge.Models;
 public class BindingItem : ObservableObject
 {
     private bool _isEnabled = true;
+    private bool _publishToModbus = true;
+    private bool _publishToMqtt = true;
     private string _currentValue = "-";
     private string _quality = "Unknown";
     private string _status = "Idle";
@@ -11,6 +13,8 @@ public class BindingItem : ObservableObject
     private int _ageMs;
 
     public bool IsEnabled { get => _isEnabled; set => Set(ref _isEnabled, value); }
+    public bool PublishToModbus { get => _publishToModbus; set => Set(ref _publishToModbus, value); }
+    public bool PublishToMqtt { get => _publishToMqtt; set => Set(ref _publishToMqtt, value); }
     public string RelayId { get; set; } = "";
     public string IedName { get; set; } = "";
     public string RelayIpAddress { get; set; } = "";
@@ -34,6 +38,7 @@ public class BindingItem : ObservableObject
     public double Scale { get; set; } = 1.0;
     public double Offset { get; set; } = 0.0;
     public string FuxaTagName { get; set; } = "";
+    public string MqttTopic { get; set; } = "";
 
     public string CurrentValue { get => _currentValue; set => Set(ref _currentValue, value); }
     public string Quality { get => _quality; set => Set(ref _quality, value); }
