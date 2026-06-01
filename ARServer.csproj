@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ArServer</AssemblyName>
+    <RootNamespace>Ari61850Bridge</RootNamespace>
+    <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\gateway-hero.png" />
+    <Resource Include="Assets\app-icon.png" />
+    <Resource Include="Assets\app-icon.ico" />
+    <Resource Include="Assets\app-icon-256.png" />
+    <Resource Include="Assets\arserver-logo-horizontal.png" />
+    <Resource Include="Assets\arserver-logo-header.png" />
+    <Resource Include="Assets\arserver-logo-light.png" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,203 @@
+<Window x:Class="Ari61850Bridge.IedConfigurationWizardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="IED Configuration Wizard" Height="760" Width="1160"
+        MinHeight="700" MinWidth="1080"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource Bg}"
+        FontFamily="Aptos, Segoe UI Variable Text, Segoe UI, Calibri" Icon="Assets/app-icon.ico">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Border Width="46" Height="46" CornerRadius="14" ClipToBounds="True" Margin="0,0,14,0">
+                <Image Source="Assets/app-icon.png" Width="46" Height="46" RenderOptions.BitmapScalingMode="HighQuality"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Text="Configure IED" FontSize="25" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                <TextBlock Text="Guided workflow: select IEC 61850 SCADA tags → build Modbus map → save IED to runtime workspace" FontSize="12.8" Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
+            </StackPanel>
+            <Button Grid.Column="2" Content="×" Width="42" Height="42" Style="{StaticResource SoftButton}" Click="Cancel_Click"/>
+        </Grid>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220"/>
+                <ColumnDefinition Width="16"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Selectable wizard navigation. These are real workflow steps, not decorative cards. -->
+            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="10">
+                <StackPanel>
+                    <Button Tag="0" Click="StepNav_Click" Style="{StaticResource SoftButton}" Margin="0,0,0,10" Padding="14,12">
+                        <StackPanel HorizontalAlignment="Left">
+                            <TextBlock Text="1  Select IEC Signals" FontSize="13.4" FontWeight="SemiBold"/>
+                            <TextBlock Text="Choose SCADA-ready MMS objects. Raw attributes stay available for advanced use." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="11.6" Margin="0,5,0,0"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Tag="1" Click="StepNav_Click" Style="{StaticResource SoftButton}" Margin="0,0,0,10" Padding="14,12">
+                        <StackPanel HorizontalAlignment="Left">
+                            <TextBlock Text="2  Modbus Binding" FontSize="13.4" FontWeight="SemiBold"/>
+                            <TextBlock Text="Map selected signals into DI / IR / HR addresses without overlap." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="11.6" Margin="0,5,0,0"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Tag="2" Click="StepNav_Click" Style="{StaticResource SoftButton}" Padding="14,12">
+                        <StackPanel HorizontalAlignment="Left">
+                            <TextBlock Text="3  Add to Runtime" FontSize="13.4" FontWeight="SemiBold"/>
+                            <TextBlock Text="Validate and save the IED configuration to the Explorer and Modbus Server." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="11.6" Margin="0,5,0,0"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource Card}" Padding="12">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="{Binding StepTitle}" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                            <TextBlock Text="{Binding StepSubtitle}" FontSize="12.4" Foreground="{StaticResource Muted}" Margin="0,3,0,0"/>
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="{Binding VisibleSignalCountText}" Foreground="{StaticResource Muted}" FontSize="12.2" VerticalAlignment="Bottom"/>
+                    </Grid>
+
+                    <!-- STEP 1: IEC SIGNAL SELECTION -->
+                    <Grid Grid.Row="1" Visibility="{Binding Step1Visibility}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0" Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" MinWidth="350" Margin="0,0,12,0" ToolTip="Search by LN, signal name, IEC object reference, type, or category"/>
+                            <WrapPanel Grid.Column="1" VerticalAlignment="Center">
+                                <Button Content="⛓ Position" Tag="Pos stVal CSWI XCBR XSWI" Style="{StaticResource MiniChipButton}" Click="QuickFilter_Click" Margin="0,0,6,0"/>
+                                <Button Content="🛡 Protection" Tag="PTOC PTRC PDIF PDIS Op general Tr general Str general" Style="{StaticResource MiniChipButton}" Click="QuickFilter_Click" Margin="0,0,6,0"/>
+                                <Button Content="〽 MMXU cVal" Tag="MMXU cVal mag f" Style="{StaticResource MiniChipButton}" Click="QuickFilter_Click" Margin="0,0,6,0"/>
+                                <Button Content="✓ Select Recommended" Style="{StaticResource MiniChipButton}" Click="SelectRecommended_Click" Margin="0,0,6,0"/>
+                                <Button Content="× Clear Selection" Style="{StaticResource MiniChipButton}" Click="ClearSelection_Click" Margin="0,0,6,0"/>
+                                <CheckBox Content="Advanced raw" IsChecked="{Binding ShowRaw}" VerticalAlignment="Center" Margin="5,0,10,0"/>
+                                <Button Content="⌫ Clear Filter" Style="{StaticResource MiniChipButton}" Click="ClearFilter_Click"/>
+                            </WrapPanel>
+                        </Grid>
+
+                        <DataGrid Grid.Row="1" ItemsSource="{Binding SignalsView}" Style="{StaticResource ModernDataGrid}" ToolTip="Select a row and press Ctrl+C to copy it for debugging.">
+                            <DataGrid.Columns>
+                                <DataGridCheckBoxColumn Header="Use" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="54"/>
+                                <DataGridTextColumn Header="Priority" Binding="{Binding Category}" Width="110" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="LN" Binding="{Binding LogicalNode}" Width="130" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Signal" Binding="{Binding Name}" Width="220" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="125" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Quality" Binding="{Binding Quality}" Width="85" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="RCB Plan" Binding="{Binding ReportPlan}" Width="120" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Type" Binding="{Binding DataType}" Width="85" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="IEC Reference" Binding="{Binding ObjectReference}" Width="*" IsReadOnly="True"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+
+                    <!-- STEP 2: MODBUS BINDING -->
+                    <Grid Grid.Row="1" Visibility="{Binding Step2Visibility}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0" Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Selected signals are converted to a clean Modbus map. Position first, protection second, measurement last." Foreground="{StaticResource Muted}" FontSize="12.4" VerticalAlignment="Center"/>
+                            <WrapPanel Grid.Column="1">
+                                <Button Content="↻ Rebuild Binding" Style="{StaticResource PrimaryButton}" Click="RebuildBinding_Click" Margin="0,0,8,0"/>
+                                <Button Content="− Remove Binding" Style="{StaticResource SoftButton}" Click="RemoveBinding_Click" Margin="0,0,8,0"/>
+                                <Button Content="✓ Validate" Style="{StaticResource SoftButton}" Click="Validate_Click"/>
+                            </WrapPanel>
+                        </Grid>
+                        <DataGrid Grid.Row="1" ItemsSource="{Binding Bindings}" SelectedItem="{Binding SelectedBinding, Mode=TwoWay}" Style="{StaticResource ModernDataGrid}" ToolTip="Select a row and press Ctrl+C to copy it for debugging.">
+                            <DataGrid.Columns>
+                                <DataGridCheckBoxColumn Header="On" Binding="{Binding IsEnabled, UpdateSourceTrigger=PropertyChanged}" Width="48"/>
+                                <DataGridTextColumn Header="Signal" Binding="{Binding SignalName, UpdateSourceTrigger=PropertyChanged}" Width="190"/>
+                                <DataGridTextColumn Header="Area" Binding="{Binding ModbusArea, UpdateSourceTrigger=PropertyChanged}" Width="120"/>
+                                <DataGridTextColumn Header="Address" Binding="{Binding ModbusAddress, UpdateSourceTrigger=PropertyChanged}" Width="82"/>
+                                <DataGridTextColumn Header="Type" Binding="{Binding ModbusDataType, UpdateSourceTrigger=PropertyChanged}" Width="85"/>
+                                <DataGridTextColumn Header="Unit" Binding="{Binding Unit, UpdateSourceTrigger=PropertyChanged}" Width="70"/>
+                                <DataGridTextColumn Header="Value" Binding="{Binding CurrentValue}" Width="110" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Quality" Binding="{Binding Quality}" Width="82" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="IEC Reference" Binding="{Binding IecReference}" Width="*" IsReadOnly="True"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+
+                    <!-- STEP 3: REVIEW / ADD TO RUNTIME -->
+                    <Grid Grid.Row="1" Visibility="{Binding Step3Visibility}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <UniformGrid Grid.Row="0" Columns="3" Margin="0,0,0,12">
+                            <Border Background="#F8FAFC" CornerRadius="16" Padding="16" BorderBrush="{StaticResource Line}" BorderThickness="1" Margin="0,0,8,0">
+                                <StackPanel>
+                                    <TextBlock Text="Selected IEC Signals" Foreground="{StaticResource Muted}" FontSize="12"/>
+                                    <TextBlock Text="{Binding SelectedSignalCount}" FontSize="25" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#F8FAFC" CornerRadius="16" Padding="16" BorderBrush="{StaticResource Line}" BorderThickness="1" Margin="4,0">
+                                <StackPanel>
+                                    <TextBlock Text="Modbus Bindings" Foreground="{StaticResource Muted}" FontSize="12"/>
+                                    <TextBlock Text="{Binding BindingCount}" FontSize="25" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Background="#F8FAFC" CornerRadius="16" Padding="16" BorderBrush="{StaticResource Line}" BorderThickness="1" Margin="8,0,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="Validation" Foreground="{StaticResource Muted}" FontSize="12"/>
+                                    <TextBlock Text="{Binding ValidationState}" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Accent}" Margin="0,6,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </UniformGrid>
+                        <Border Grid.Row="1" Background="#F8FAFC" CornerRadius="18" Padding="18" BorderBrush="{StaticResource Line}" BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="Ready to add this IED configuration to runtime workspace" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                <TextBlock Text="Save will update the IEC 61850 Explorer with the selected live signals and update the Modbus Server publish map. Runtime viewing stays clean; editing stays inside this wizard." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="13" Margin="0,8,0,0"/>
+                                <TextBlock Text="Tip: Only selected signals become MMS polling targets in this MVP. Raw MMS attributes remain available for future edits, but are not published unless selected." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12.5" Margin="0,18,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource Accent}" FontWeight="SemiBold" FontSize="12.4"/>
+                <TextBlock Text="Viewing and editing are separated. This wizard changes configuration; Explorer and Modbus tabs stay lightweight runtime views." Foreground="{StaticResource Muted}" FontSize="12" Margin="0,3,0,0"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button Content="‹ Back" Style="{StaticResource SoftButton}" Click="Back_Click" Margin="0,0,8,0"/>
+                <Button Content="Cancel" Style="{StaticResource SoftButton}" Click="Cancel_Click" Margin="0,0,8,0"/>
+                <Button Content="{Binding PrimaryActionText}" Style="{StaticResource PrimaryButton}" Click="NextOrSave_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

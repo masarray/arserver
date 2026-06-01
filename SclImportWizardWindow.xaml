@@ -1,0 +1,83 @@
+<Window x:Class="Ari61850Bridge.SclImportWizardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SCL / CID Import" Height="660" Width="900"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="{StaticResource Bg}" FontFamily="Aptos, Segoe UI Variable Text, Segoe UI, Calibri" Icon="Assets/app-icon.ico">
+    <Grid Margin="22">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <TextBlock Text="Engineered IEC 61850 setup from SCL/CID" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+            <TextBlock Text="Review the imported engineering model, override the runtime IP without changing the SCL file, then choose RCB strategy before signal map and Modbus binding." FontSize="13" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+        </StackPanel>
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="18">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="14"/>
+                    <ColumnDefinition Width="260"/>
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3" Background="#F8FAFC" BorderBrush="#D7E3F7" BorderThickness="1" CornerRadius="16" Padding="14">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Imported SCL model" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                            <TextBlock Text="{Binding ImportSummary, RelativeSource={RelativeSource AncestorType=Window}}" TextWrapping="Wrap" FontSize="12.3" Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
+                            <TextBlock Text="{Binding FilePath, RelativeSource={RelativeSource AncestorType=Window}}" TextWrapping="Wrap" FontSize="11.2" Foreground="#94A3B8" Margin="0,5,0,0"/>
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="SCL is read-only" Foreground="{StaticResource Accent}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Top" Margin="14,0,0,0"/>
+                    </Grid>
+                </Border>
+
+                <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,18,0,0">
+                    <TextBlock Text="SCL Communication / AccessPoint" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,0,0,6"/>
+                    <TextBox Text="{Binding SclConnectionText, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" IsReadOnly="True"/>
+                    <TextBlock Text="This is the IP/AP from the engineering file. ArServer does not edit it." FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,18,0,0">
+                    <TextBlock Text="Runtime MMS Port" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,0,0,6"/>
+                    <TextBox Text="{Binding MmsPort, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"/>
+                </StackPanel>
+
+                <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,18,0,0">
+                    <TextBlock Text="Runtime IP Address" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,0,0,6"/>
+                    <TextBox x:Name="RuntimeIpBox" Text="{Binding RuntimeIpAddress, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}" ToolTip="Actual IP used by ArServer to connect. The SCL file remains untouched."/>
+                    <TextBlock Text="Use actual FAT/site IP here. The SCL IP remains only as an engineering reference." FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                </StackPanel>
+
+                <Grid Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,18,0,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="260"/></Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Background="White" BorderBrush="#E5EAF3" BorderThickness="1" CornerRadius="16" Padding="14">
+                        <StackPanel>
+                            <TextBlock Text="Report Control Block selection" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                            <ComboBox ItemsSource="{Binding AvailableReportControls, RelativeSource={RelativeSource AncestorType=Window}}" SelectedItem="{Binding SelectedReportControl, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}" DisplayMemberPath="DisplayText" MinHeight="34" Margin="0,8,0,0"/>
+                            <TextBlock Text="If the selected RCB is already enabled by another client, runtime must detect RptEna/reservation and fall back or let user select another RCB." FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="2" Background="#F8FAFC" BorderBrush="#E5EAF3" BorderThickness="1" CornerRadius="16" Padding="14">
+                        <StackPanel>
+                            <TextBlock Text="RCB Runtime Plan" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                            <ComboBox ItemsSource="{Binding ReportRuntimeModes, RelativeSource={RelativeSource AncestorType=Window}}" SelectedItem="{Binding ReportRuntimeMode, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}" MinHeight="34" Margin="0,8,0,0"/>
+                            <TextBlock Text="Static = use selected RCB. Dynamic = choose available RCB after online verification. Polling = no RCB activation." FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Grid>
+        </Border>
+        <Grid Grid.Row="2" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="WizardStatusText" Text="Next: Signal Map IEC61850 → Modbus Binding → Save to Runtime." Foreground="{StaticResource Muted}" FontSize="12.2" VerticalAlignment="Center"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button Content="Cancel" Style="{StaticResource SoftButton}" Click="Cancel_Click" Margin="0,0,8,0"/>
+                <Button Content="Save SCL Plan" Style="{StaticResource PrimaryButton}" Click="Save_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
