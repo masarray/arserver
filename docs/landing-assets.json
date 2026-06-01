@@ -1,0 +1,27 @@
+{
+  "landing_page": "docs/index.html",
+  "hero_background": "docs/assets/gateway-hero.webp",
+  "screenshots": [
+    {
+      "file": "assets/screenshots/arserver-start.webp",
+      "title": "Start workspace",
+      "desc": "Add the first IEC 61850 IED, open a project, and start the gateway from one calm workspace."
+    },
+    {
+      "file": "assets/screenshots/arserver-iec-values.webp",
+      "title": "Live IEC 61850 values",
+      "desc": "Inspect discovered MMS values, quality flags, polling mode, logical nodes, and IEC object references."
+    },
+    {
+      "file": "assets/screenshots/arserver-modbus-server.webp",
+      "title": "Modbus TCP map",
+      "desc": "Publish selected IEC 61850 signals as clean Modbus addresses for DCS, SCADA, and FUXA HMI."
+    },
+    {
+      "file": "assets/screenshots/arserver-mqtt-topics.webp",
+      "title": "MQTT topics",
+      "desc": "Route the same selected signals to broker topics for web HMI, IoT dashboards, and learning labs."
+    }
+  ],
+  "notes": "Static product page assets. ARServer itself runs as a Windows desktop gateway and requires libiec61850 DLLs for real IED communication plus an external MQTT broker for MQTT output."
+}

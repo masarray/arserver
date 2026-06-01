@@ -1,8 +1,28 @@
 # ARServer
 
-ARServer is a Windows desktop gateway for publishing IEC 61850 MMS data as a clean Modbus TCP server for HMI/SCADA tools such as FUXA.
+ARServer is a Windows desktop gateway for publishing IEC 61850 MMS data to Modbus TCP and MQTT for HMI/SCADA tools such as FUXA.
 
-The project is built for substation and relay-bench workflows where operators need a readable IEC 61850 explorer, a deterministic Modbus map, and diagnostics that separate real communication failures from normal polling noise.
+The project is built for substation and relay-bench workflows where operators need a readable IEC 61850 explorer, a deterministic Modbus map, configurable MQTT topic routing, and diagnostics that separate real communication failures from normal polling noise.
+
+[Download the latest Windows installer](https://github.com/masarray/arserver/releases)
+
+## Screenshots
+
+### Start Workspace
+
+![ARServer start workspace](docs/assets/screenshots/arserver-start.webp)
+
+### Live IEC 61850 Values
+
+![ARServer live IEC 61850 values](docs/assets/screenshots/arserver-iec-values.webp)
+
+### Modbus TCP Server Map
+
+![ARServer Modbus TCP server map](docs/assets/screenshots/arserver-modbus-server.webp)
+
+### MQTT Topic Routing
+
+![ARServer MQTT topic routing](docs/assets/screenshots/arserver-mqtt-topics.webp)
 
 ## What It Does
 
@@ -16,7 +36,7 @@ The project is built for substation and relay-bench workflows where operators ne
 
 ## Current Scope
 
-ARServer is currently a WPF/.NET 8 Windows application focused on IEC 61850 MMS polling and Modbus TCP publishing.
+ARServer is currently a WPF/.NET 8 Windows application focused on IEC 61850 MMS polling, Modbus TCP publishing, and MQTT publishing through an external broker.
 
 The UI already supports a multi-IED workspace model, but the runtime architecture should still be treated as a careful field tool in active development. Validate mappings and communication behavior on a test bench before connecting it to operational environments.
 
@@ -24,12 +44,21 @@ The UI already supports a multi-IED workspace model, but the runtime architectur
 
 - Windows 10 or later
 - .NET 8 SDK for building from source
+- Inno Setup 6 if you want to rebuild the Windows installer locally
 - Optional real IEC 61850 runtime DLLs copied beside the built executable:
   - `iec61850dotnet.dll`
   - `iec61850.dll`
 - Optional MQTT broker for MQTT output, for example Eclipse Mosquitto.
 
 Without those DLLs, ARServer can still run in mock mode for mapping and Modbus TCP testing.
+
+## Download Release
+
+Ready-to-install Windows builds are published on GitHub Releases:
+
+https://github.com/masarray/arserver/releases
+
+The release package is a ZIP containing an Inno Setup installer for Windows x64. The installer includes the GPL-3.0 license, README, and third-party notices.
 
 ## Build
 
@@ -113,6 +142,7 @@ Assets/
 Key service classes:
 
 - `Services/BridgeRuntime.cs` coordinates IEC polling and Modbus publishing.
+- `Services/MqttGatewayPublisher.cs` publishes selected runtime values to MQTT topics.
 - `Services/ModbusTcpServer.cs` implements the read-only Modbus TCP server.
 - `Services/RealLibIec61850Client.cs` adapts libiec61850.NET through reflection.
 - `Services/SclImportService.cs` imports SCL/CID/SCD signal definitions.
@@ -134,3 +164,18 @@ For field use, verify:
 ARServer is open source under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
 
 Third-party dependency notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+
+## Using the Software
+
+ARServer is a Windows gateway application, not a cloud service. The landing page in `docs/` is only product documentation; the actual gateway runs locally on Windows.
+
+For real IEC 61850 and MQTT operation:
+
+1. Install ARServer from [GitHub Releases](https://github.com/masarray/arserver/releases), or build it from source.
+2. For real IED communication, copy `iec61850dotnet.dll` and `iec61850.dll` beside `ArServer.exe`.
+3. Start an MQTT broker such as Mosquitto, EMQX, or HiveMQ if MQTT output is enabled.
+4. Add an IED by IP address and MMS port.
+5. Discover IEC 61850 objects, select SCADA/HMI signals, and validate the Modbus map.
+6. In the MQTT tab, select which signals publish to broker topics.
+7. Start runtime and connect FUXA/HMI either through Modbus TCP or MQTT.
