@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ArServer</AssemblyName>
+    <RootNamespace>Ari61850Bridge</RootNamespace>
+    <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
+    <Authors>masarray</Authors>
+    <Description>Windows IEC 61850 MMS to Modbus TCP gateway for HMI and relay-bench workflows.</Description>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/masarray/arserver</RepositoryUrl>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\gateway-hero.png" />
+    <Resource Include="Assets\app-icon.png" />
+    <Resource Include="Assets\app-icon.ico" />
+    <Resource Include="Assets\app-icon-256.png" />
+    <Resource Include="Assets\arserver-logo-horizontal.png" />
+    <Resource Include="Assets\arserver-logo-header.png" />
+    <Resource Include="Assets\arserver-logo-light.png" />
+  </ItemGroup>
+</Project>

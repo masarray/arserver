@@ -1,0 +1,155 @@
+<Window x:Class="Ari61850Bridge.AddIedWizardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Add IED Wizard" Height="700" Width="900"
+        MinHeight="560" MinWidth="780" WindowStartupLocation="CenterOwner"
+        Background="{StaticResource Bg}" FontFamily="Aptos, Segoe UI Variable Text, Segoe UI, Calibri" Icon="Assets/app-icon.ico"
+        ResizeMode="NoResize">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Border Width="42" Height="42" CornerRadius="13" ClipToBounds="True" Margin="0,0,14,0">
+                <Image Source="Assets/app-icon.png" Width="42" Height="42" RenderOptions.BitmapScalingMode="HighQuality"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Text="Add / Edit IEC 61850 IED" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                <TextBlock Text="Connect by IP, discover MMS model, select SCADA-ready tags, then publish a clean Modbus TCP map." FontSize="13" Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
+            </StackPanel>
+            <Button Grid.Column="2" Content="×" Width="38" Height="34" Style="{StaticResource MiniChipButton}" Click="Cancel_Click"/>
+        </Grid>
+
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="18">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="230"/>
+                    <ColumnDefinition Width="18"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0">
+                    <Border CornerRadius="16" Padding="14" Background="#EAF1FF" BorderBrush="#D7E3F7" BorderThickness="1" Margin="0,0,0,10">
+                        <StackPanel>
+                            <TextBlock Text="1" FontWeight="SemiBold" Foreground="{StaticResource Accent}"/>
+                            <TextBlock Text="Connect IED" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,4,0,0"/>
+                            <TextBlock Text="Enter IP and MMS port." FontSize="12" Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Border CornerRadius="16" Padding="14" Background="#F8FAFC" BorderBrush="#E5EAF3" BorderThickness="1" Margin="0,0,0,10">
+                        <StackPanel>
+                            <TextBlock Text="2" FontWeight="SemiBold" Foreground="{StaticResource Muted}"/>
+                            <TextBlock Text="Select SCADA Tags" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,4,0,0"/>
+                            <TextBlock Text="ArServer recommends Pos, Protection, then MMXU cVal." FontSize="12" Foreground="{StaticResource Muted}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+                    <Border CornerRadius="16" Padding="14" Background="#F8FAFC" BorderBrush="#E5EAF3" BorderThickness="1">
+                        <StackPanel>
+                            <TextBlock Text="3" FontWeight="SemiBold" Foreground="{StaticResource Muted}"/>
+                            <TextBlock Text="Publish Modbus" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,4,0,0"/>
+                            <TextBlock Text="One endpoint, per-IED register blocks." FontSize="12" Foreground="{StaticResource Muted}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <Grid Grid.Column="2">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Connect IED" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                    <StackPanel Grid.Row="1" Margin="0,6,0,18">
+                        <TextBlock Text="Only successfully discovered IEDs are saved to history. Failed/empty IP addresses are never stored." FontSize="12.8" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="WizardStatusText" Text="" FontSize="12.5" FontWeight="SemiBold" Foreground="#E04F16" Margin="0,5,0,0"/>
+                    </StackPanel>
+
+                    <Grid Grid.Row="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="14"/>
+                            <ColumnDefinition Width="130"/>
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Runtime IP Address" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,0,0,6"/>
+                            <TextBox x:Name="RelayIpBox" Text="{Binding RelayIpAddress, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}" ToolTip="Actual IP used by ArServer to connect. The imported SCL/CID file is not modified."/>
+                            <TextBlock Text="This is the actual endpoint used by ArServer. SCL IP is only a reference and can be overridden." FontSize="11.2" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="MMS Port" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,0,0,6"/>
+                            <TextBox Text="{Binding MmsPort, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+
+                        <CheckBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Content="Use real libiec61850 engine if available" IsChecked="{Binding UseRealIecEngine, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}" Margin="0,18,0,0"/>
+
+                        <Border Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Background="#F8FAFC" BorderBrush="#D7E3F7" BorderThickness="1" CornerRadius="16" Padding="14" Margin="0,18,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Engineered Mode: Import CID / SCD / ICD" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                    <TextBlock Text="{Binding SclSummary, RelativeSource={RelativeSource AncestorType=Window}}" TextWrapping="Wrap" FontSize="12.4" Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
+                                    <TextBlock Text="SCL IP is not modified. ArServer uses the Runtime IP above for connection, then uses SCL as the engineered model for DataSet/FCDA/RCB planning." TextWrapping="Wrap" FontSize="11.8" Foreground="{StaticResource Muted}" Margin="0,5,0,0"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Import SCL" Style="{StaticResource SoftButton}" Click="ImportScl_Click" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3" Background="White" BorderBrush="#E5EAF3" BorderThickness="1" CornerRadius="16" Padding="14" Margin="0,12,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="14"/>
+                                    <ColumnDefinition Width="220"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="Report Control Block strategy" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,0,0,6"/>
+                                    <ComboBox ItemsSource="{Binding AvailableReportControls, RelativeSource={RelativeSource AncestorType=Window}}" SelectedItem="{Binding SelectedReportControl, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}" DisplayMemberPath="DisplayText" MinHeight="34" ToolTip="Choose the SCL ReportControl candidate. Runtime RCB activation will be implemented after online verification."/>
+                                    <TextBlock Text="Choose a static/dynamic candidate now. This build stores the plan and still runs MMS polling until RCB activation is enabled safely." FontSize="11.5" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="RCB Runtime Plan" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,0,0,6"/>
+                                    <ComboBox ItemsSource="{Binding ReportRuntimeModes, RelativeSource={RelativeSource AncestorType=Window}}" SelectedItem="{Binding ReportRuntimeMode, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}" MinHeight="34"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="3" Background="#F8FAFC" BorderBrush="#E5EAF3" BorderThickness="1" CornerRadius="16" Padding="14" Margin="0,18,0,0">
+                            <TextBlock Text="Without CID/SCD, ArServer uses IP-only online browse and MMS polling. With CID/SCD, ArServer imports the engineered IEC 61850 model and prepares RCB/DataSet-aware binding before runtime." TextWrapping="Wrap" FontSize="12.5" Foreground="{StaticResource Muted}"/>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Wizard mode: choose IP-only discovery or import CID/SCD for engineered IEC 61850 model, DataSet and RCB awareness." Foreground="{StaticResource Muted}" FontSize="12.2" VerticalAlignment="Center"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button Content="Cancel" Style="{StaticResource SoftButton}" Click="Cancel_Click" Margin="0,0,8,0"/>
+                <Button Content="⚡ Connect &amp; Discover" Style="{StaticResource PrimaryButton}" Click="Connect_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

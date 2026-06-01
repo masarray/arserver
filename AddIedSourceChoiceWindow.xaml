@@ -1,0 +1,58 @@
+<Window x:Class="Ari61850Bridge.AddIedSourceChoiceWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Add IED" Height="430" Width="760"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="{StaticResource Bg}" FontFamily="Aptos, Segoe UI Variable Text, Segoe UI, Calibri" Icon="Assets/app-icon.ico">
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,18">
+            <TextBlock Text="Choose IEC 61850 setup flow" FontSize="25" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+            <TextBlock Text="Use IP-only for quick online browse, or Open SCL/CID for engineered gateway configuration with DataSet and RCB awareness." FontSize="13" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+        </StackPanel>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="16"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Button Grid.Column="0" Style="{StaticResource SoftButton}" Padding="0" Click="IpOnly_Click">
+                <Border CornerRadius="22" Padding="22" Background="White" BorderBrush="#D7E3F7" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="Quick Connect" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Accent}"/>
+                        <TextBlock Text="IP Address Only" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,8,0,0"/>
+                        <TextBlock Text="Enter IP → online MMS browse → auto-recommend logical nodes → select tags → Modbus binding → save to runtime." FontSize="13" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                        <TextBlock Text="Best for fast bench test, troubleshooting, and when CID/SCD is not available." FontSize="12" Foreground="#64748B" TextWrapping="Wrap" Margin="0,14,0,0"/>
+                    </StackPanel>
+                </Border>
+            </Button>
+
+            <Button Grid.Column="2" Style="{StaticResource SoftButton}" Padding="0" Click="OpenScl_Click">
+                <Border CornerRadius="22" Padding="22" Background="#F8FBFF" BorderBrush="#BFD4FF" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="Engineered Mode" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Accent}"/>
+                        <TextBlock Text="Open SCL / CID" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,8,0,0"/>
+                        <TextBlock Text="Open file → review SCL IP and AccessPoint → set runtime IP → signal map → choose static/dynamic RCB → Modbus binding → save." FontSize="13" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                        <TextBlock Text="Best for real gateway work because DataSet, FCDA, and RCB plan come from engineering configuration." FontSize="12" Foreground="#64748B" TextWrapping="Wrap" Margin="0,14,0,0"/>
+                    </StackPanel>
+                </Border>
+            </Button>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="SCL file is never modified. Runtime IP override is stored only in ArServer workspace." Foreground="{StaticResource Muted}" FontSize="12.2" VerticalAlignment="Center"/>
+            <Button Grid.Column="1" Content="Cancel" Style="{StaticResource SoftButton}" Click="Cancel_Click"/>
+        </Grid>
+    </Grid>
+</Window>
