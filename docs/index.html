@@ -18,6 +18,7 @@
     <header class="site-header" aria-label="Primary navigation">
       <a class="brand" href="#top" aria-label="ARServer home">
         <img src="assets/arserver-logo.webp" alt="ARServer" />
+        <span>ARServer</span>
       </a>
       <nav class="nav-links" aria-label="Sections">
         <a href="#workflow">Workflow</a>
@@ -90,17 +91,34 @@
         </div>
         <div class="feature-grid">
           <article class="feature-card">
-            <div class="icon">61850</div>
+            <div class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img">
+                <path d="M4 7.5h16M7 7.5v9M17 7.5v9M6 16.5h12M9 11.5h6"/>
+                <path d="M12 3.5v4M8.5 20.5h7"/>
+              </svg>
+            </div>
             <h3>IED Explorer</h3>
             <p>Add relay endpoints, discover logical nodes, monitor live values, and keep the IEC reference visible for troubleshooting.</p>
           </article>
           <article class="feature-card">
-            <div class="icon">TCP</div>
+            <div class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img">
+                <rect x="4" y="5" width="16" height="10" rx="2"/>
+                <path d="M8 19h8M12 15v4M7.5 9h.01M10.5 9h.01M13.5 9h.01"/>
+              </svg>
+            </div>
             <h3>Modbus Server</h3>
             <p>Expose selected signals as input registers or discrete inputs for DCS, SCADA, gateway testing, and FUXA dashboards.</p>
           </article>
           <article class="feature-card">
-            <div class="icon">MQ</div>
+            <div class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img">
+                <path d="M5 13.5a7 7 0 0 1 14 0"/>
+                <path d="M8.5 13.5a3.5 3.5 0 0 1 7 0"/>
+                <circle cx="12" cy="16" r="1.8"/>
+                <path d="M4 18.5h16"/>
+              </svg>
+            </div>
             <h3>MQTT Publisher</h3>
             <p>Route checked signals into broker topics with quality and state context for web HMI and IoT learning workflows.</p>
           </article>
