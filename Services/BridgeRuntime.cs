@@ -12,8 +12,11 @@ public sealed class BridgeRuntime : IAsyncDisposable
     private readonly Dictionary<string, IIec61850Client> _relayClients = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _ownedRelayClientIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly ModbusTcpServer _modbusServer = new();
+    private readonly MqttGatewayPublisher _mqttPublisher = new();
     private readonly List<BindingItem> _bindings;
     private readonly CancellationTokenSource _cts = new();
+    private readonly bool _enableModbusTcp;
+    private readonly MqttGatewaySettings _mqttSettings;
     private Task? _loopTask;
     private DateTime _lastModbusCounterSnapshot = DateTime.Now;
     private DateTime _lastModbusActivityLog = DateTime.MinValue;
@@ -32,6 +35,10 @@ public sealed class BridgeRuntime : IAsyncDisposable
     public int ClientCount => _modbusServer.ClientCount;
     public long ModbusReadCount => _modbusServer.ReadRequestCount;
     public string LastClientEndpoint => _modbusServer.LastClientEndpoint;
+    public bool MqttIsConnected => _mqttPublisher.IsConnected;
+    public long MqttPublishedCount => _mqttPublisher.PublishedCount;
+    public long MqttDroppedCount => _mqttPublisher.DroppedCount;
+    public string MqttEndpointText => _mqttPublisher.EndpointText;
     public string EventMode { get; private set; } = "Mock Polling Simulation";
 
     public void ReplaceIecClient(IIec61850Client iecClient)
@@ -47,20 +54,29 @@ public sealed class BridgeRuntime : IAsyncDisposable
     }
 
     public BridgeRuntime(IIec61850Client iecClient, IEnumerable<BindingItem> bindings)
-        : this(iecClient, bindings, Enumerable.Empty<RelayEndpointView>(), null)
+        : this(iecClient, bindings, Enumerable.Empty<RelayEndpointView>(), null, true, new MqttGatewaySettings())
     {
     }
 
-    public BridgeRuntime(IIec61850Client iecClient, IEnumerable<BindingItem> bindings, IEnumerable<RelayEndpointView> relays, Func<IIec61850Client>? iecClientFactory)
+    public BridgeRuntime(
+        IIec61850Client iecClient,
+        IEnumerable<BindingItem> bindings,
+        IEnumerable<RelayEndpointView> relays,
+        Func<IIec61850Client>? iecClientFactory,
+        bool enableModbusTcp,
+        MqttGatewaySettings mqttSettings)
     {
         _iecClient = iecClient;
         _iecClientFactory = iecClientFactory;
+        _enableModbusTcp = enableModbusTcp;
+        _mqttSettings = mqttSettings;
         _bindings = bindings.Where(b => b.IsEnabled).ToList();
         _relayIndex = relays
             .Where(r => !string.IsNullOrWhiteSpace(r.RelayId))
             .GroupBy(r => r.RelayId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         _modbusServer.Log += (level, message) => Log(level, "Modbus", message);
+        _mqttPublisher.Log += (level, message) => Log(level, "MQTT", message);
     }
 
     public async Task StartAsync(string modbusBindAddress, int modbusPort, int unitId)
@@ -71,13 +87,21 @@ public sealed class BridgeRuntime : IAsyncDisposable
         await EnsureIecClientsAsync(_cts.Token);
 
         var safeUnitId = unitId < 1 || unitId > 247 ? 1 : unitId;
-        await _modbusServer.StartAsync(modbusBindAddress, modbusPort, (byte)safeUnitId, _cts.Token);
+        if (_enableModbusTcp)
+            await _modbusServer.StartAsync(modbusBindAddress, modbusPort, (byte)safeUnitId, _cts.Token);
+        else
+            Log("INFO", "Modbus", "Modbus TCP output is disabled for this runtime session.");
+
+        await _mqttPublisher.StartAsync(_mqttSettings, _cts.Token);
         IsRunning = true;
         EventMode = ResolveRuntimeMode();
 
         Log("INFO", "Runtime", $"Runtime started. Active bindings: {_bindings.Count}. Scheduler: max {MaxReadsPerIedPerCycle} MMS reads/IED/cycle, UI grid uses buffered snapshots.");
         Log("INFO", "Runtime", $"IEC source mode: {EventMode}.");
-        Log("INFO", "Runtime", $"Modbus TCP slave/server ready on {modbusBindAddress}:{modbusPort}, Unit ID {safeUnitId}.");
+        if (_enableModbusTcp)
+            Log("INFO", "Runtime", $"Modbus TCP slave/server ready on {modbusBindAddress}:{modbusPort}, Unit ID {safeUnitId}.");
+        if (_mqttSettings.IsEnabled)
+            Log("INFO", "Runtime", $"MQTT publisher enabled for broker {_mqttSettings.BrokerHost}:{_mqttSettings.BrokerPort}, topic root '{_mqttSettings.TopicRoot}'.");
         _loopTask = Task.Run(RuntimeLoopAsync);
     }
 
@@ -164,6 +188,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
         {
             try { await _loopTask; } catch { }
         }
+        await _mqttPublisher.StopAsync();
         await _modbusServer.StopAsync();
 
         foreach (var relayId in _ownedRelayClientIds.ToList())
@@ -272,6 +297,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
                     binding.Status = "IEC Disconnected";
                     if (ShouldLogReadWarning(binding))
                         Log("WARN", "IEC61850", $"{binding.IedName} {binding.RelayIpAddress}: MMS client not connected for {binding.SignalName}.");
+                    _mqttPublisher.EnqueueBinding(binding, null, binding.CurrentValue);
                     BindingUpdated?.Invoke(binding);
                     continue;
                 }
@@ -279,6 +305,8 @@ public sealed class BridgeRuntime : IAsyncDisposable
                 try
                 {
                     var old = binding.CurrentValue;
+                    var oldQuality = binding.Quality;
+                    var oldStatus = binding.Status;
                     var value = await client.ReadValueAsync(binding.IecReference, binding.FunctionalConstraint, binding.IecDataType, token);
 
                     if (value == null)
@@ -292,6 +320,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
                         if (ShouldLogReadWarning(binding))
                             Log("WARN", "IEC61850", $"{binding.IedName}: {binding.SignalName} not readable by MMS. IEC object: {binding.IecReference} [{binding.FunctionalConstraint}]");
 
+                        _mqttPublisher.EnqueueBinding(binding, null, binding.CurrentValue);
                         BindingUpdated?.Invoke(binding);
                         continue;
                     }
@@ -306,8 +335,14 @@ public sealed class BridgeRuntime : IAsyncDisposable
                     binding.Status = "MMS Polling/Live";
                     if (changed) binding.Sequence++;
 
-                    // Modbus is cache-based. A FUXA/SCADA read never triggers direct MMS reads.
+                    // Outputs are cache-based. A FUXA/SCADA read never triggers direct MMS reads.
                     WriteBindingToModbus(binding, value);
+                    if (changed ||
+                        !string.Equals(oldQuality, binding.Quality, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(oldStatus, binding.Status, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _mqttPublisher.EnqueueBinding(binding, value, display);
+                    }
 
                     if (changed && ShouldLogValueChange(binding))
                         Log("EVENT", "IEC61850", $"{binding.IedName}: {binding.SignalName}: {old} → {display} | {binding.ModbusArea} {binding.ModbusAddress}");
@@ -326,11 +361,13 @@ public sealed class BridgeRuntime : IAsyncDisposable
                             Log("WARN", "IEC61850", $"Runtime read paused for {binding.IedName}: IEC61850 client is disconnected.");
                             _iecDisconnectedLogged = true;
                         }
+                        _mqttPublisher.EnqueueBinding(binding, null, binding.CurrentValue);
                         continue;
                     }
 
                     if (ShouldLogReadWarning(binding))
                         Log("ERROR", "IEC61850", $"{binding.IedName}: {binding.SignalName}: {ex.Message}");
+                    _mqttPublisher.EnqueueBinding(binding, null, binding.CurrentValue);
                 }
             }
 
@@ -342,6 +379,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
                 {
                     binding.Status = "Stale";
                     Log("WARN", "Runtime", $"{binding.IedName}: {binding.SignalName} stale > {binding.StaleTimeoutMs} ms.");
+                    _mqttPublisher.EnqueueBinding(binding, null, binding.CurrentValue);
                 }
             }
 
@@ -427,6 +465,9 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
     private void WriteBindingToModbus(BindingItem binding, object? value)
     {
+        if (!_enableModbusTcp)
+            return;
+
         var numeric = ToDouble(value, binding.IecDataType);
         var scaled = numeric * binding.Scale + binding.Offset;
 
@@ -585,6 +626,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await StopAsync();
+        await _mqttPublisher.DisposeAsync();
         await _modbusServer.DisposeAsync();
         foreach (var relayId in _ownedRelayClientIds.ToList())
         {

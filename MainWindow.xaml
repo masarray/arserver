@@ -291,23 +291,36 @@
                     </Grid.RowDefinitions>
 
                     <Border Grid.Row="0" Style="{StaticResource Card}" Padding="12" Margin="0,0,0,10">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
+                        <StackPanel>
                             <WrapPanel VerticalAlignment="Center">
                                 <Border x:Name="ModbusActivityDot" Width="9" Height="9" CornerRadius="5" Background="#94A3B8" Margin="0,0,8,0" ToolTip="Modbus master polling activity"/>
                                 <TextBlock Text="Gateway" FontWeight="SemiBold" FontSize="13" Foreground="{StaticResource Ink}" Margin="0,0,8,0"/>
                                 <TextBlock Text="{Binding RuntimeStatusText}" FontSize="13" Foreground="{StaticResource Accent}" FontWeight="SemiBold" Margin="0,0,18,0"/>
-                                <TextBlock Text="Endpoint" FontSize="12.5" Foreground="{StaticResource Muted}" Margin="0,0,6,0"/>
+                                <TextBlock Text="Modbus" FontSize="12.5" Foreground="{StaticResource Muted}" Margin="0,0,6,0"/>
                                 <TextBlock Text="{Binding ModbusEndpointText}" FontSize="12.5" Foreground="{StaticResource Ink}" Margin="0,0,18,0"/>
                                 <TextBlock Text="Traffic" FontSize="12.5" Foreground="{StaticResource Muted}" Margin="0,0,6,0"/>
                                 <TextBlock Text="{Binding ModbusTrafficText}" FontSize="12.5" Foreground="{StaticResource Ink}" Margin="0,0,18,0"/>
+                                <TextBlock Text="MQTT" FontSize="12.5" Foreground="{StaticResource Muted}" Margin="0,0,6,0"/>
+                                <TextBlock Text="{Binding MqttEndpointText}" FontSize="12.5" Foreground="{StaticResource Ink}" Margin="0,0,18,0"/>
+                                <TextBlock Text="{Binding MqttTrafficText}" FontSize="12.5" Foreground="{StaticResource Ink}" Margin="0,0,18,0"/>
                                 <TextBlock Text="IEC" FontSize="12.5" Foreground="{StaticResource Muted}" Margin="0,0,6,0"/>
                                 <TextBlock Text="{Binding IecInsightText}" FontSize="12.5" Foreground="{StaticResource Ink}"/>
                             </WrapPanel>
-                        </Grid>
+                            <WrapPanel Margin="0,10,0,0" VerticalAlignment="Center">
+                                <CheckBox Content="Modbus TCP" IsChecked="{Binding EnableModbusTcp, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center" Margin="0,0,18,0"/>
+                                <CheckBox Content="MQTT" IsChecked="{Binding MqttSettings.IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                                <TextBlock Text="Broker" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Text="{Binding MqttSettings.BrokerHost, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="128" MinHeight="30" Padding="9,5" IsEnabled="{Binding IsProjectEditable}" Margin="0,0,8,0"/>
+                                <TextBlock Text="Port" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Text="{Binding MqttSettings.BrokerPort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="64" MinHeight="30" Padding="9,5" IsEnabled="{Binding IsProjectEditable}" Margin="0,0,8,0"/>
+                                <TextBlock Text="Root" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Text="{Binding MqttSettings.TopicRoot, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="112" MinHeight="30" Padding="9,5" IsEnabled="{Binding IsProjectEditable}" Margin="0,0,8,0"/>
+                                <TextBlock Text="QoS" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                <TextBox Text="{Binding MqttSettings.QualityOfService, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="42" MinHeight="30" Padding="9,5" IsEnabled="{Binding IsProjectEditable}" Margin="0,0,10,0"/>
+                                <CheckBox Content="Retain last value" IsChecked="{Binding MqttSettings.RetainLastValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                <CheckBox Content="JSON state" IsChecked="{Binding MqttSettings.PublishJsonState, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center"/>
+                            </WrapPanel>
+                        </StackPanel>
                     </Border>
 
                     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="10" Margin="0,0,0,10">

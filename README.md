@@ -11,6 +11,7 @@ The project is built for substation and relay-bench workflows where operators ne
 - Imports SCL/CID/SCD files and helps select SCADA-ready signals.
 - Builds Modbus TCP bindings for coils, discrete inputs, input registers, and holding registers.
 - Runs a read-only Modbus TCP server for HMI polling.
+- Publishes the same IEC 61850 runtime values to MQTT so HMI clients can subscribe instead of polling.
 - Shows runtime diagnostics, IEC activity, Modbus polling status, stale values, and per-signal quality.
 
 ## Current Scope
@@ -26,6 +27,7 @@ The UI already supports a multi-IED workspace model, but the runtime architectur
 - Optional real IEC 61850 runtime DLLs copied beside the built executable:
   - `iec61850dotnet.dll`
   - `iec61850.dll`
+- Optional MQTT broker for MQTT output, for example Eclipse Mosquitto.
 
 Without those DLLs, ARServer can still run in mock mode for mapping and Modbus TCP testing.
 
@@ -52,7 +54,8 @@ For real relay testing:
 3. Add or connect an IED by IP address and MMS port, usually TCP `102`.
 4. Select SCADA/HMI signals.
 5. Build or validate the Modbus map.
-6. Start the Modbus TCP server and point the HMI client to the PC IP, configured port, and Unit ID.
+6. Enable Modbus TCP, MQTT, or both.
+7. Start runtime and point the HMI client to the selected output.
 
 ## Modbus Mapping Guidance
 
@@ -68,6 +71,33 @@ For multi-IED planning, keep address separation inside each Modbus area. Example
 - IED-01: DI `10001+`, IR `30001+`, HR `40001+`
 - IED-02: DI `11001+`, IR `31001+`, HR `41001+`
 - IED-03: DI `12001+`, IR `32001+`, HR `42001+`
+
+## MQTT Output
+
+MQTT output is implemented as a publisher to an external MQTT broker. This keeps ARServer small and interoperable while allowing production deployments to use hardened brokers such as Mosquitto, EMQX, or HiveMQ.
+
+Default MQTT settings:
+
+- Broker: `127.0.0.1`
+- Port: `1883`
+- Topic root: `arserver`
+- QoS: `0`
+- Retain last value: enabled
+- JSON state payload: enabled
+
+Topic layout:
+
+```text
+arserver/{iedName}/{tagName}/value
+arserver/{iedName}/{tagName}/quality
+arserver/{iedName}/{tagName}/status
+arserver/{iedName}/{tagName}/state
+arserver/status
+```
+
+The `/value` topic is a simple scalar payload for HMI tags. The `/state` topic is JSON for richer dashboards and diagnostics.
+
+Modbus TCP and MQTT can be enabled independently. The IEC 61850 relay is still read once by ARServer; enabled outputs receive values from the same runtime cache.
 
 ## Repository Layout
 
@@ -102,3 +132,5 @@ For field use, verify:
 ## License
 
 ARServer is open source under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
+
+Third-party dependency notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

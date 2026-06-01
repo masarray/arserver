@@ -22,4 +22,7 @@
     <Resource Include="Assets\arserver-logo-header.png" />
     <Resource Include="Assets\arserver-logo-light.png" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MQTTnet" Version="5.1.0.1559" />
+  </ItemGroup>
 </Project>

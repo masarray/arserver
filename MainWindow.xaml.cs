@@ -31,6 +31,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _modbusBindAddress = "0.0.0.0";
     private int _modbusPort = 502;
     private int _modbusUnitId = 1;
+    private bool _enableModbusTcp = true;
+    private MqttGatewaySettings _mqttSettings = new();
     private string _iedConnectionStatus = "Disconnected";
     private string _runtimeStatusText = "Stopped";
     private string _lastStatusLevel = "INFO";
@@ -39,6 +41,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private int _modbusClientCount;
     private long _modbusReadCount;
     private string _modbusLastClientText = "-";
+    private long _mqttPublishedCount;
+    private long _mqttDroppedCount;
+    private bool _mqttConnected;
     private bool _useRealIecEngine;
     private string _discoverySearchText = "";
     private bool _showRawEngineeringAttributes;
@@ -70,6 +75,31 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string ModbusBindAddress { get => _modbusBindAddress; set { if (Set(ref _modbusBindAddress, value)) Raise(nameof(ModbusEndpointText)); } }
     public int ModbusPort { get => _modbusPort; set { if (Set(ref _modbusPort, value)) Raise(nameof(ModbusEndpointText)); } }
     public int ModbusUnitId { get => _modbusUnitId; set { if (Set(ref _modbusUnitId, value)) Raise(nameof(ModbusEndpointText)); } }
+    public bool EnableModbusTcp
+    {
+        get => _enableModbusTcp;
+        set
+        {
+            if (Set(ref _enableModbusTcp, value))
+            {
+                Raise(nameof(ModbusEndpointText));
+                Raise(nameof(RuntimeInsightText));
+            }
+        }
+    }
+    public MqttGatewaySettings MqttSettings
+    {
+        get => _mqttSettings;
+        set
+        {
+            if (Set(ref _mqttSettings, value))
+            {
+                Raise(nameof(MqttEndpointText));
+                Raise(nameof(MqttTrafficText));
+                Raise(nameof(RuntimeInsightText));
+            }
+        }
+    }
     public string IedConnectionStatus
     {
         get => _iedConnectionStatus;
@@ -119,6 +149,36 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     public string ModbusLastClientText { get => _modbusLastClientText; set => Set(ref _modbusLastClientText, value); }
+    public long MqttPublishedCount
+    {
+        get => _mqttPublishedCount;
+        set
+        {
+            if (Set(ref _mqttPublishedCount, value))
+                Raise(nameof(MqttTrafficText));
+        }
+    }
+    public long MqttDroppedCount
+    {
+        get => _mqttDroppedCount;
+        set
+        {
+            if (Set(ref _mqttDroppedCount, value))
+                Raise(nameof(MqttTrafficText));
+        }
+    }
+    public bool MqttConnected
+    {
+        get => _mqttConnected;
+        set
+        {
+            if (Set(ref _mqttConnected, value))
+            {
+                Raise(nameof(MqttEndpointText));
+                Raise(nameof(MqttTrafficText));
+            }
+        }
+    }
     public bool UseRealIecEngine { get => _useRealIecEngine; set => Set(ref _useRealIecEngine, value); }
     public string DiscoverySearchText
     {
@@ -149,12 +209,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string VisibleSignalCountText => ShowRawEngineeringAttributes
         ? $"Showing {SignalsView.Cast<object>().Count()} of {Signals.Count} discovered MMS attributes"
         : $"Showing {SignalsView.Cast<object>().Count()} smart SCADA signals of {Signals.Count} discovered attributes";
-    public string ModbusEndpointText => $"{ModbusBindAddress}:{ModbusPort} / UID {ModbusUnitId}";
-    public string RuntimeInsightText => RuntimeStatusText == "Running" ? $"Publishing {PublishedModbusBindings.Count(b => b.IsEnabled)} bindings" : "Ready but not publishing";
+    public string ModbusEndpointText => EnableModbusTcp ? $"{ModbusBindAddress}:{ModbusPort} / UID {ModbusUnitId}" : "Modbus disabled";
+    public string MqttEndpointText => MqttSettings.IsEnabled ? $"{MqttSettings.BrokerHost}:{MqttSettings.BrokerPort} / {MqttSettings.TopicRoot}" : "MQTT disabled";
+    public string RuntimeInsightText => RuntimeStatusText == "Running" ? $"Publishing {PublishedModbusBindings.Count(b => b.IsEnabled)} bindings via {RuntimeOutputText}" : $"Ready: {RuntimeOutputText}";
     public string IecInsightText => $"{IedConnectionStatus} / {SignalCount} discovered";
     public string ModbusTrafficText => $"{ModbusClientCount} client(s), {ModbusReadCount} read(s)";
+    public string MqttTrafficText => MqttSettings.IsEnabled ? $"{(MqttConnected ? "connected" : "offline")}, {MqttPublishedCount} pub(s), {MqttDroppedCount} drop(s)" : "disabled";
     public bool IsRuntimeRunning => RuntimeStatusText.Equals("Running", StringComparison.OrdinalIgnoreCase) || RuntimeStatusText.Equals("Starting", StringComparison.OrdinalIgnoreCase);
     public bool IsProjectEditable => !IsRuntimeRunning;
+    private string RuntimeOutputText => (EnableModbusTcp, MqttSettings.IsEnabled) switch
+    {
+        (true, true) => "Modbus + MQTT",
+        (true, false) => "Modbus",
+        (false, true) => "MQTT",
+        _ => "no output"
+    };
 
     public BindingItem? SelectedBinding
     {
@@ -627,10 +696,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var errors = new List<string>();
         var used = new Dictionary<string, BindingItem>(StringComparer.OrdinalIgnoreCase);
 
-        if (ModbusPort <= 0 || ModbusPort > 65535)
+        if (!EnableModbusTcp && !MqttSettings.IsEnabled)
+            errors.Add("At least one output must be enabled: Modbus TCP or MQTT.");
+        if (EnableModbusTcp && (ModbusPort <= 0 || ModbusPort > 65535))
             errors.Add("Modbus TCP port must be 1..65535.");
-        if (ModbusUnitId < 1 || ModbusUnitId > 247)
+        if (EnableModbusTcp && (ModbusUnitId < 1 || ModbusUnitId > 247))
             errors.Add("Modbus Unit ID must be 1..247.");
+        if (MqttSettings.IsEnabled && string.IsNullOrWhiteSpace(MqttSettings.BrokerHost))
+            errors.Add("MQTT broker host is required when MQTT is enabled.");
+        if (MqttSettings.IsEnabled && (MqttSettings.BrokerPort <= 0 || MqttSettings.BrokerPort > 65535))
+            errors.Add("MQTT broker port must be 1..65535.");
 
         foreach (var binding in PublishedModbusBindings.Where(b => b.IsEnabled))
         {
@@ -683,8 +758,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 MmsPort = MmsPort,
                 UseRealIecEngine = UseRealIecEngine,
                 ModbusBindAddress = ModbusBindAddress,
+                EnableModbusTcp = EnableModbusTcp,
                 ModbusPort = ModbusPort,
                 ModbusUnitId = ModbusUnitId,
+                Mqtt = CloneMqttSettings(MqttSettings),
                 Signals = Signals.ToList(),
                 Bindings = PublishedModbusBindings.ToList(),
                 Relays = Relays.ToList()
@@ -724,8 +801,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MmsPort = project.MmsPort;
             UseRealIecEngine = project.UseRealIecEngine;
             ModbusBindAddress = string.IsNullOrWhiteSpace(project.ModbusBindAddress) ? "0.0.0.0" : project.ModbusBindAddress;
+            EnableModbusTcp = project.EnableModbusTcp;
             ModbusPort = project.ModbusPort <= 0 ? 502 : project.ModbusPort;
             ModbusUnitId = project.ModbusUnitId <= 0 ? 1 : project.ModbusUnitId;
+            MqttSettings = CloneMqttSettings(project.Mqtt ?? new MqttGatewaySettings());
 
             Signals.Clear();
             foreach (var signal in project.Signals) AddSignal(signal);
@@ -777,6 +856,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MoveRuntimeToggle(true, true);
 
             PreparePublishedModbusMapForRuntime();
+            if (!EnableModbusTcp && !MqttSettings.IsEnabled)
+            {
+                RuntimeStatusText = "Stopped";
+                MoveRuntimeToggle(false, true);
+                AddLog("ERROR", "Runtime", "Runtime blocked. Enable Modbus TCP, MQTT, or both before starting.");
+                NavigateToTab(1);
+                return;
+            }
+
             if (PublishedModbusBindings.Count == 0)
             {
                 AutoMap_Click(sender, e);
@@ -850,9 +938,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (_runtime != null)
                 await _runtime.DisposeAsync();
 
-            _runtime = new BridgeRuntime(_iecClient, PublishedModbusBindings, Relays, () => UseRealIecEngine
-                ? (IIec61850Client)new RealLibIec61850Client()
-                : new MockIec61850Client());
+            _runtime = new BridgeRuntime(
+                _iecClient,
+                PublishedModbusBindings,
+                Relays,
+                () => UseRealIecEngine ? (IIec61850Client)new RealLibIec61850Client() : new MockIec61850Client(),
+                EnableModbusTcp,
+                CloneMqttSettings(MqttSettings));
             _runtime.Diagnostic += entry => Dispatcher.Invoke(() => AddLog(entry.Level, entry.Source, entry.Message));
             _runtime.BindingUpdated += binding => Dispatcher.Invoke(() =>
             {
@@ -864,8 +956,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 ModbusClientCount = _runtime.ClientCount;
                 ModbusReadCount = _runtime.ModbusReadCount;
                 ModbusLastClientText = _runtime.LastClientEndpoint;
+                MqttConnected = _runtime.MqttIsConnected;
+                MqttPublishedCount = _runtime.MqttPublishedCount;
+                MqttDroppedCount = _runtime.MqttDroppedCount;
 
-                if (ModbusReadCount > _lastObservedModbusReadCount)
+                if (EnableModbusTcp && ModbusReadCount > _lastObservedModbusReadCount)
                 {
                     _lastObservedModbusReadCount = ModbusReadCount;
                     PulseModbusActivity();
@@ -877,7 +972,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             RuntimeStatusText = "Running";
             MoveRuntimeToggle(true, true);
             EventStrategyStatus = _runtime.EventMode;
-            AddLog("INFO", "Runtime", $"FUXA can connect to this PC IP, port {ModbusPort}, Unit ID {ModbusUnitId}.");
+            if (EnableModbusTcp)
+                AddLog("INFO", "Runtime", $"FUXA can connect by Modbus TCP to this PC IP, port {ModbusPort}, Unit ID {ModbusUnitId}.");
+            if (MqttSettings.IsEnabled)
+                AddLog("INFO", "Runtime", $"FUXA can subscribe by MQTT via broker {MqttSettings.BrokerHost}:{MqttSettings.BrokerPort}, topic root {MqttSettings.TopicRoot}.");
         }
         catch (Exception ex)
         {
@@ -898,6 +996,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MoveRuntimeToggle(false, true);
             ModbusClientCount = 0;
             ModbusLastClientText = "-";
+            MqttConnected = false;
         }
         catch (Exception ex)
         {
@@ -2200,6 +2299,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     private static string BuildIecEndpointKey(string ipAddress, int port) => $"{NormalizeRelayIp(ipAddress)}:{(port <= 0 ? 102 : port)}";
+
+    private static MqttGatewaySettings CloneMqttSettings(MqttGatewaySettings settings)
+    {
+        return new MqttGatewaySettings
+        {
+            IsEnabled = settings.IsEnabled,
+            BrokerHost = string.IsNullOrWhiteSpace(settings.BrokerHost) ? "127.0.0.1" : settings.BrokerHost.Trim(),
+            BrokerPort = settings.BrokerPort is > 0 and <= 65535 ? settings.BrokerPort : 1883,
+            ClientId = string.IsNullOrWhiteSpace(settings.ClientId) ? $"arserver-{Environment.MachineName}".ToLowerInvariant() : settings.ClientId.Trim(),
+            TopicRoot = string.IsNullOrWhiteSpace(settings.TopicRoot) ? "arserver" : settings.TopicRoot.Trim(),
+            QualityOfService = Math.Clamp(settings.QualityOfService, 0, 1),
+            RetainLastValue = settings.RetainLastValue,
+            PublishJsonState = settings.PublishJsonState,
+            Username = settings.Username?.Trim() ?? "",
+            Password = settings.Password ?? ""
+        };
+    }
 
     private static string NormalizeRelayIp(string? value)
     {
