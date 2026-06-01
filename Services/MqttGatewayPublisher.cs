@@ -24,6 +24,8 @@ public sealed class MqttGatewayPublisher : IAsyncDisposable
     private long _publishedCount;
     private long _droppedCount;
     private bool _started;
+    private DateTime _lastPublishDelayLog = DateTime.MinValue;
+    private string _lastPublishDelayMessage = "";
 
     public event Action<string, string>? Log;
 
@@ -159,10 +161,25 @@ public sealed class MqttGatewayPublisher : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                Log?.Invoke("WARN", $"MQTT publish delayed: {ex.Message}");
+                LogPublishDelay(ex);
                 try { await Task.Delay(1000, token); } catch { break; }
             }
         }
+    }
+
+    private void LogPublishDelay(Exception ex)
+    {
+        var message = $"MQTT broker {_settings.BrokerHost}:{_settings.BrokerPort} is offline or refusing connection. MQTT publish is delayed; IEC and Modbus keep running. Detail: {ex.Message}";
+        var now = DateTime.Now;
+        if (string.Equals(message, _lastPublishDelayMessage, StringComparison.Ordinal) &&
+            (now - _lastPublishDelayLog).TotalSeconds < 10)
+        {
+            return;
+        }
+
+        _lastPublishDelayMessage = message;
+        _lastPublishDelayLog = now;
+        Log?.Invoke("WARN", message);
     }
 
     private async Task EnsureConnectedAsync(CancellationToken token)

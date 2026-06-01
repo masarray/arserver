@@ -21,7 +21,7 @@
                     </Border>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                         <TextBlock Text="ArServer" FontSize="30" FontWeight="SemiBold" Foreground="White"/>
-                        <TextBlock Text="IEC 61850 - Modbus TCP Gateway" FontSize="13.5" Foreground="#CBD5E1" Margin="0,4,0,0"/>
+                        <TextBlock Text="IEC 61850 - Modbus TCP + MQTT Gateway" FontSize="13.5" Foreground="#CBD5E1" Margin="0,4,0,0"/>
                     </StackPanel>
                     <Button Grid.Column="2" Content="Close" Style="{StaticResource MiniChipButton}" Click="Close_Click" VerticalAlignment="Top"/>
                 </Grid>
