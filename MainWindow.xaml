@@ -76,13 +76,13 @@
             </Border>
             <WrapPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center">
                 <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="15" Padding="10,6" Margin="0,0,8,0">
-                    <TextBlock Text="{Binding IecInsightText}" FontSize="12.5" Foreground="{StaticResource Ink}"/>
+                    <TextBlock Text="{Binding IecInsightText}" FontSize="12.5" Foreground="{StaticResource Ink}" Height="18"/>
                 </Border>
                 <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="15" Padding="10,6" Margin="0,0,8,0">
-                    <TextBlock Text="{Binding ModbusEndpointText}" FontSize="12.5" Foreground="{StaticResource Ink}"/>
+                    <TextBlock Text="{Binding ModbusEndpointText}" FontSize="12.5" Foreground="{StaticResource Ink}" Height="19"/>
                 </Border>
                 <Border Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="15" Padding="10,6" Margin="0,0,10,0">
-                    <TextBlock Text="{Binding ModbusTrafficText}" FontSize="12.5" Foreground="{StaticResource Ink}"/>
+                    <TextBlock Text="{Binding ModbusTrafficText}" FontSize="12.5" Foreground="{StaticResource Ink}" Height="18"/>
                 </Border>
                 <Border x:Name="RuntimeToggleShell" Width="190" Height="40" Background="#E5E7EB" CornerRadius="20" Padding="4" VerticalAlignment="Center" Effect="{StaticResource SoftShadow}">
                     <Grid x:Name="RuntimeToggleGrid" ClipToBounds="True">
