@@ -33,6 +33,8 @@ The project is built for substation and relay-bench workflows where operators ne
 - Runs a read-only Modbus TCP server for HMI polling.
 - Publishes the same IEC 61850 runtime values to MQTT so HMI clients can subscribe instead of polling.
 - Shows runtime diagnostics, IEC activity, Modbus polling status, stale values, and per-signal quality.
+- Provides an adjustable IEC 61850 MMS polling target from 10 ms upward for bench monitoring, with cache-based Modbus/MQTT publishing.
+- Adds a Fast CB acquisition lane so breaker/status/Boolean/protection points are scheduled before slower analog/quality points.
 
 ## Current Scope
 
@@ -127,6 +129,21 @@ arserver/status
 The `/value` topic is a simple scalar payload for HMI tags. The `/state` topic is JSON for richer dashboards and diagnostics.
 
 Modbus TCP and MQTT can be enabled independently. The IEC 61850 relay is still read once by ARServer; enabled outputs receive values from the same runtime cache.
+
+## IEC 61850 MMS Polling Time
+
+The selected IED workspace now shows the **MMS poll** setting directly on the right-side command bar, immediately before **Edit IED Wizard**. Enter the target interval in milliseconds, click **Apply**, then open/edit the wizard or start runtime. The fastest accepted target is `10 ms`, aligned with the smallest scan-rate class commonly exposed by Kepware-style IEC 61850 MMS drivers. Treat this as expert bench mode for one/few tags, not as a default multi-IED operating mode.
+
+Beside the polling control there is a **Fast CB** switch. When enabled, ARServer uses a fast acquisition lane: CB position, switch status, Boolean, trip/start/general protection flags and similar discrete points are selected first in every scheduler cycle. Measurement, quality and timestamp points still run, but they do not block breaker-status refresh.
+
+The Modbus Server workspace still shows the active MMS polling status, but the editable timing control intentionally lives beside the IEC wizard because this is an IEC 61850 acquisition setting, not a Modbus output setting.
+
+Important field notes:
+
+- The configured value is a scheduler target, not a guaranteed relay response time. Actual update speed depends on the relay MMS server, network latency, number of active points, and active IED count.
+- With **Fast CB** enabled, ARServer is no longer a simple first-N round-robin. It runs a priority lane first, then a smaller normal lane so analog points do not starve.
+- FUXA/SCADA Modbus reads never trigger direct relay reads; ARServer polls IEC 61850 into its cache, then Modbus TCP and MQTT publish from that cache.
+- For protection-grade event capture, prefer IEC 61850 Reports/RCB, GOOSE, or Sampled Values where available. Fast MMS polling is useful for bench monitoring and HMI refresh, not as a substitute for event/report architecture.
 
 ## Repository Layout
 

@@ -6,6 +6,10 @@ namespace Ari61850Bridge.Services;
 
 public sealed class BridgeRuntime : IAsyncDisposable
 {
+    public const int MinimumMmsPollingIntervalMs = 10;
+    public const int DefaultMmsPollingIntervalMs = 1000;
+    public const int MaximumMmsPollingIntervalMs = 600000;
+
     private IIec61850Client _iecClient;
     private readonly Func<IIec61850Client>? _iecClientFactory;
     private readonly Dictionary<string, RelayEndpointView> _relayIndex;
@@ -16,6 +20,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
     private readonly List<BindingItem> _bindings;
     private readonly CancellationTokenSource _cts = new();
     private readonly bool _enableModbusTcp;
+    private readonly bool _fastAcquisitionEnabled;
     private readonly MqttGatewaySettings _mqttSettings;
     private Task? _loopTask;
     private DateTime _lastModbusCounterSnapshot = DateTime.Now;
@@ -26,6 +31,10 @@ public sealed class BridgeRuntime : IAsyncDisposable
     private readonly Dictionary<string, DateTime> _nextPollDueUtc = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _roundRobinCursorByRelay = new(StringComparer.OrdinalIgnoreCase);
     private const int MaxReadsPerIedPerCycle = 8;
+    private const int MaxFastReadsPerIedPerCycle = 16;
+    private const int MaxNormalReadsPerIedPerCycleWhenFastLaneActive = 4;
+    private const int SlowSchedulerDelayMs = 120;
+    private const int FastSchedulerDelayMs = 2;
 
     public event Action<DiagnosticEntry>? Diagnostic;
     public event Action<BindingItem>? BindingUpdated;
@@ -64,11 +73,13 @@ public sealed class BridgeRuntime : IAsyncDisposable
         IEnumerable<RelayEndpointView> relays,
         Func<IIec61850Client>? iecClientFactory,
         bool enableModbusTcp,
-        MqttGatewaySettings mqttSettings)
+        MqttGatewaySettings mqttSettings,
+        bool fastAcquisitionEnabled = true)
     {
         _iecClient = iecClient;
         _iecClientFactory = iecClientFactory;
         _enableModbusTcp = enableModbusTcp;
+        _fastAcquisitionEnabled = fastAcquisitionEnabled;
         _mqttSettings = mqttSettings;
         _bindings = bindings.Where(b => b.IsEnabled && (b.PublishToModbus || b.PublishToMqtt)).ToList();
         _relayIndex = relays
@@ -96,7 +107,13 @@ public sealed class BridgeRuntime : IAsyncDisposable
         IsRunning = true;
         EventMode = ResolveRuntimeMode();
 
-        Log("INFO", "Runtime", $"Runtime started. Active bindings: {_bindings.Count}. Scheduler: max {MaxReadsPerIedPerCycle} MMS reads/IED/cycle, UI grid uses buffered snapshots.");
+        var fastestPollMs = _bindings.Count == 0 ? DefaultMmsPollingIntervalMs : _bindings.Min(GetPollIntervalMs);
+        var fastCandidateCount = _fastAcquisitionEnabled ? _bindings.Count(IsFastAcquisitionCandidate) : 0;
+        Log("INFO", "Runtime", $"Runtime started. Active bindings: {_bindings.Count}. Scheduler: target fastest MMS poll {fastestPollMs} ms, fast CB lane {(_fastAcquisitionEnabled ? "ON" : "OFF")} ({fastCandidateCount} candidate point(s)), UI grid uses buffered snapshots.");
+        if (fastestPollMs <= 50)
+            Log("WARN", "Runtime", "Fast MMS polling mode is enabled. Effective speed still depends on relay response time, network latency, number of active tags, and MMS server limits; use reports/RCB for critical event capture when available.");
+        if (_fastAcquisitionEnabled)
+            Log("INFO", "Runtime", "Fast CB acquisition lane is active: CB position/status/Boolean/protection flags are scheduled before measurements and quality/timestamp points.");
         Log("INFO", "Runtime", $"IEC source mode: {EventMode}.");
         if (_enableModbusTcp)
             Log("INFO", "Runtime", $"Modbus TCP slave/server ready on {modbusBindAddress}:{modbusPort}, Unit ID {safeUnitId}.");
@@ -110,7 +127,8 @@ public sealed class BridgeRuntime : IAsyncDisposable
         var relayCount = _bindings.Select(b => string.IsNullOrWhiteSpace(b.RelayId) ? "__single__" : b.RelayId).Distinct(StringComparer.OrdinalIgnoreCase).Count();
         if (_iecClient.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase))
             return relayCount > 1 ? "Mock Multi-IED Polling" : "Mock Polling Simulation";
-        return relayCount > 1 ? "IEC61850 MMS Polling / Multi-IED" : "IEC61850 MMS Polling";
+        var mode = relayCount > 1 ? "IEC61850 MMS Polling / Multi-IED" : "IEC61850 MMS Polling";
+        return _fastAcquisitionEnabled ? $"{mode} + Fast CB Lane" : mode;
     }
 
     private async Task EnsureIecClientsAsync(CancellationToken token)
@@ -245,33 +263,56 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
             if (ordered.Count == 0) continue;
 
-            var start = _roundRobinCursorByRelay.TryGetValue(relayKey, out var cursor)
-                ? Math.Clamp(cursor, 0, ordered.Count - 1)
-                : 0;
-
-            var scanned = 0;
-            var index = start;
-            var added = 0;
-
-            while (scanned < ordered.Count && added < MaxReadsPerIedPerCycle)
+            if (!_fastAcquisitionEnabled)
             {
-                var candidate = ordered[index];
-                if (IsDueForPoll(candidate, nowUtc))
-                {
-                    selected.Add(candidate);
-                    added++;
-                }
-
-                index = (index + 1) % ordered.Count;
-                scanned++;
+                selected.AddRange(SelectDueFromOrderedPool(relayKey, ordered, nowUtc, MaxReadsPerIedPerCycle));
+                continue;
             }
 
-            // Important: advance the cursor even when many points are due.
-            // Otherwise the first N signals of every IED are polled forever and
-            // later SCL/IP points stay at Pending read / Mapped indefinitely.
-            if (added > 0)
-                _roundRobinCursorByRelay[relayKey] = index;
+            var fastOrdered = ordered.Where(IsFastAcquisitionCandidate).ToList();
+            var normalOrdered = ordered.Where(b => !IsFastAcquisitionCandidate(b)).ToList();
+
+            // Fast acquisition lane: CB position, switch status, trip/start and Boolean points
+            // are selected first so a breaker status change does not wait behind analog/quality tags.
+            selected.AddRange(SelectDueFromOrderedPool($"{relayKey}|fast", fastOrdered, nowUtc, MaxFastReadsPerIedPerCycle));
+
+            // Keep a small normal lane alive to prevent analog/quality starvation, but do not let it
+            // dominate the short scheduler cycles needed by fast status acquisition.
+            var normalBudget = fastOrdered.Count > 0 ? MaxNormalReadsPerIedPerCycleWhenFastLaneActive : MaxReadsPerIedPerCycle;
+            selected.AddRange(SelectDueFromOrderedPool($"{relayKey}|normal", normalOrdered, nowUtc, normalBudget));
         }
+
+        return selected;
+    }
+
+    private List<BindingItem> SelectDueFromOrderedPool(string cursorKey, IReadOnlyList<BindingItem> ordered, DateTime nowUtc, int budget)
+    {
+        var selected = new List<BindingItem>();
+        if (ordered.Count == 0 || budget <= 0)
+            return selected;
+
+        var start = _roundRobinCursorByRelay.TryGetValue(cursorKey, out var cursor)
+            ? Math.Clamp(cursor, 0, ordered.Count - 1)
+            : 0;
+
+        var scanned = 0;
+        var index = start;
+
+        while (scanned < ordered.Count && selected.Count < budget)
+        {
+            var candidate = ordered[index];
+            if (IsDueForPoll(candidate, nowUtc))
+                selected.Add(candidate);
+
+            index = (index + 1) % ordered.Count;
+            scanned++;
+        }
+
+        // Important: advance the cursor even when many points are due.
+        // Otherwise the first N signals of every IED are polled forever and
+        // later SCL/IP points stay at Pending read / Mapped indefinitely.
+        if (selected.Count > 0)
+            _roundRobinCursorByRelay[cursorKey] = index;
 
         return selected;
     }
@@ -397,8 +438,45 @@ public sealed class BridgeRuntime : IAsyncDisposable
             }
 
             RuntimeTick?.Invoke();
-            await Task.Delay(120, token);
+            await Task.Delay(GetSchedulerDelayMs(), token);
         }
+    }
+
+
+    public static bool IsFastAcquisitionCandidate(BindingItem binding)
+    {
+        var category = binding.Category ?? string.Empty;
+        var dataType = binding.IecDataType ?? string.Empty;
+        var modbusType = binding.ModbusDataType ?? string.Empty;
+        var modbusArea = binding.ModbusArea ?? string.Empty;
+        var name = binding.SignalName ?? string.Empty;
+        var reference = (binding.IecReference ?? string.Empty).Replace('$', '.').ToLowerInvariant();
+        var search = $"{name} {reference} {category} {dataType} {modbusType}".ToLowerInvariant();
+
+        if (category.Equals("Position", StringComparison.OrdinalIgnoreCase)) return true;
+        if (category.Equals("Protection", StringComparison.OrdinalIgnoreCase) &&
+            (reference.EndsWith(".op.general") || reference.EndsWith(".str.general") || reference.EndsWith(".tr.general"))) return true;
+
+        if (dataType.Equals("Boolean", StringComparison.OrdinalIgnoreCase) ||
+            modbusType.Equals("Bool", StringComparison.OrdinalIgnoreCase) ||
+            modbusArea.Equals("Coil", StringComparison.OrdinalIgnoreCase) ||
+            modbusArea.Equals("DiscreteInput", StringComparison.OrdinalIgnoreCase)) return true;
+
+        if (reference.Contains(".pos.stval") || reference.EndsWith(".pos")) return true;
+        if (reference.Contains("xcbr") || reference.Contains("xswi") || reference.Contains("cswi")) return true;
+
+        return search.Contains("breaker") ||
+               search.Contains("circuit breaker") ||
+               search.Contains(" cb ") ||
+               search.Contains("52a") ||
+               search.Contains("52b") ||
+               search.Contains("open") ||
+               search.Contains("close") ||
+               search.Contains("closed") ||
+               search.Contains("trip") ||
+               search.Contains("start") ||
+               search.Contains("status") ||
+               search.Contains("position");
     }
 
     private bool IsDueForPoll(BindingItem binding, DateTime nowUtc)
@@ -414,9 +492,16 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
     private static string GetBindingPollKey(BindingItem binding) => $"{binding.RelayId}|{binding.IecReference}|{binding.ModbusArea}|{binding.ModbusAddress}";
 
+    public static int NormalizeMmsPollingIntervalMs(int requestedMs)
+    {
+        if (requestedMs <= 0) return DefaultMmsPollingIntervalMs;
+        return Math.Clamp(requestedMs, MinimumMmsPollingIntervalMs, MaximumMmsPollingIntervalMs);
+    }
+
     private static int GetPollIntervalMs(BindingItem binding)
     {
-        if (binding.PollingIntervalMs >= 250) return binding.PollingIntervalMs;
+        if (binding.PollingIntervalMs > 0) return NormalizeMmsPollingIntervalMs(binding.PollingIntervalMs);
+
         var category = binding.Category ?? string.Empty;
         var dataType = binding.IecDataType ?? string.Empty;
         if (category.Equals("Position", StringComparison.OrdinalIgnoreCase)) return 500;
@@ -424,6 +509,20 @@ public sealed class BridgeRuntime : IAsyncDisposable
         if (category.Equals("Measurement", StringComparison.OrdinalIgnoreCase) || dataType.Equals("Float32", StringComparison.OrdinalIgnoreCase)) return 1500;
         if (category.Equals("Quality", StringComparison.OrdinalIgnoreCase) || category.Equals("Timestamp", StringComparison.OrdinalIgnoreCase)) return 4000;
         return 2500;
+    }
+
+    private int GetSchedulerDelayMs()
+    {
+        if (_nextPollDueUtc.Count == 0) return SlowSchedulerDelayMs;
+
+        var nowUtc = DateTime.UtcNow;
+        var nextDue = _nextPollDueUtc.Values.Min();
+        var waitMs = (int)Math.Ceiling((nextDue - nowUtc).TotalMilliseconds);
+        if (waitMs <= 0) return 1;
+
+        var fastestActivePoll = _bindings.Count == 0 ? DefaultMmsPollingIntervalMs : _bindings.Min(GetPollIntervalMs);
+        var ceiling = fastestActivePoll <= 50 ? 25 : fastestActivePoll <= 100 ? 50 : SlowSchedulerDelayMs;
+        return Math.Clamp(waitMs, FastSchedulerDelayMs, ceiling);
     }
 
     private IIec61850Client? GetClientForBinding(BindingItem binding)

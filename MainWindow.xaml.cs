@@ -31,6 +31,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _modbusBindAddress = "0.0.0.0";
     private int _modbusPort = 502;
     private int _modbusUnitId = 1;
+    private int _mmsPollingIntervalMs = BridgeRuntime.DefaultMmsPollingIntervalMs;
+    private bool _fastAcquisitionEnabled = true;
     private bool _enableModbusTcp = true;
     private MqttGatewaySettings _mqttSettings = new();
     private string _iedConnectionStatus = "Disconnected";
@@ -75,6 +77,31 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string ModbusBindAddress { get => _modbusBindAddress; set { if (Set(ref _modbusBindAddress, value)) Raise(nameof(ModbusEndpointText)); } }
     public int ModbusPort { get => _modbusPort; set { if (Set(ref _modbusPort, value)) Raise(nameof(ModbusEndpointText)); } }
     public int ModbusUnitId { get => _modbusUnitId; set { if (Set(ref _modbusUnitId, value)) Raise(nameof(ModbusEndpointText)); } }
+    public int MmsPollingIntervalMs
+    {
+        get => _mmsPollingIntervalMs;
+        set
+        {
+            if (Set(ref _mmsPollingIntervalMs, value))
+            {
+                Raise(nameof(MmsPollingText));
+                Raise(nameof(MmsPollingHintText));
+                Raise(nameof(FastAcquisitionText));
+            }
+        }
+    }
+    public bool FastAcquisitionEnabled
+    {
+        get => _fastAcquisitionEnabled;
+        set
+        {
+            if (Set(ref _fastAcquisitionEnabled, value))
+            {
+                Raise(nameof(FastAcquisitionText));
+                Raise(nameof(MmsPollingHintText));
+            }
+        }
+    }
     public bool EnableModbusTcp
     {
         get => _enableModbusTcp;
@@ -216,6 +243,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         : $"Showing {SignalsView.Cast<object>().Count()} smart SCADA signals of {Signals.Count} discovered attributes";
     public string ModbusEndpointText => EnableModbusTcp ? $"{ModbusBindAddress}:{ModbusPort} / UID {ModbusUnitId}" : "Modbus disabled";
     public string MqttEndpointText => MqttSettings.IsEnabled ? $"{MqttSettings.BrokerHost}:{MqttSettings.BrokerPort} / {MqttSettings.TopicRoot}" : "MQTT disabled";
+    public string MmsPollingText => $"MMS {BridgeRuntime.NormalizeMmsPollingIntervalMs(MmsPollingIntervalMs)} ms";
+    public string FastAcquisitionText => FastAcquisitionEnabled
+        ? $"Fast CB ON / {BridgeRuntime.NormalizeMmsPollingIntervalMs(MmsPollingIntervalMs)} ms target"
+        : "Fast CB OFF";
+    public string MmsPollingHintText => FastAcquisitionEnabled
+        ? "Fast CB lane prioritizes breaker/status points before measurements. Use RCB/GOOSE for protection-event evidence when available."
+        : BridgeRuntime.NormalizeMmsPollingIntervalMs(MmsPollingIntervalMs) <= 50
+            ? "Fast polling: benchmark/monitoring mode, not protection-event substitute."
+            : "Runtime reads IEC MMS into cache; Modbus/MQTT clients read cached values.";
     public string RuntimeInsightText => RuntimeStatusText == "Running" ? $"Publishing {ActiveOutputBindingCount} routed binding(s) via {RuntimeOutputText}" : $"Ready: {RuntimeOutputText}";
     public string IecInsightText => $"{IedConnectionStatus} / {SignalCount} discovered";
     public string ModbusTrafficText => $"{ModbusClientCount} client(s), {ModbusReadCount} read(s)";
@@ -563,6 +599,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         var newBindings = BindingAutoMapper.CreateBindings(selected, relay == null ? 0 : GetRelayBlockIndex(relay));
+        foreach (var item in newBindings)
+            ApplyDefaultTimingToBinding(item);
+
         if (relay != null)
         {
             relay.ModbusBindings.Clear();
@@ -615,6 +654,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var added = 0;
         foreach (var item in BindingAutoMapper.CreateBindings(selected, relay == null ? 0 : GetRelayBlockIndex(relay)))
         {
+            ApplyDefaultTimingToBinding(item);
             if (ownerBindings.Any(b => string.Equals(b.IecReference, item.IecReference, StringComparison.OrdinalIgnoreCase)))
                 continue;
 
@@ -703,11 +743,97 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ValidateBindings(showMessage: true);
     }
 
+    private void ApplyDefaultTimingToBinding(BindingItem binding)
+    {
+        binding.PollingIntervalMs = BridgeRuntime.NormalizeMmsPollingIntervalMs(MmsPollingIntervalMs);
+        binding.StaleTimeoutMs = Math.Max(binding.StaleTimeoutMs, Math.Max(3000, binding.PollingIntervalMs * 10));
+    }
+
+    private void ApplyMmsPollingToMap_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsRuntimeRunning)
+        {
+            AddLog("WARN", "Runtime", "MMS polling time is locked while runtime is running. Stop Runtime before changing polling timing.");
+            return;
+        }
+
+        ApplyProjectPollingIntervalToPublishedMap(logChanges: true);
+        NormalizePublishedBindingTiming(logChanges: true);
+        ValidateBindings(showMessage: false);
+    }
+
+    private void ApplyProjectPollingIntervalToPublishedMap(bool logChanges)
+    {
+        var requested = MmsPollingIntervalMs;
+        var normalized = BridgeRuntime.NormalizeMmsPollingIntervalMs(requested);
+        if (requested != normalized)
+            MmsPollingIntervalMs = normalized;
+
+        var touched = 0;
+        foreach (var binding in EnumerateAllKnownBindings().Where(IsRoutedBinding))
+        {
+            if (binding.PollingIntervalMs != normalized)
+            {
+                binding.PollingIntervalMs = normalized;
+                touched++;
+            }
+
+            binding.StaleTimeoutMs = Math.Max(binding.StaleTimeoutMs, Math.Max(3000, normalized * 10));
+        }
+
+        if (logChanges)
+        {
+            var level = normalized <= 50 ? "WARN" : "INFO";
+            AddLog(level, "Runtime", $"IEC 61850 MMS polling target set to {normalized} ms for {touched} routed binding(s). Minimum allowed target is {BridgeRuntime.MinimumMmsPollingIntervalMs} ms.");
+            if (normalized <= 50)
+                AddLog("WARN", "Runtime", "10-50 ms MMS polling is best treated as expert fast monitoring/bench mode. For protection-grade event capture, prefer Report/RCB or GOOSE/SV path when available.");
+            if (FastAcquisitionEnabled)
+                AddLog("INFO", "Runtime", "Fast CB acquisition is enabled. CB position/status/Boolean/protection flags will be scheduled before measurement tags at runtime.");
+        }
+    }
+
+    private void NormalizePublishedBindingTiming(bool logChanges)
+    {
+        var clamped = 0;
+        foreach (var binding in EnumerateAllKnownBindings().Where(IsRoutedBinding))
+        {
+            var normalized = BridgeRuntime.NormalizeMmsPollingIntervalMs(binding.PollingIntervalMs);
+            if (binding.PollingIntervalMs != normalized)
+            {
+                binding.PollingIntervalMs = normalized;
+                clamped++;
+            }
+
+            binding.StaleTimeoutMs = Math.Max(binding.StaleTimeoutMs, Math.Max(3000, normalized * 10));
+        }
+
+        if (logChanges && clamped > 0)
+            AddLog("WARN", "Runtime", $"Clamped {clamped} polling interval value(s) into safe range {BridgeRuntime.MinimumMmsPollingIntervalMs}..{BridgeRuntime.MaximumMmsPollingIntervalMs} ms.");
+    }
+
+    private IEnumerable<BindingItem> EnumerateAllKnownBindings()
+    {
+        var seen = new HashSet<BindingItem>(ReferenceEqualityComparer.Instance);
+
+        foreach (var binding in PublishedModbusBindings)
+            if (seen.Add(binding))
+                yield return binding;
+
+        foreach (var binding in Bindings)
+            if (seen.Add(binding))
+                yield return binding;
+
+        foreach (var relayBinding in Relays.SelectMany(r => r.ModbusBindings))
+            if (seen.Add(relayBinding))
+                yield return relayBinding;
+    }
+
     private bool ValidateBindings(bool showMessage)
     {
         // Always normalize the global Modbus map before validation. This makes multi-IED
         // projects self-healing: users add IEDs and select signals, ArServer arranges the
         // address blocks automatically instead of forcing manual register planning.
+        NormalizePublishedBindingTiming(logChanges: false);
         ArrangeAllRelayModbusBlocks();
 
         var errors = new List<string>();
@@ -776,6 +902,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         try
         {
+            ApplyProjectPollingIntervalToPublishedMap(logChanges: false);
+            NormalizePublishedBindingTiming(logChanges: false);
             var project = new BridgeProject
             {
                 ProjectName = ProjectName,
@@ -786,6 +914,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 EnableModbusTcp = EnableModbusTcp,
                 ModbusPort = ModbusPort,
                 ModbusUnitId = ModbusUnitId,
+                MmsPollingIntervalMs = BridgeRuntime.NormalizeMmsPollingIntervalMs(MmsPollingIntervalMs),
+                FastAcquisitionEnabled = FastAcquisitionEnabled,
                 Mqtt = CloneMqttSettings(MqttSettings),
                 Signals = Signals.ToList(),
                 Bindings = PublishedModbusBindings.ToList(),
@@ -829,6 +959,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             EnableModbusTcp = project.EnableModbusTcp;
             ModbusPort = project.ModbusPort <= 0 ? 502 : project.ModbusPort;
             ModbusUnitId = project.ModbusUnitId <= 0 ? 1 : project.ModbusUnitId;
+            MmsPollingIntervalMs = BridgeRuntime.NormalizeMmsPollingIntervalMs(project.MmsPollingIntervalMs <= 0 ? BridgeRuntime.DefaultMmsPollingIntervalMs : project.MmsPollingIntervalMs);
+            FastAcquisitionEnabled = project.FastAcquisitionEnabled;
             MqttSettings = CloneMqttSettings(project.Mqtt ?? new MqttGatewaySettings());
 
             Signals.Clear();
@@ -881,6 +1013,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MoveRuntimeToggle(true, true);
 
             PreparePublishedModbusMapForRuntime();
+            ApplyProjectPollingIntervalToPublishedMap(logChanges: true);
+            NormalizePublishedBindingTiming(logChanges: true);
             if (!EnableModbusTcp && !MqttSettings.IsEnabled)
             {
                 RuntimeStatusText = "Stopped";
@@ -894,6 +1028,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 AutoMap_Click(sender, e);
                 PreparePublishedModbusMapForRuntime();
+                ApplyProjectPollingIntervalToPublishedMap(logChanges: true);
+                NormalizePublishedBindingTiming(logChanges: true);
                 if (PublishedModbusBindings.Count == 0)
                 {
                     RuntimeStatusText = "Stopped";
@@ -969,7 +1105,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 Relays,
                 () => UseRealIecEngine ? (IIec61850Client)new RealLibIec61850Client() : new MockIec61850Client(),
                 EnableModbusTcp,
-                CloneMqttSettings(MqttSettings));
+                CloneMqttSettings(MqttSettings),
+                FastAcquisitionEnabled);
             _runtime.Diagnostic += entry => Dispatcher.Invoke(() => AddLog(entry.Level, entry.Source, entry.Message));
             _runtime.BindingUpdated += binding => Dispatcher.Invoke(() =>
             {

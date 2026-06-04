@@ -10,6 +10,8 @@ public class BridgeProject
     public bool EnableModbusTcp { get; set; } = true;
     public int ModbusPort { get; set; } = 502;
     public int ModbusUnitId { get; set; } = 1;
+    public int MmsPollingIntervalMs { get; set; } = 1000;
+    public bool FastAcquisitionEnabled { get; set; } = true;
     public MqttGatewaySettings Mqtt { get; set; } = new();
     public List<SignalDefinition> Signals { get; set; } = new();
     public List<BindingItem> Bindings { get; set; } = new();

@@ -224,6 +224,16 @@
                                         <TextBlock Text="{Binding ActiveRelaySubtitle}" FontSize="12.5" Foreground="{StaticResource Muted}" Margin="0,2,0,0"/>
                                     </StackPanel>
                                     <WrapPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <Border Background="#F8FAFC" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="8,5" Margin="0,0,8,0" ToolTip="IEC 61850 MMS polling target in milliseconds. Fastest allowed target is 10 ms.">
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <TextBlock Text="MMS poll" FontSize="12.2" Foreground="{StaticResource Muted}" Margin="0,0,7,0" VerticalAlignment="Center"/>
+                                                <TextBox Width="68" MinHeight="28" Padding="9,4" Text="{Binding MmsPollingIntervalMs, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" IsEnabled="{Binding IsProjectEditable}"/>
+                                                <TextBlock Text="ms" FontSize="12.2" Foreground="{StaticResource Muted}" Margin="6,0,8,0" VerticalAlignment="Center"/>
+                                                <Button Content="Apply" Style="{StaticResource MiniChipButton}" Click="ApplyMmsPollingToMap_Click" IsEnabled="{Binding IsProjectEditable}" Padding="10,4" MinHeight="28"/>
+                                                <Border Width="1" Height="18" Background="{StaticResource Line}" Margin="9,0"/>
+                                                <CheckBox Content="Fast CB" IsChecked="{Binding FastAcquisitionEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center" ToolTip="Prioritize breaker position, status, Boolean and protection flags ahead of analog measurements."/>
+                                            </StackPanel>
+                                        </Border>
                                         <Button Content="✎ Edit IED Wizard" Style="{StaticResource PrimaryButton}" Click="EditActiveRelay_Click" Margin="0,0,8,0" IsEnabled="{Binding IsProjectEditable}"/>
                                         <Button Content="⇢ Open Modbus Server" Style="{StaticResource SoftButton}" Click="OpenModbusServer_Click"/>
                                     </WrapPanel>
@@ -306,11 +316,15 @@
                                 <TextBlock Text="{Binding MqttEndpointText}" FontSize="12.5" Foreground="{StaticResource Ink}" Margin="0,0,18,0"/>
                                 <TextBlock Text="{Binding MqttTrafficText}" FontSize="12.5" Foreground="{StaticResource Ink}" Margin="0,0,18,0"/>
                                 <TextBlock Text="IEC" FontSize="12.5" Foreground="{StaticResource Muted}" Margin="0,0,6,0"/>
-                                <TextBlock Text="{Binding IecInsightText}" FontSize="12.5" Foreground="{StaticResource Ink}"/>
+                                <TextBlock Text="{Binding IecInsightText}" FontSize="12.5" Foreground="{StaticResource Ink}" Margin="0,0,18,0"/>
+                                <TextBlock Text="MMS Poll" FontSize="12.5" Foreground="{StaticResource Muted}" Margin="0,0,6,0"/>
+                                <TextBlock Text="{Binding MmsPollingText}" FontSize="12.5" Foreground="{StaticResource Ink}" FontWeight="SemiBold" Margin="0,0,18,0"/>
+                                <TextBlock Text="Acq" FontSize="12.5" Foreground="{StaticResource Muted}" Margin="0,0,6,0"/>
+                                <TextBlock Text="{Binding FastAcquisitionText}" FontSize="12.5" Foreground="{StaticResource Ink}" FontWeight="SemiBold"/>
                             </WrapPanel>
                             <WrapPanel Margin="0,10,0,0" VerticalAlignment="Center">
-                                <CheckBox Content="Modbus TCP" IsChecked="{Binding EnableModbusTcp, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center" Margin="0,0,18,0"/>
-                                <TextBlock Text="Modbus publishes only rows checked in the Modbus column. MQTT routing is managed in the MQTT Topics tab." Style="{StaticResource Caption}" VerticalAlignment="Center"/>
+                                <CheckBox Content="Modbus TCP" IsChecked="{Binding EnableModbusTcp, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsProjectEditable}" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                                <TextBlock Text="{Binding MmsPollingHintText}" Style="{StaticResource Caption}" VerticalAlignment="Center"/>
                             </WrapPanel>
                         </StackPanel>
                     </Border>
@@ -341,6 +355,7 @@
                                     <DataGridTextColumn Header="Addr" Binding="{Binding ModbusAddress, UpdateSourceTrigger=PropertyChanged}" Width="70*" MinWidth="64"/>
                                     <DataGridTextColumn Header="Type" Binding="{Binding ModbusDataType, UpdateSourceTrigger=PropertyChanged}" Width="75*" MinWidth="66"/>
                                     <DataGridTextColumn Header="Unit" Binding="{Binding Unit, UpdateSourceTrigger=PropertyChanged}" Width="60*" MinWidth="56"/>
+                                    <DataGridTextColumn Header="Poll ms" Binding="{Binding PollingIntervalMs, UpdateSourceTrigger=PropertyChanged}" Width="72*" MinWidth="66"/>
                                     <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="125*" MinWidth="112" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="IEC Reference" Binding="{Binding IecReference}" Width="260*" MinWidth="220" IsReadOnly="True"/>
                                 </DataGrid.Columns>
@@ -444,6 +459,7 @@
                                     <DataGridTextColumn Header="Topic Tag" Binding="{Binding MqttTopic, UpdateSourceTrigger=PropertyChanged}" Width="170*" MinWidth="150"/>
                                     <DataGridTextColumn Header="Value" Binding="{Binding CurrentValue}" Width="85*" MinWidth="76" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="Q" Binding="{Binding Quality}" Width="70*" MinWidth="58" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Poll ms" Binding="{Binding PollingIntervalMs, UpdateSourceTrigger=PropertyChanged}" Width="72*" MinWidth="66"/>
                                     <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="130*" MinWidth="116" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="IEC Reference" Binding="{Binding IecReference}" Width="280*" MinWidth="230" IsReadOnly="True"/>
                                 </DataGrid.Columns>

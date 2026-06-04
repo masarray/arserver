@@ -11,6 +11,8 @@ public class BindingItem : ObservableObject
     private int _sequence;
     private DateTime _lastUpdate = DateTime.MinValue;
     private int _ageMs;
+    private int _pollingIntervalMs = 1000;
+    private int _staleTimeoutMs = 3000;
 
     public bool IsEnabled { get => _isEnabled; set => Set(ref _isEnabled, value); }
     public bool PublishToModbus { get => _publishToModbus; set => Set(ref _publishToModbus, value); }
@@ -28,8 +30,8 @@ public class BindingItem : ObservableObject
     public string RcbMode { get; set; } = "Auto";
     public string DataSetReference { get; set; } = "";
     public string ReportControlReference { get; set; } = "";
-    public int PollingIntervalMs { get; set; } = 1000;
-    public int StaleTimeoutMs { get; set; } = 3000;
+    public int PollingIntervalMs { get => _pollingIntervalMs; set => Set(ref _pollingIntervalMs, value); }
+    public int StaleTimeoutMs { get => _staleTimeoutMs; set => Set(ref _staleTimeoutMs, value); }
 
     public string ModbusArea { get; set; } = "HoldingRegister";
     public int ModbusAddress { get; set; }
