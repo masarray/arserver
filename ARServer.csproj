@@ -10,8 +10,9 @@
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
     <Authors>masarray</Authors>
     <Description>Windows IEC 61850 MMS to Modbus TCP gateway for HMI and relay-bench workflows.</Description>
-    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/masarray/arserver</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/masarray/arserver</PackageProjectUrl>
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets\gateway-hero.png" />

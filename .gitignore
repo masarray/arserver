@@ -361,3 +361,10 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Optional IEC 61850 runtime DLLs are user-provided and must not be committed
+iec61850.dll
+iec61850dotnet.dll
+libiec61850.dll
+libiec61850*.dll
+*iec61850*.dll

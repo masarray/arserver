@@ -107,11 +107,11 @@
                                 <DataGridTextColumn Header="Priority" Binding="{Binding Category}" Width="110" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="LN" Binding="{Binding LogicalNode}" Width="130" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Signal" Binding="{Binding Name}" Width="220" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="IEC Reference" Binding="{Binding ObjectReference}" Width="360" MinWidth="280" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="125" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Quality" Binding="{Binding Quality}" Width="85" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="RCB Plan" Binding="{Binding ReportPlan}" Width="120" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Type" Binding="{Binding DataType}" Width="85" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="IEC Reference" Binding="{Binding ObjectReference}" Width="*" IsReadOnly="True"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </Grid>
@@ -138,13 +138,13 @@
                             <DataGrid.Columns>
                                 <DataGridCheckBoxColumn Header="On" Binding="{Binding IsEnabled, UpdateSourceTrigger=PropertyChanged}" Width="48"/>
                                 <DataGridTextColumn Header="Signal" Binding="{Binding SignalName, UpdateSourceTrigger=PropertyChanged}" Width="190"/>
+                                <DataGridTextColumn Header="IEC Reference" Binding="{Binding IecReference}" Width="360" MinWidth="280" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Area" Binding="{Binding ModbusArea, UpdateSourceTrigger=PropertyChanged}" Width="120"/>
                                 <DataGridTextColumn Header="Address" Binding="{Binding ModbusAddress, UpdateSourceTrigger=PropertyChanged}" Width="82"/>
                                 <DataGridTextColumn Header="Type" Binding="{Binding ModbusDataType, UpdateSourceTrigger=PropertyChanged}" Width="85"/>
                                 <DataGridTextColumn Header="Unit" Binding="{Binding Unit, UpdateSourceTrigger=PropertyChanged}" Width="70"/>
                                 <DataGridTextColumn Header="Value" Binding="{Binding CurrentValue}" Width="110" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Quality" Binding="{Binding Quality}" Width="82" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="IEC Reference" Binding="{Binding IecReference}" Width="*" IsReadOnly="True"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </Grid>

@@ -215,11 +215,11 @@
           <div>
             <p class="section-kicker">How to use the software</p>
             <h2>Install ARServer, add the runtime pieces, then route IEC values.</h2>
-            <p>ARServer is a Windows gateway application. Real IEC 61850 communication needs the libiec61850 .NET/native DLLs beside <code>ArServer.exe</code>. MQTT output needs an external broker such as Mosquitto, EMQX, or HiveMQ.</p>
+            <p>ARServer is a Windows gateway application. Real IEC 61850 communication needs user-supplied libiec61850-compatible .NET/native DLLs beside <code>ArServer.exe</code> under those DLLs' own license terms. MQTT output needs an external broker such as Mosquitto, EMQX, or HiveMQ.</p>
           </div>
           <ol class="steps">
             <li><span>1</span> Download the Windows installer from <strong>GitHub Releases</strong>.</li>
-            <li><span>2</span><p>For real IED testing, copy the libiec61850 runtime DLLs beside <code>ArServer.exe</code>: <code>iec61850dotnet.dll</code> and <code>iec61850.dll</code>.</p></li>
+            <li><span>2</span><p>For real IED testing, copy your own licensed IEC 61850 runtime DLLs beside <code>ArServer.exe</code>: <code>iec61850dotnet.dll</code> and <code>iec61850.dll</code>. These files are not bundled in ARServer releases.</p></li>
             <li><span>3</span> Start an MQTT broker if MQTT output is enabled.</li>
             <li><span>4</span> Add an IED, discover signals, select rows for Modbus and MQTT, then start runtime.</li>
           </ol>

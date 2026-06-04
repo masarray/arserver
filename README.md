@@ -4,6 +4,8 @@ ARServer is a Windows desktop gateway for publishing IEC 61850 MMS data to Modbu
 
 The project is built for substation and relay-bench workflows where operators need a readable IEC 61850 explorer, a deterministic Modbus map, configurable MQTT topic routing, and diagnostics that separate real communication failures from normal polling noise.
 
+**License architecture:** ARServer core is licensed under Apache-2.0. The optional real IEC 61850 MMS adapter loads libiec61850-compatible DLLs only when the user supplies them beside the executable. ARServer source and release packages do not bundle libiec61850 binaries or source.
+
 [Download the latest Windows installer](https://github.com/masarray/arserver/releases)
 
 ## Screenshots
@@ -26,7 +28,7 @@ The project is built for substation and relay-bench workflows where operators ne
 
 ## What It Does
 
-- Connects to IEC 61850 MMS relays using a real libiec61850-based adapter when the runtime DLLs are available.
+- Connects to IEC 61850 MMS relays using an optional libiec61850-compatible adapter when user-provided runtime DLLs are available.
 - Provides a mock IEC 61850 mode for UI, mapping, and Modbus gateway testing without a relay.
 - Imports SCL/CID/SCD files and helps select SCADA-ready signals.
 - Builds Modbus TCP bindings for coils, discrete inputs, input registers, and holding registers.
@@ -47,12 +49,12 @@ The UI already supports a multi-IED workspace model, but the runtime architectur
 - Windows 10 or later
 - .NET 8 SDK for building from source
 - Inno Setup 6 if you want to rebuild the Windows installer locally
-- Optional real IEC 61850 runtime DLLs copied beside the built executable:
+- Optional real IEC 61850 runtime DLLs supplied by the user and copied beside the built executable under their own license terms:
   - `iec61850dotnet.dll`
   - `iec61850.dll`
 - Optional MQTT broker for MQTT output, for example Eclipse Mosquitto.
 
-Without those DLLs, ARServer can still run in mock mode for mapping and Modbus TCP testing.
+Without those DLLs, ARServer can still run in mock mode for mapping, MQTT, and Modbus TCP testing.
 
 ## Download Release
 
@@ -60,7 +62,7 @@ Ready-to-install Windows builds are published on GitHub Releases:
 
 https://github.com/masarray/arserver/releases
 
-The release package is a ZIP containing an Inno Setup installer for Windows x64. The installer includes the GPL-3.0 license, README, and third-party notices.
+The release package is a ZIP containing an Inno Setup installer for Windows x64. The installer includes the Apache-2.0 license, NOTICE, README, and third-party notices. It must not include libiec61850 DLLs unless a separate redistribution right/commercial license is in place.
 
 ## Build
 
@@ -80,7 +82,7 @@ Open the solution in Visual Studio, or run the built WPF executable from the bui
 
 For real relay testing:
 
-1. Copy the libiec61850 .NET/native DLLs beside `ArServer.exe`.
+1. If you need real IED communication, provide your own licensed libiec61850 .NET/native DLLs beside `ArServer.exe`.
 2. Start ARServer.
 3. Add or connect an IED by IP address and MMS port, usually TCP `102`.
 4. Select SCADA/HMI signals.
@@ -161,7 +163,7 @@ Key service classes:
 - `Services/BridgeRuntime.cs` coordinates IEC polling and Modbus publishing.
 - `Services/MqttGatewayPublisher.cs` publishes selected runtime values to MQTT topics.
 - `Services/ModbusTcpServer.cs` implements the read-only Modbus TCP server.
-- `Services/RealLibIec61850Client.cs` adapts libiec61850.NET through reflection.
+- `Services/RealLibIec61850Client.cs` adapts a user-provided libiec61850.NET runtime through reflection.
 - `Services/SclImportService.cs` imports SCL/CID/SCD signal definitions.
 
 ## Safety Notes
@@ -178,9 +180,11 @@ For field use, verify:
 
 ## License
 
-ARServer is open source under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
+ARServer core is open source under the Apache License 2.0. See [LICENSE](LICENSE).
 
-Third-party dependency notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The repository does **not** distribute libiec61850 source or binaries. Real IEC 61850 MMS communication requires a separately supplied runtime such as libiec61850 under GPLv3 or a commercial license from its copyright holder. If you distribute a package that bundles GPLv3 libiec61850 binaries with ARServer, treat that combined distribution separately and review the GPL/commercial licensing obligations.
+
+MQTTnet is MIT-licensed and compatible with Apache-2.0 distribution. Lucide icons are ISC-licensed and may be used in this project when their copyright/license notice is preserved. Third-party dependency notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 
 ## Using the Software
@@ -190,7 +194,7 @@ ARServer is a Windows gateway application, not a cloud service. The landing page
 For real IEC 61850 and MQTT operation:
 
 1. Install ARServer from [GitHub Releases](https://github.com/masarray/arserver/releases), or build it from source.
-2. For real IED communication, copy `iec61850dotnet.dll` and `iec61850.dll` beside `ArServer.exe`.
+2. For real IED communication, copy your own licensed `iec61850dotnet.dll` and `iec61850.dll` beside `ArServer.exe`. These files are not distributed by ARServer.
 3. Start an MQTT broker such as Mosquitto, EMQX, or HiveMQ if MQTT output is enabled.
 4. Add an IED by IP address and MMS port.
 5. Discover IEC 61850 objects, select SCADA/HMI signals, and validate the Modbus map.
