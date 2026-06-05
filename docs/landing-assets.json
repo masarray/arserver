@@ -1,27 +1,14 @@
 {
-  "landing_page": "docs/index.html",
-  "hero_background": "docs/assets/gateway-hero.webp",
+  "product": "ARServer",
+  "page": "GitHub Pages landing page",
+  "canonicalUrl": "https://masarray.github.io/arserver/",
+  "repository": "https://github.com/masarray/arserver",
+  "releaseUrl": "https://github.com/masarray/arserver/releases",
   "screenshots": [
-    {
-      "file": "assets/screenshots/arserver-start.webp",
-      "title": "Start workspace",
-      "desc": "Add the first IEC 61850 IED, open a project, and start the gateway from one calm workspace."
-    },
-    {
-      "file": "assets/screenshots/arserver-iec-values.webp",
-      "title": "Live IEC 61850 values",
-      "desc": "Inspect discovered MMS values, quality flags, polling mode, logical nodes, and IEC object references."
-    },
-    {
-      "file": "assets/screenshots/arserver-modbus-server.webp",
-      "title": "Modbus TCP map",
-      "desc": "Publish selected IEC 61850 signals as clean Modbus addresses for DCS, SCADA, and FUXA HMI."
-    },
-    {
-      "file": "assets/screenshots/arserver-mqtt-topics.webp",
-      "title": "MQTT topics",
-      "desc": "Route the same selected signals to broker topics for web HMI, IoT dashboards, and learning labs."
-    }
+    "assets/screenshots/arserver-start.webp",
+    "assets/screenshots/arserver-iec-values.webp",
+    "assets/screenshots/arserver-modbus-server.webp",
+    "assets/screenshots/arserver-mqtt-topics.webp"
   ],
-  "notes": "Static product page assets. ARServer itself runs as a Windows desktop gateway and requires user-supplied libiec61850-compatible DLLs for real IED communication plus an external MQTT broker for MQTT output."
+  "notes": "ARServer is a Windows desktop gateway. The landing page is product documentation; the gateway itself runs locally on Windows."
 }

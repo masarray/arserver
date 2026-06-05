@@ -3,17 +3,89 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ARServer - IEC 61850 to Modbus TCP + MQTT Gateway</title>
-  <meta name="description" content="ARServer is an open-source IEC 61850 to Modbus TCP and MQTT gateway experiment for substation automation learning, FAT, web HMI, and protocol integration labs." />
+  <title>ARServer — IEC 61850 MMS to Modbus TCP and MQTT Gateway for Windows</title>
+  <meta name="description" content="ARServer is a free open-source Windows IEC 61850 MMS gateway for Modbus TCP, MQTT, HMI, SCADA, FUXA, relay testing, FAT/SAT, and substation automation labs." />
+  <meta name="keywords" content="IEC 61850, MMS, Modbus TCP, MQTT, SCADA, HMI, FUXA, substation automation, relay testing, FAT, SAT, WPF, .NET, Windows gateway" />
+  <meta name="author" content="Ari Sulistiono" />
+  <meta name="robots" content="index,follow,max-image-preview:large" />
   <meta name="theme-color" content="#eff6ff" />
-  <meta property="og:title" content="ARServer - IEC 61850 to Modbus TCP + MQTT Gateway" />
-  <meta property="og:description" content="A clean open-source learning gateway for routing IEC 61850 values into Modbus TCP and MQTT for HMI, DCS, and IoT labs." />
+  <link rel="canonical" href="https://masarray.github.io/arserver/" />
+  <meta property="og:title" content="ARServer — IEC 61850 MMS to Modbus TCP and MQTT Gateway" />
+  <meta property="og:description" content="Free open-source Windows gateway for routing IEC 61850 MMS values to Modbus TCP and MQTT for HMI, SCADA, relay testing, and substation automation labs." />
   <meta property="og:type" content="website" />
-  <meta property="og:image" content="assets/gateway-hero.webp" />
+  <meta property="og:url" content="https://masarray.github.io/arserver/" />
+  <meta property="og:image" content="https://masarray.github.io/arserver/assets/gateway-hero.webp" />
+  <meta property="og:image:alt" content="ARServer IEC 61850 MMS to Modbus TCP and MQTT gateway interface" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="ARServer — IEC 61850 MMS Gateway" />
+  <meta name="twitter:description" content="Open-source Windows gateway for IEC 61850 MMS, Modbus TCP, MQTT, HMI, SCADA, relay testing, and FAT/SAT workflows." />
+  <meta name="twitter:image" content="https://masarray.github.io/arserver/assets/gateway-hero.webp" />
   <link rel="icon" type="image/png" sizes="256x256" href="assets/arserver-icon.png" />
   <link rel="apple-touch-icon" href="assets/arserver-icon.png" />
+  <link rel="manifest" href="site.webmanifest" />
   <link rel="preload" as="image" href="assets/gateway-hero.webp" />
   <link rel="stylesheet" href="styles.css" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "ARServer",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Windows 10, Windows 11",
+    "description": "ARServer is a free open-source Windows IEC 61850 MMS gateway for publishing selected relay and IED values to Modbus TCP and MQTT for HMI, SCADA, relay testing, FAT/SAT, and substation automation labs.",
+    "softwareVersion": "1.0.0-public-beta",
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "isAccessibleForFree": true,
+    "url": "https://github.com/masarray/arserver",
+    "downloadUrl": "https://github.com/masarray/arserver/releases",
+    "image": "https://masarray.github.io/arserver/assets/gateway-hero.webp",
+    "author": {
+      "@type": "Person",
+      "name": "Ari Sulistiono"
+    },
+    "keywords": "IEC 61850, MMS, Modbus TCP, MQTT, SCADA, HMI, FUXA, relay testing, FAT/SAT, substation automation"
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is ARServer?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "ARServer is a Windows desktop gateway that routes selected IEC 61850 MMS values to Modbus TCP and MQTT for HMI, SCADA, relay testing, FAT/SAT, and substation automation lab workflows."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is ARServer free and open source?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. ARServer core is free and open source under the Apache-2.0 license. It does not require a subscription or license key."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can ARServer run without a relay?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. ARServer includes mock mode so users can explore the interface, Modbus mapping, and MQTT publishing workflow without a real IED."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does ARServer replace protection event engineering?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. ARServer is useful for bench monitoring, HMI refresh evaluation, and gateway integration. Protection-grade event workflows should use the appropriate event/report architecture available in the IED design."
+        }
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
   <div class="page-shell">
@@ -23,12 +95,13 @@
         <span>ARServer</span>
       </a>
       <nav class="nav-links" aria-label="Sections">
+        <a href="#features">Features</a>
         <a href="#workflow">Workflow</a>
-        <a href="#architecture">Architecture</a>
         <a href="#screenshots">Screenshots</a>
-        <a href="#setup">Setup</a>
+        <a href="#quick-start">Quick start</a>
+        <a href="#faq">FAQ</a>
       </nav>
-      <a class="nav-cta" href="https://github.com/masarray/arserver/releases" target="_blank" rel="noreferrer">Download Release</a>
+      <a class="nav-cta" href="https://github.com/masarray/arserver/releases" target="_blank" rel="noreferrer">Download</a>
     </header>
 
     <main id="top">
@@ -36,43 +109,43 @@
         <div class="hero-bg" aria-hidden="true"></div>
         <div class="hero-overlay" aria-hidden="true"></div>
         <div class="hero-content">
-          <p class="eyebrow"><span></span> Open-source substation communication lab</p>
-          <h1 id="hero-title">IEC 61850 data gateway with confidence.</h1>
-          <p class="hero-lead">ARServer is a compact gateway experiment for engineers who want to learn, test, and visualize IEC 61850 data through DCS-style Modbus mapping and web HMI / IoT-style MQTT topics.</p>
+          <p class="eyebrow"><span></span> Free Apache-2.0 Windows gateway</p>
+          <h1 id="hero-title">IEC 61850 MMS values routed cleanly to Modbus TCP and MQTT.</h1>
+          <p class="hero-lead">ARServer helps automation engineers inspect IEC 61850 IED data, bind selected signals to Modbus TCP, publish MQTT topics, and validate gateway behavior during HMI, SCADA, FAT/SAT, relay testing, and substation automation lab work.</p>
           <div class="hero-actions">
-            <a class="button primary" href="https://github.com/masarray/arserver/releases" target="_blank" rel="noreferrer">Download Release</a>
-            <a class="button secondary" href="#screenshots">See the interface</a>
+            <a class="button primary" href="https://github.com/masarray/arserver/releases" target="_blank" rel="noreferrer">Download Windows ZIP</a>
+            <a class="button secondary" href="https://github.com/masarray/arserver" target="_blank" rel="noreferrer">View GitHub</a>
           </div>
           <div class="hero-metrics" aria-label="Key capabilities">
-            <div><strong>IEC 61850</strong><span>MMS discovery & values</span></div>
-            <div><strong>Modbus TCP</strong><span>DCS / SCADA map</span></div>
-            <div><strong>MQTT</strong><span>Web HMI / IoT route</span></div>
+            <div><strong>IEC 61850 MMS</strong><span>IED acquisition</span></div>
+            <div><strong>Modbus TCP</strong><span>HMI/SCADA map</span></div>
+            <div><strong>MQTT</strong><span>Broker topics</span></div>
           </div>
         </div>
-        <aside class="hero-glass" aria-label="Gateway route configurator">
+        <aside class="hero-glass" aria-label="Gateway route overview">
           <div class="glass-header">
             <span class="pulse"></span>
-            <strong>Configure Gateway Route</strong>
+            <strong>Gateway Runtime</strong>
           </div>
           <div class="glass-field">
             <span class="field-icon">IED</span>
             <div>
-              <small>Source protocol</small>
+              <small>Source</small>
               <strong>IEC 61850 MMS</strong>
             </div>
           </div>
           <div class="glass-field">
             <span class="field-icon">TCP</span>
             <div>
-              <small>Legacy output</small>
-              <strong>Modbus TCP map</strong>
+              <small>Legacy route</small>
+              <strong>Modbus TCP</strong>
             </div>
           </div>
           <div class="glass-field">
             <span class="field-icon">MQ</span>
             <div>
-              <small>Event route</small>
-              <strong>MQTT topics</strong>
+              <small>Dashboard route</small>
+              <strong>MQTT Topics</strong>
             </div>
           </div>
           <a class="glass-submit" href="https://github.com/masarray/arserver/releases" target="_blank" rel="noreferrer">Open Releases</a>
@@ -85,151 +158,124 @@
         </div>
       </section>
 
-      <section class="section intro-grid" id="workflow">
+      <section class="section intro-grid" id="features">
         <div class="section-copy">
-          <p class="section-kicker">Why this tool exists</p>
-          <h2>Built for practical protocol learning, not textbook screenshots.</h2>
-          <p>In real FAT and automation labs, engineers often need a fast bridge between IEC 61850 devices and familiar visualization layers. ARServer keeps the flow visible: discover the IED, inspect the signal, bind the Modbus address, and optionally publish to MQTT.</p>
+          <p class="section-kicker">What you can do</p>
+          <h2>A practical bridge between relay data and tools engineers already use.</h2>
+          <p>ARServer keeps the engineering path visible: select the IED signal, confirm the IEC Reference, map the output, then monitor runtime quality and stale state.</p>
         </div>
         <div class="feature-grid">
           <article class="feature-card">
-            <div class="icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="img">
-                <path d="M4 7.5h16M7 7.5v9M17 7.5v9M6 16.5h12M9 11.5h6"/>
-                <path d="M12 3.5v4M8.5 20.5h7"/>
-              </svg>
-            </div>
-            <h3>IED Explorer</h3>
-            <p>Add relay endpoints, discover logical nodes, monitor live values, and keep the IEC reference visible for troubleshooting.</p>
+            <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7.5h16M7 7.5v9M17 7.5v9M6 16.5h12M9 11.5h6"/><path d="M12 3.5v4M8.5 20.5h7"/></svg></div>
+            <h3>IED signal selection</h3>
+            <p>Inspect values, quality, logical node context, and IEC object references before publishing anything to HMI or SCADA.</p>
           </article>
           <article class="feature-card">
-            <div class="icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="img">
-                <rect x="4" y="5" width="16" height="10" rx="2"/>
-                <path d="M8 19h8M12 15v4M7.5 9h.01M10.5 9h.01M13.5 9h.01"/>
-              </svg>
-            </div>
-            <h3>Modbus Server</h3>
-            <p>Expose selected signals as input registers or discrete inputs for DCS, SCADA, gateway testing, and FUXA dashboards.</p>
+            <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="10" rx="2"/><path d="M8 19h8M12 15v4M7.5 9h.01M10.5 9h.01M13.5 9h.01"/></svg></div>
+            <h3>Modbus TCP output</h3>
+            <p>Expose selected values as familiar status points and registers for SCADA, DCS, gateways, and FUXA dashboards.</p>
           </article>
           <article class="feature-card">
-            <div class="icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="img">
-                <path d="M5 13.5a7 7 0 0 1 14 0"/>
-                <path d="M8.5 13.5a3.5 3.5 0 0 1 7 0"/>
-                <circle cx="12" cy="16" r="1.8"/>
-                <path d="M4 18.5h16"/>
-              </svg>
-            </div>
-            <h3>MQTT Publisher</h3>
-            <p>Route checked signals into broker topics with quality and state context for web HMI and IoT learning workflows.</p>
+            <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 13.5a7 7 0 0 1 14 0"/><path d="M8.5 13.5a3.5 3.5 0 0 1 7 0"/><circle cx="12" cy="16" r="1.8"/><path d="M4 18.5h16"/></svg></div>
+            <h3>MQTT publishing</h3>
+            <p>Publish value, quality, status, and optional JSON state payloads to an external broker for modern dashboard workflows.</p>
           </article>
         </div>
       </section>
 
-      <section class="section architecture" id="architecture">
+      <section class="section architecture" id="workflow">
         <div class="section-copy centered">
-          <p class="section-kicker">Gateway topology</p>
-          <h2>One bridge, two practical outputs.</h2>
-          <p>The design is intentionally simple: IEC 61850 remains the source of truth, while ARServer publishes clean representations to both legacy control systems and modern web dashboards.</p>
+          <p class="section-kicker">Workflow</p>
+          <h2>Discover, select, bind, publish, validate.</h2>
+          <p>The application is organized around the real engineering sequence, so the user can understand every step before a signal is exposed to another system.</p>
         </div>
-        <div class="architecture-map" role="img" aria-label="IEC 61850 IED connects to ARServer, then routes data to DCS Modbus master and web HMI MQTT broker.">
-          <div class="node source">
-            <span class="node-label">Source</span>
-            <h3>IEC 61850 IED</h3>
-            <p>Relay / bay controller / protection device</p>
-          </div>
+        <div class="architecture-map" role="img" aria-label="IEC 61850 IED connects to ARServer, then routes data to Modbus TCP clients and MQTT subscribers.">
+          <div class="node source"><span class="node-label">Source</span><h3>IEC 61850 IED</h3><p>Relay, bay controller, or test model</p></div>
           <div class="connector"><span>MMS values</span></div>
-          <div class="node core">
-            <span class="node-label">Gateway</span>
-            <h3>ARServer</h3>
-            <p>Signal selection, quality view, binding, runtime diagnostics</p>
-          </div>
-          <div class="split">
-            <div class="connector"><span>Modbus TCP</span></div>
-            <div class="connector"><span>MQTT</span></div>
-          </div>
+          <div class="node core"><span class="node-label">Gateway</span><h3>ARServer</h3><p>Selection, quality, mapping, acquisition, diagnostics</p></div>
+          <div class="split"><div class="connector"><span>Modbus TCP</span></div><div class="connector"><span>MQTT</span></div></div>
           <div class="output-grid">
-            <div class="node output">
-              <span class="node-label">Control center</span>
-              <h3>DCS / SCADA</h3>
-              <p>Master reads mapped registers and status points</p>
-            </div>
-            <div class="node output">
-              <span class="node-label">Web layer</span>
-              <h3>Web HMI / IoT</h3>
-              <p>Broker topics feed dashboard, historian, or FUXA HMI</p>
-            </div>
+            <div class="node output"><span class="node-label">HMI / SCADA</span><h3>Register map</h3><p>Client reads selected values from ARServer cache</p></div>
+            <div class="node output"><span class="node-label">Broker / Dashboard</span><h3>Topic stream</h3><p>Subscribers receive selected values and state</p></div>
           </div>
         </div>
       </section>
 
       <section class="section dark-panel">
         <div>
-          <p class="section-kicker">Field truth</p>
-          <h2>A gateway is useful only when quality, mapping, and diagnostics stay visible.</h2>
+          <p class="section-kicker">Field value</p>
+          <h2>Useful gateway data is not only the value. It is the value plus quality, reference, and mapping context.</h2>
         </div>
         <div class="truth-grid">
-          <p><strong>Signal without quality is dangerous.</strong> ARServer keeps value, quality, status, and IEC reference visible so a Boolean does not become a blind Boolean.</p>
-          <p><strong>Mapping must be inspectable.</strong> Modbus addresses and MQTT topic routes need to be readable by humans before they become maintainable by teams.</p>
-          <p><strong>Learning tools should be honest.</strong> This project is designed for lab, FAT, and engineering exploration. Production deployment still needs proper cybersecurity, redundancy, and validation strategy.</p>
+          <p><strong>Readable references reduce mistakes.</strong> The IEC Reference stays visible so users can confirm the exact source point before exposing it to Modbus or MQTT.</p>
+          <p><strong>Cache-based outputs are safer.</strong> HMI polling reads ARServer's cache instead of triggering direct relay reads on every Modbus request.</p>
+          <p><strong>Fast CB is targeted.</strong> Breaker/status points can be prioritized without letting analog points block the critical refresh path.</p>
         </div>
       </section>
 
       <section class="section screenshots" id="screenshots">
         <div class="section-copy centered">
-          <p class="section-kicker">Product screenshots</p>
-          <h2>Clean interface for discovery, binding, and runtime monitoring.</h2>
-          <p>The UI is built around the actual engineering flow: add IED, inspect values, publish to Modbus, then route selected data to MQTT.</p>
+          <p class="section-kicker">Screenshots</p>
+          <h2>A clean Windows interface for discovery, binding, and runtime monitoring.</h2>
+          <p>These screens show the practical path from IED workspace to live IEC values, Modbus TCP map, and MQTT topic publishing.</p>
         </div>
         <div class="screenshot-grid">
           <figure class="shot-card large">
-            <button class="shot-button" type="button" data-full="assets/screenshots/arserver-start.webp" aria-label="Open Start workspace screenshot">
-              <img src="assets/screenshots/arserver-start.webp" alt="ARServer start workspace" loading="lazy" />
-            </button>
-            <figcaption><strong>Start workspace</strong><span>Add the first IEC 61850 IED and begin the gateway workflow.</span></figcaption>
+            <button class="shot-button" type="button" data-full="assets/screenshots/arserver-start.webp" aria-label="Open ARServer start workspace screenshot"><img src="assets/screenshots/arserver-start.webp" alt="ARServer start workspace for IEC 61850 gateway setup" loading="lazy" /></button>
+            <figcaption><strong>Start workspace</strong><span>Add an IED and begin the gateway workflow.</span></figcaption>
           </figure>
           <figure class="shot-card">
-            <button class="shot-button" type="button" data-full="assets/screenshots/arserver-iec-values.webp" aria-label="Open Live IEC 61850 values screenshot">
-              <img src="assets/screenshots/arserver-iec-values.webp" alt="ARServer live IEC 61850 values table" loading="lazy" />
-            </button>
-            <figcaption><strong>Live IEC 61850 values</strong><span>Values, quality, mode, IEC object path, and type in one inspection view.</span></figcaption>
+            <button class="shot-button" type="button" data-full="assets/screenshots/arserver-iec-values.webp" aria-label="Open ARServer live IEC values screenshot"><img src="assets/screenshots/arserver-iec-values.webp" alt="ARServer live IEC 61850 values with quality and object references" loading="lazy" /></button>
+            <figcaption><strong>Live IEC values</strong><span>Inspect value, quality, type, and IEC Reference.</span></figcaption>
           </figure>
           <figure class="shot-card">
-            <button class="shot-button" type="button" data-full="assets/screenshots/arserver-modbus-server.webp" aria-label="Open Modbus server screenshot">
-              <img src="assets/screenshots/arserver-modbus-server.webp" alt="ARServer Modbus TCP mapping table" loading="lazy" />
-            </button>
-            <figcaption><strong>Modbus server map</strong><span>Selected signals become clear Modbus points for DCS / SCADA polling.</span></figcaption>
+            <button class="shot-button" type="button" data-full="assets/screenshots/arserver-modbus-server.webp" aria-label="Open ARServer Modbus server screenshot"><img src="assets/screenshots/arserver-modbus-server.webp" alt="ARServer Modbus TCP map for HMI and SCADA clients" loading="lazy" /></button>
+            <figcaption><strong>Modbus TCP map</strong><span>Publish selected signals to clear address ranges.</span></figcaption>
           </figure>
           <figure class="shot-card">
-            <button class="shot-button" type="button" data-full="assets/screenshots/arserver-mqtt-topics.webp" aria-label="Open MQTT topics screenshot">
-              <img src="assets/screenshots/arserver-mqtt-topics.webp" alt="ARServer MQTT topics screen" loading="lazy" />
-            </button>
-            <figcaption><strong>MQTT topics</strong><span>Checked rows can publish value, quality, status, and optional JSON state.</span></figcaption>
+            <button class="shot-button" type="button" data-full="assets/screenshots/arserver-mqtt-topics.webp" aria-label="Open ARServer MQTT topics screenshot"><img src="assets/screenshots/arserver-mqtt-topics.webp" alt="ARServer MQTT topic publishing workspace" loading="lazy" /></button>
+            <figcaption><strong>MQTT topics</strong><span>Route selected values to broker subscribers.</span></figcaption>
           </figure>
         </div>
       </section>
 
-      <section class="section setup" id="setup">
+      <section class="section setup" id="quick-start">
         <div class="setup-card">
           <div>
-            <p class="section-kicker">How to use the software</p>
-            <h2>Install ARServer, add the runtime pieces, then route IEC values.</h2>
-            <p>ARServer is a Windows gateway application. Real IEC 61850 communication needs user-supplied libiec61850-compatible .NET/native DLLs beside <code>ArServer.exe</code> under those DLLs' own license terms. MQTT output needs an external broker such as Mosquitto, EMQX, or HiveMQ.</p>
+            <p class="section-kicker">Quick start</p>
+            <h2>Download the portable ZIP, run ARServer, then map your first signals.</h2>
+            <p>ARServer is a local Windows desktop app. It can be explored in mock mode immediately. Real IED testing uses IEC 61850 MMS runtime components supplied by the user and an optional MQTT broker when MQTT output is enabled.</p>
           </div>
           <ol class="steps">
-            <li><span>1</span> Download the Windows installer from <strong>GitHub Releases</strong>.</li>
-            <li><span>2</span><p>For real IED testing, copy your own licensed IEC 61850 runtime DLLs beside <code>ArServer.exe</code>: <code>iec61850dotnet.dll</code> and <code>iec61850.dll</code>. These files are not bundled in ARServer releases.</p></li>
-            <li><span>3</span> Start an MQTT broker if MQTT output is enabled.</li>
-            <li><span>4</span> Add an IED, discover signals, select rows for Modbus and MQTT, then start runtime.</li>
+            <li><span>1</span> Download the Windows portable ZIP from <strong>GitHub Releases</strong>.</li>
+            <li><span>2</span> Extract the ZIP and run <strong>Start-ARServer.bat</strong> or <strong>ArServer.exe</strong>.</li>
+            <li><span>3</span> Use mock mode first, or add your IEC 61850 runtime components for real IED testing.</li>
+            <li><span>4</span> Add an IED, select signals, validate the Modbus map, configure MQTT if needed, then start runtime.</li>
           </ol>
+          <div class="hero-actions" style="margin-top:24px">
+            <a class="button primary" href="https://github.com/masarray/arserver/releases" target="_blank" rel="noreferrer">Download Release</a>
+            <a class="button secondary" href="https://github.com/masarray/arserver/blob/main/docs/QUICK_START.md" target="_blank" rel="noreferrer">Read Quick Start</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section intro-grid" id="faq">
+        <div class="section-copy">
+          <p class="section-kicker">FAQ</p>
+          <h2>Common questions before trying ARServer.</h2>
+          <p>The project is designed to be easy to evaluate while staying honest about engineering validation and field responsibility.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card"><h3>Is ARServer free?</h3><p>Yes. ARServer core is free and open source under Apache-2.0. There is no subscription and no license key for the ARServer core application.</p></article>
+          <article class="feature-card"><h3>Can I try it without a relay?</h3><p>Yes. Mock mode lets users explore signal selection, Modbus mapping, MQTT publishing, and runtime screens before connecting to a real IED.</p></article>
+          <article class="feature-card"><h3>Is 10 ms polling guaranteed?</h3><p>No. It is a scheduler target for expert bench evaluation with one/few selected points. Actual response depends on IED behavior, network latency, and selected point count.</p></article>
         </div>
       </section>
     </main>
 
     <footer class="footer">
-      <p>ARServer - IEC 61850 to Modbus TCP + MQTT Gateway</p>
-      <p>Created as an open-source engineering learning project by Ari Sulistiono.</p>
+      <p>ARServer — IEC 61850 MMS to Modbus TCP and MQTT Gateway</p>
+      <p>Free and open source under Apache-2.0. Built for engineering labs, HMI integration, FAT/SAT, relay testing, and substation automation learning.</p>
     </footer>
   </div>
 

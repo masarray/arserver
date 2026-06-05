@@ -271,7 +271,7 @@ h3 {
 h1 {
   max-width: 640px;
   margin-bottom: 22px;
-  font-size: clamp(36px, 4vw, 58px);
+  font-size: clamp(32px, 3.2vw, 40px);
   line-height: 1.12;
   letter-spacing: 0;
   color: #fff;
@@ -951,7 +951,7 @@ code {
   .page-shell { width: min(100% - 20px, 520px); padding-top: 14px; }
   .site-header { top: 10px; padding: 10px; }
   .nav-cta { min-height: 42px; padding: 0 14px; font-size: 13px; }
-  h1 { font-size: clamp(34px, 12vw, 52px); }
+  h1 { font-size: clamp(30px, 9vw, 34px); }
   .hero-content { padding: 42px 22px 620px; }
   .hero-metrics { gap: 10px; }
   .hero-glass { padding: 20px; }

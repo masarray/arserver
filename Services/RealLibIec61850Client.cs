@@ -6,7 +6,7 @@ using Ari61850Bridge.Models;
 namespace Ari61850Bridge.Services;
 
 /// <summary>
-/// Real IEC 61850 MMS adapter using libiec61850.NET through runtime reflection.
+/// Real IEC 61850 MMS adapter loaded through runtime reflection.
 ///
 /// Design rule for field use:
 /// - Network/association failures are captured as status, not thrown to the UI.
@@ -23,7 +23,7 @@ public sealed class RealLibIec61850Client : IIec61850Client
     private readonly HashSet<string> _visitedDiscoveryRefs = new(StringComparer.OrdinalIgnoreCase);
 
     public bool IsConnected { get; private set; }
-    public string ConnectionMode => "Real libiec61850.NET MMS Client";
+    public string ConnectionMode => "Real IEC 61850 MMS Client";
     public string LastErrorMessage { get; private set; } = "";
     public string LastDiscoverySummary { get; private set; } = "";
 
@@ -242,7 +242,7 @@ public sealed class RealLibIec61850Client : IIec61850Client
             }
         }
 
-        // Some libiec61850 .NET wrapper builds expose GetLogicalNodeDirectory(string)
+        // Some IEC 61850 MMS runtime wrapper builds expose GetLogicalNodeDirectory(string)
         // without the ACSIClass argument. Try it so MMXU/XCBR/PTOC nodes are not missed
         // just because the wrapper method signature differs.
         var generic = InvokeStringListFlexible(_connection!, "GetLogicalNodeDirectory", lnRef);
@@ -385,13 +385,13 @@ public sealed class RealLibIec61850Client : IIec61850Client
     {
         var fc = CreateFunctionalConstraint(fcText);
 
-        // Hard field rule for libiec61850:
+        // Hard field rule for IEC 61850 MMS runtime reads:
         // Do NOT probe multiple typed reads (ReadBooleanValue/ReadBitStringValue/ReadIntegerValue)
-        // on an unknown vendor model. If the FC/object/type does not match perfectly, libiec61850
+        // on an unknown vendor model. If the FC/object/type does not match perfectly, the runtime
         // throws IedConnectionException/Data access error. That is normal IEC 61850 behavior, but it
         // is poisonous for a gateway runtime when repeated for hundreds of tags.
         //
-        // Correct pattern for this MVP:
+        // Correct runtime pattern:
         // 1. Use the FC discovered from GetDataDirectoryFC.
         // 2. Use generic ReadValue(objectReference, fc) once.
         // 3. Decode the returned MmsValue locally.
@@ -483,7 +483,7 @@ public sealed class RealLibIec61850Client : IIec61850Client
             return tokens.Any(t => mmsType.Contains(t, StringComparison.OrdinalIgnoreCase));
         }
 
-        // Important libiec61850 rule:
+        // Important IEC 61850 MMS runtime rule:
         // MmsValue conversion methods throw MmsValueException when the native MMS type does not match.
         // Do not call ToInt32/ToFloat/GetBoolean/BitStringToUInt32 blindly; inspect MmsValue.GetType() first.
         // This avoids debugger-breaking first-chance exceptions and keeps runtime clean.
@@ -554,7 +554,7 @@ public sealed class RealLibIec61850Client : IIec61850Client
     {
         // IEC 61850 DPC/Dbpos stVal is a two-bit state:
         // 0 = intermediate-state, 1 = off/open, 2 = on/closed, 3 = bad-state.
-        // libiec61850 has two bit-string numeric helpers. For Dbpos, the big-endian
+        // The IEC 61850 MMS runtime may expose multiple bit-string numeric helpers. For Dbpos, the big-endian
         // interpretation matches the standard bit pattern 01=open/off and 10=closed/on.
         // Calling BitStringToUInt32 first reverses many real IED positions.
         var be = tryNoArg("BitStringToUInt32BigEndian");
@@ -675,7 +675,7 @@ public sealed class RealLibIec61850Client : IIec61850Client
         var text = value.ToString()?.Trim();
         if (string.IsNullOrWhiteSpace(text) || IsLibIecErrorValue(text)) return false;
 
-        // Common libiec61850/MmsValue textual forms can be verbose. Extract the most useful primitive.
+        // Common MMS value textual forms can be verbose. Extract the most useful primitive.
         if (bool.TryParse(text, out var b))
         {
             normalized = b;
@@ -1140,13 +1140,13 @@ public sealed class RealLibIec61850Client : IIec61850Client
         if (_connectionType == null)
         {
             var searched = candidates.Count == 0
-                ? "No IEC61850/libiec*.dll files were found beside the EXE."
+                ? "No compatible IEC 61850 MMS runtime files were found beside the EXE."
                 : string.Join(Environment.NewLine, candidates.Select(Path.GetFileName));
-            throw new FileNotFoundException("Real IEC61850 engine selected, but libiec61850.NET wrapper was not found. Searched:\n" + searched);
+            throw new FileNotFoundException("Real IEC 61850 MMS engine selected, but the required runtime wrapper was not found. Searched:\n" + searched);
         }
 
         if (_functionalConstraintType == null)
-            throw new FileNotFoundException("Real IEC61850 engine selected, but FunctionalConstraint enum was not found in the loaded IEC61850 wrapper DLL.");
+            throw new FileNotFoundException("Real IEC 61850 MMS engine selected, but the required FunctionalConstraint type was not found in the loaded runtime wrapper.");
     }
 
     private static MethodInfo? FindMethod(Type type, string methodName, params Type[] parameterTypes)

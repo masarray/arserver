@@ -352,11 +352,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (RealLibIec61850Client.IsRuntimeLibraryAvailable())
         {
             UseRealIecEngine = true;
-            AddLog("INFO", "IEC61850", "libiec61850 .NET/native DLL detected beside EXE. Real IEC 61850 mode enabled automatically.");
+            AddLog("INFO", "IEC61850", "IEC 61850 MMS runtime detected beside EXE. Real IEC 61850 mode enabled automatically.");
         }
         else
         {
-            AddLog("INFO", "IEC61850", "libiec61850 DLL not detected. Mock mode remains available for UI/Modbus testing.");
+            AddLog("INFO", "IEC61850", "IEC 61850 MMS runtime not detected. Mock mode remains available for UI/Modbus testing.");
         }
 
         UpdateNavigationVisuals(MainTabs.SelectedIndex);
@@ -398,7 +398,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             IedConnectionStatus = "Connecting...";
             EventStrategyStatus = "Scanning...";
-            AddLog("INFO", "IEC61850", $"Connecting to {relayIp}:{MmsPort} using {(UseRealIecEngine ? "real libiec61850" : "MVP mock")} IEC61850 engine.");
+            AddLog("INFO", "IEC61850", $"Connecting to {relayIp}:{MmsPort} using {(UseRealIecEngine ? "real IEC 61850 MMS" : "mock")} IEC 61850 engine.");
 
             // The Modbus gateway lifecycle is independent from per-IED connection lifecycle.
             // When runtime is running, keep the Modbus server alive and refresh only the active IEC session.
@@ -1733,7 +1733,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             relay.StatusBrush = RelayEndpointView.BrushForStatus("Disconnected");
             relay.RefreshComputed();
 
-            // In this MVP there is still one active IEC client instance. Disconnecting the active IED
+            // There is currently one active IEC client instance. Disconnecting the active IED
             // closes the IEC session but intentionally does NOT stop the Modbus TCP server/runtime.
             if (_iecClient != null && string.Equals(RelayIpAddress, relay.IpAddress, StringComparison.OrdinalIgnoreCase))
             {

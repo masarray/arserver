@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Restore and build Windows desktop app
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore ARServer.sln
+
+      - name: Build
+        run: dotnet build ARServer.sln --configuration Release --no-restore
+
+      - name: Run tests when test projects exist
+        shell: pwsh
+        run: |
+          $testProjects = Get-ChildItem -Recurse -Filter *.csproj | Where-Object { $_.FullName -match '(?i)(test|tests)' }
+          if (-not $testProjects) {
+            Write-Host "No test projects found. Skipping dotnet test."
+            return
+          }
+          foreach ($project in $testProjects) {
+            dotnet test $project.FullName --configuration Release --no-build --verbosity normal
+          }

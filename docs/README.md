@@ -1,11 +1,11 @@
-# ARServer Landing Page Assets
+# ARServer Landing Page
 
-This folder contains the static product landing page and compressed WebP assets used by the repository README and website.
+This folder contains the static GitHub Pages landing page for ARServer.
 
-## Runtime Notes
+Published URL:
 
-ARServer itself is a Windows desktop gateway. Real IEC 61850 communication requires user-supplied `iec61850dotnet.dll` and `iec61850.dll` beside `ArServer.exe` under those DLLs' own license terms. MQTT output requires an external MQTT broker such as Mosquitto, EMQX, or HiveMQ.
+```text
+https://masarray.github.io/arserver/
+```
 
-Installer builds are published at:
-
-https://github.com/masarray/arserver/releases
+The page includes SEO metadata, Open Graph tags, Twitter Card tags, SoftwareApplication JSON-LD, FAQ schema, sitemap, robots file, and screenshot assets.

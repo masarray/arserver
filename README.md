@@ -1,202 +1,228 @@
-# ARServer
+# ARServer — IEC 61850 MMS to Modbus TCP and MQTT Gateway for Windows
 
-ARServer is a Windows desktop gateway for publishing IEC 61850 MMS data to Modbus TCP and MQTT for HMI/SCADA tools such as FUXA.
+[![CI](https://github.com/masarray/arserver/actions/workflows/ci.yml/badge.svg)](https://github.com/masarray/arserver/actions/workflows/ci.yml)
+[![Release Package](https://github.com/masarray/arserver/actions/workflows/release-package.yml/badge.svg)](https://github.com/masarray/arserver/actions/workflows/release-package.yml)
+[![GitHub Pages](https://github.com/masarray/arserver/actions/workflows/pages.yml/badge.svg)](https://github.com/masarray/arserver/actions/workflows/pages.yml)
+[![Latest Release](https://img.shields.io/github/v/release/masarray/arserver?include_prereleases&label=release)](https://github.com/masarray/arserver/releases)
+[![License](https://img.shields.io/github/license/masarray/arserver)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
+![.NET](https://img.shields.io/badge/.NET-8.0-512BD4)
 
-The project is built for substation and relay-bench workflows where operators need a readable IEC 61850 explorer, a deterministic Modbus map, configurable MQTT topic routing, and diagnostics that separate real communication failures from normal polling noise.
+**ARServer** is a free, open-source Windows desktop gateway that helps automation engineers route **IEC 61850 MMS** values into **Modbus TCP** registers and **MQTT** topics for HMI, SCADA, FAT/SAT, relay testing, commissioning, and substation automation labs.
 
-**License architecture:** ARServer core is licensed under Apache-2.0. The optional real IEC 61850 MMS adapter loads libiec61850-compatible DLLs only when the user supplies them beside the executable. ARServer source and release packages do not bundle libiec61850 binaries or source.
+It is built for practical field workflows: add an IED, inspect IEC object references, select SCADA-ready signals, validate the Modbus map, publish MQTT topics, and run a local gateway without a cloud subscription or license key.
 
-[Download the latest Windows installer](https://github.com/masarray/arserver/releases)
+> **Free and open source:** ARServer core is licensed under **Apache-2.0**. The application can run in mock/demo mode out of the box. Real IED communication requires IEC 61850 MMS runtime components supplied by the user under their own valid license terms.
+
+<p align="center">
+  <a href="https://github.com/masarray/arserver/releases">
+    <img src="docs/assets/screenshots/arserver-start.webp" alt="ARServer Windows IEC 61850 MMS to Modbus TCP and MQTT gateway start workspace" width="920">
+  </a>
+</p>
+
+## What is this?
+
+ARServer is a local Windows gateway for engineers who need a readable bridge between IEC 61850 devices and common supervision layers.
+
+It focuses on three jobs:
+
+1. **Explore IEC 61850 MMS data** from relay or bay-controller models.
+2. **Map selected values to Modbus TCP** so HMI/SCADA tools can read familiar coils, discrete inputs, input registers, and holding registers.
+3. **Publish selected values to MQTT** so dashboards, web HMI, historians, or integration tools can subscribe to clean topic payloads.
+
+ARServer is not a cloud service and does not require an online account. It runs locally on Windows.
+
+## Why use it?
+
+IEC 61850 is powerful, but many FAT benches, HMI tools, and integration labs still need quick visibility through Modbus TCP or MQTT. ARServer gives engineers a transparent workflow instead of a black-box converter.
+
+Use it when you need to:
+
+- validate relay signals during **FAT/SAT**;
+- prototype a **FUXA**, HMI, SCADA, or dashboard integration;
+- expose selected IEC 61850 values to **Modbus TCP** clients;
+- publish the same values to **MQTT** topics;
+- keep IEC object references, value quality, and mapping decisions visible;
+- test breaker/status refresh using fast acquisition settings;
+- prepare repeatable evidence for engineering review and troubleshooting.
+
+## Features
+
+- **IEC 61850 IED workspace** — add IED endpoints, inspect discovered signals, and keep the IEC Reference visible during selection.
+- **SCL/CID/SCD import** — load engineering files and select SCADA/HMI-friendly signals.
+- **Modbus TCP server** — publish selected signals as coils, discrete inputs, input registers, or holding registers.
+- **MQTT publisher** — send value, quality, status, and optional JSON state payloads to an external MQTT broker.
+- **Fast CB acquisition** — prioritize breaker position, switch status, Boolean points, trip/start flags, and protection status over slower analog values.
+- **Adjustable MMS polling** — set acquisition target down to 10 ms for expert bench evaluation of one/few critical tags.
+- **Runtime cache architecture** — Modbus and MQTT outputs publish from ARServer's cache, so HMI polling does not directly trigger relay reads.
+- **Read-only safety posture** — Modbus write functions are rejected by design.
+- **Mock mode** — explore UI, mapping, Modbus, and MQTT behavior without a real relay.
+- **Portable Windows release** — GitHub Actions can publish a ready-to-run Windows x64 ZIP package.
 
 ## Screenshots
 
-### Start Workspace
+| Start workspace | Live IEC values |
+|---|---|
+| ![ARServer start workspace for adding IEC 61850 IED endpoints](docs/assets/screenshots/arserver-start.webp) | ![ARServer live IEC 61850 values with quality and IEC object reference](docs/assets/screenshots/arserver-iec-values.webp) |
 
-![ARServer start workspace](docs/assets/screenshots/arserver-start.webp)
+| Modbus TCP map | MQTT topics |
+|---|---|
+| ![ARServer Modbus TCP server mapping table](docs/assets/screenshots/arserver-modbus-server.webp) | ![ARServer MQTT topic publishing workspace](docs/assets/screenshots/arserver-mqtt-topics.webp) |
 
-### Live IEC 61850 Values
+## Quick start
 
-![ARServer live IEC 61850 values](docs/assets/screenshots/arserver-iec-values.webp)
+The fastest way to try ARServer is to download the Windows portable package from GitHub Releases.
 
-### Modbus TCP Server Map
+1. Open the [latest release](https://github.com/masarray/arserver/releases/latest).
+2. Download `ARServer-vX.Y.Z-win-x64-portable.zip`.
+3. Extract the ZIP to a writable folder, for example `C:\Tools\ARServer`.
+4. Run `Start-ARServer.bat` or `ArServer.exe`.
+5. Use mock mode to explore the workflow, or add your IEC 61850 MMS runtime components for real IED testing.
+6. Add an IED, select signals, review the Modbus map, enable Modbus TCP and/or MQTT, then start runtime.
 
-![ARServer Modbus TCP server map](docs/assets/screenshots/arserver-modbus-server.webp)
+Detailed steps are available in [docs/QUICK_START.md](docs/QUICK_START.md).
 
-### MQTT Topic Routing
+## Download / Install / Run
 
-![ARServer MQTT topic routing](docs/assets/screenshots/arserver-mqtt-topics.webp)
+### Portable release
 
-## What It Does
+Use the portable ZIP when you want to try ARServer without installing Visual Studio.
 
-- Connects to IEC 61850 MMS relays using an optional libiec61850-compatible adapter when user-provided runtime DLLs are available.
-- Provides a mock IEC 61850 mode for UI, mapping, and Modbus gateway testing without a relay.
-- Imports SCL/CID/SCD files and helps select SCADA-ready signals.
-- Builds Modbus TCP bindings for coils, discrete inputs, input registers, and holding registers.
-- Runs a read-only Modbus TCP server for HMI polling.
-- Publishes the same IEC 61850 runtime values to MQTT so HMI clients can subscribe instead of polling.
-- Shows runtime diagnostics, IEC activity, Modbus polling status, stale values, and per-signal quality.
-- Provides an adjustable IEC 61850 MMS polling target from 10 ms upward for bench monitoring, with cache-based Modbus/MQTT publishing.
-- Adds a Fast CB acquisition lane so breaker/status/Boolean/protection points are scheduled before slower analog/quality points.
+```text
+ARServer-vX.Y.Z-win-x64-portable.zip
+```
 
-## Current Scope
+The package includes:
 
-ARServer is currently a WPF/.NET 8 Windows application focused on IEC 61850 MMS polling, Modbus TCP publishing, and MQTT publishing through an external broker.
+- the published Windows application;
+- `Start-ARServer.bat` launcher;
+- quick-start notes;
+- `LICENSE`, `NOTICE`, and third-party notices.
 
-The UI already supports a multi-IED workspace model, but the runtime architecture should still be treated as a careful field tool in active development. Validate mappings and communication behavior on a test bench before connecting it to operational environments.
+### Build and run from source
 
-## Requirements
+Requirements:
 
-- Windows 10 or later
-- .NET 8 SDK for building from source
-- Inno Setup 6 if you want to rebuild the Windows installer locally
-- Optional real IEC 61850 runtime DLLs supplied by the user and copied beside the built executable under their own license terms:
-  - `iec61850dotnet.dll`
-  - `iec61850.dll`
-- Optional MQTT broker for MQTT output, for example Eclipse Mosquitto.
-
-Without those DLLs, ARServer can still run in mock mode for mapping, MQTT, and Modbus TCP testing.
-
-## Download Release
-
-Ready-to-install Windows builds are published on GitHub Releases:
-
-https://github.com/masarray/arserver/releases
-
-The release package is a ZIP containing an Inno Setup installer for Windows x64. The installer includes the Apache-2.0 license, NOTICE, README, and third-party notices. It must not include libiec61850 DLLs unless a separate redistribution right/commercial license is in place.
-
-## Build
+- Windows 10/11;
+- .NET 8 SDK;
+- Visual Studio 2022 or newer with .NET desktop workload, or `dotnet` CLI.
 
 ```powershell
-dotnet build ARServer.sln
+git clone https://github.com/masarray/arserver.git
+cd arserver
+dotnet restore ARServer.sln
+dotnet build ARServer.sln -c Release
 ```
 
-Build output is written under:
+Run from Visual Studio, or start the built executable from:
 
 ```text
-bin\Debug\net8.0-windows\
+bin\Release\net8.0-windows\
 ```
 
-## Run
-
-Open the solution in Visual Studio, or run the built WPF executable from the build output folder.
-
-For real relay testing:
-
-1. If you need real IED communication, provide your own licensed libiec61850 .NET/native DLLs beside `ArServer.exe`.
-2. Start ARServer.
-3. Add or connect an IED by IP address and MMS port, usually TCP `102`.
-4. Select SCADA/HMI signals.
-5. Build or validate the Modbus map.
-6. Enable Modbus TCP, MQTT, or both.
-7. Start runtime and point the HMI client to the selected output.
-
-## Modbus Mapping Guidance
-
-Recommended area policy:
-
-- Protection and status booleans: Discrete Input / FC02 / `1xxxx`
-- Position enums: Input Register / FC04 / `3xxxx`
-- Analog Float32 values: Holding Register / FC03 / `4xxxx`
-- Quality, age, and sequence metadata: Holding Register / FC03 / `4xxxx`
-
-For multi-IED planning, keep address separation inside each Modbus area. Example:
-
-- IED-01: DI `10001+`, IR `30001+`, HR `40001+`
-- IED-02: DI `11001+`, IR `31001+`, HR `41001+`
-- IED-03: DI `12001+`, IR `32001+`, HR `42001+`
-
-## MQTT Output
-
-MQTT output is implemented as a publisher to an external MQTT broker. This keeps ARServer small and interoperable while allowing production deployments to use hardened brokers such as Mosquitto, EMQX, or HiveMQ.
-
-Default MQTT settings:
-
-- Broker: `127.0.0.1`
-- Port: `1883`
-- Topic root: `arserver`
-- QoS: `0`
-- Retain last value: enabled
-- JSON state payload: enabled
-
-Topic layout:
+## How it works
 
 ```text
-arserver/{iedName}/{tagName}/value
-arserver/{iedName}/{tagName}/quality
-arserver/{iedName}/{tagName}/status
-arserver/{iedName}/{tagName}/state
-arserver/status
+IEC 61850 IED / relay
+        │
+        │  MMS polling / selected points
+        ▼
+ARServer acquisition engine
+        │
+        ├── Fast CB lane for breaker/status/Boolean points
+        ├── Runtime cache with value, quality, timestamp, and stale state
+        ├── Modbus TCP server for HMI/SCADA polling
+        └── MQTT publisher for broker-based dashboards
 ```
 
-The `/value` topic is a simple scalar payload for HMI tags. The `/state` topic is JSON for richer dashboards and diagnostics.
+Important behavior:
 
-Modbus TCP and MQTT can be enabled independently. The IEC 61850 relay is still read once by ARServer; enabled outputs receive values from the same runtime cache.
+- Modbus and MQTT outputs read from the internal runtime cache.
+- FUXA/SCADA Modbus polling does not directly trigger IEC 61850 reads.
+- Fast polling values are scheduler targets, not guaranteed device response times.
+- For event-grade protection workflows, use the right event/report architecture in the IED design. Fast polling is useful for bench monitoring and HMI refresh evaluation, not a substitute for protection event engineering.
 
-## IEC 61850 MMS Polling Time
+## Typical workflow
 
-The selected IED workspace now shows the **MMS poll** setting directly on the right-side command bar, immediately before **Edit IED Wizard**. Enter the target interval in milliseconds, click **Apply**, then open/edit the wizard or start runtime. The fastest accepted target is `10 ms`, aligned with the smallest scan-rate class commonly exposed by Kepware-style IEC 61850 MMS drivers. Treat this as expert bench mode for one/few tags, not as a default multi-IED operating mode.
+1. **Add IED** — connect by IP address and MMS port.
+2. **Discover or import** — use live discovery or SCL/CID/SCD files.
+3. **Select signals** — choose SCADA-ready status, position, analog, and quality points.
+4. **Review IEC Reference** — confirm the exact object path before publishing.
+5. **Bind Modbus map** — assign discrete inputs/registers with clear address ranges.
+6. **Configure MQTT** — select which values publish to broker topics.
+7. **Set acquisition** — choose MMS polling target and Fast CB mode where needed.
+8. **Start runtime** — validate live quality, stale state, and output behavior.
 
-Beside the polling control there is a **Fast CB** switch. When enabled, ARServer uses a fast acquisition lane: CB position, switch status, Boolean, trip/start/general protection flags and similar discrete points are selected first in every scheduler cycle. Measurement, quality and timestamp points still run, but they do not block breaker-status refresh.
+## Build from source
 
-The Modbus Server workspace still shows the active MMS polling status, but the editable timing control intentionally lives beside the IEC wizard because this is an IEC 61850 acquisition setting, not a Modbus output setting.
-
-Important field notes:
-
-- The configured value is a scheduler target, not a guaranteed relay response time. Actual update speed depends on the relay MMS server, network latency, number of active points, and active IED count.
-- With **Fast CB** enabled, ARServer is no longer a simple first-N round-robin. It runs a priority lane first, then a smaller normal lane so analog points do not starve.
-- FUXA/SCADA Modbus reads never trigger direct relay reads; ARServer polls IEC 61850 into its cache, then Modbus TCP and MQTT publish from that cache.
-- For protection-grade event capture, prefer IEC 61850 Reports/RCB, GOOSE, or Sampled Values where available. Fast MMS polling is useful for bench monitoring and HMI refresh, not as a substitute for event/report architecture.
-
-## Repository Layout
-
-```text
-ARServer.sln
-ARServer.csproj
-MainWindow.xaml / MainWindow.xaml.cs
-Models/
-Services/
-Assets/
+```powershell
+dotnet restore ARServer.sln
+dotnet build ARServer.sln -c Release
 ```
 
-Key service classes:
+To create a local Windows portable package:
 
-- `Services/BridgeRuntime.cs` coordinates IEC polling and Modbus publishing.
-- `Services/MqttGatewayPublisher.cs` publishes selected runtime values to MQTT topics.
-- `Services/ModbusTcpServer.cs` implements the read-only Modbus TCP server.
-- `Services/RealLibIec61850Client.cs` adapts a user-provided libiec61850.NET runtime through reflection.
-- `Services/SclImportService.cs` imports SCL/CID/SCD signal definitions.
+```powershell
+pwsh ./scripts/publish-windows-portable.ps1 -Version 1.0.0-public-beta
+pwsh ./scripts/verify-release-package.ps1 -PackagePath ./artifacts/release/ARServer-v1.0.0-public-beta-win-x64-portable.zip
+```
 
-## Safety Notes
+See [docs/RELEASE_PACKAGING.md](docs/RELEASE_PACKAGING.md) for release automation details.
 
-ARServer is read-only on the Modbus side by design. Write functions are rejected to avoid accidental relay or process control from an HMI client.
+## Documentation
 
-For field use, verify:
+- [Quick start](docs/QUICK_START.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Release packaging](docs/RELEASE_PACKAGING.md)
+- [Validation matrix](docs/VALIDATION_MATRIX.md)
+- [Deployment and GitHub Pages](docs/DEPLOYMENT.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Release notes](docs/RELEASE_NOTES_v1.0.0.md)
+- [Security policy](SECURITY.md)
+- [Contributing guide](CONTRIBUTING.md)
 
-- IEC object references and functional constraints.
-- Modbus address ranges and data types.
-- Word order for Float32 values.
-- Stale/quality behavior during relay disconnects.
-- Network segmentation, firewall rules, and port exposure.
+## GitHub repository SEO
+
+Recommended public repository metadata:
+
+- **Description:** `Open-source IEC 61850 MMS to Modbus TCP and MQTT gateway for Windows HMI, SCADA, relay testing, FAT/SAT, and substation automation labs.`
+- **Website:** `https://masarray.github.io/arserver/`
+- **Topics:** `iec61850`, `iec-61850`, `mms`, `modbus-tcp`, `mqtt`, `scada`, `hmi`, `fuxa`, `substation-automation`, `relay-testing`, `fat-sat`, `wpf`, `dotnet`, `windows-desktop`, `industrial-automation`, `gateway`
+
+Apply the metadata with GitHub CLI:
+
+```powershell
+pwsh ./scripts/Apply-GitHubRepoSeo.ps1 -WhatIf
+pwsh ./scripts/Apply-GitHubRepoSeo.ps1
+```
+
+## Roadmap / planned improvements
+
+Planned improvements are tracked in [docs/ROADMAP.md](docs/ROADMAP.md). Current priorities include:
+
+- stronger acquisition diagnostics;
+- clearer mapping validation;
+- richer evidence export;
+- improved multi-IED scheduling;
+- optional event/report-oriented acquisition where available;
+- more sample configurations and screenshots.
+
+## Contributing
+
+Contributions are welcome. Useful contributions include:
+
+- relay model compatibility reports;
+- SCL import edge cases;
+- Modbus mapping validation improvements;
+- MQTT payload examples;
+- UI/UX improvements for engineering workflows;
+- documentation and screenshot updates;
+- test benches or mock datasets that can be shared publicly.
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Do not upload private substation files, customer names, network addresses, relay passwords, or confidential SCL files to public issues.
 
 ## License
 
-ARServer core is open source under the Apache License 2.0. See [LICENSE](LICENSE).
+ARServer core is licensed under the [Apache License 2.0](LICENSE).
 
-The repository does **not** distribute libiec61850 source or binaries. Real IEC 61850 MMS communication requires a separately supplied runtime such as libiec61850 under GPLv3 or a commercial license from its copyright holder. If you distribute a package that bundles GPLv3 libiec61850 binaries with ARServer, treat that combined distribution separately and review the GPL/commercial licensing obligations.
-
-MQTTnet is MIT-licensed and compatible with Apache-2.0 distribution. Lucide icons are ISC-licensed and may be used in this project when their copyright/license notice is preserved. Third-party dependency notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-
-## Using the Software
-
-ARServer is a Windows gateway application, not a cloud service. The landing page in `docs/` is only product documentation; the actual gateway runs locally on Windows.
-
-For real IEC 61850 and MQTT operation:
-
-1. Install ARServer from [GitHub Releases](https://github.com/masarray/arserver/releases), or build it from source.
-2. For real IED communication, copy your own licensed `iec61850dotnet.dll` and `iec61850.dll` beside `ArServer.exe`. These files are not distributed by ARServer.
-3. Start an MQTT broker such as Mosquitto, EMQX, or HiveMQ if MQTT output is enabled.
-4. Add an IED by IP address and MMS port.
-5. Discover IEC 61850 objects, select SCADA/HMI signals, and validate the Modbus map.
-6. In the MQTT tab, select which signals publish to broker topics.
-7. Start runtime and connect FUXA/HMI either through Modbus TCP or MQTT.
+Third-party notices are available in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Optional runtime components supplied by users remain governed by their own license terms and are not redistributed in ARServer source or release packages.

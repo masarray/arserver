@@ -46,7 +46,7 @@
             </StackPanel>
 
             <Border Grid.Row="2" Background="#F8FAFC" CornerRadius="0,0,26,26" Padding="24,14">
-                <TextBlock Text="Read-only gateway MVP. Control/write commands are intentionally disabled for safety." Foreground="{StaticResource Muted}" FontSize="12.5"/>
+                <TextBlock Text="Read-only gateway. Control/write commands are intentionally disabled for safety." Foreground="{StaticResource Muted}" FontSize="12.5"/>
             </Border>
         </Grid>
     </Border>

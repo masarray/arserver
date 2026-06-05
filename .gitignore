@@ -368,3 +368,50 @@ iec61850dotnet.dll
 libiec61850.dll
 libiec61850*.dll
 *iec61850*.dll
+
+# ARServer public repository hygiene
+artifacts/
+release/
+releases/
+*.zip
+*.7z
+*.rar
+*.msi
+*.exe
+!scripts/**/*.ps1
+!.github/workflows/*.yml
+
+# Local runtime data, logs, and captures
+logs/
+Logs/
+*.log
+*.trace
+*.etl
+*.pcap
+*.pcapng
+*.cap
+*.har
+*.saz
+captures/
+Captures/
+
+# Private engineering files and local projects
+*.scl.private
+*.cid.private
+*.scd.private
+*.icd.private
+*.env
+.env.*
+secrets.json
+appsettings.Local.json
+*.user
+*.suo
+*.rsuser
+.vs/
+
+# Web/PWA hygiene when docs or test frontends are added
+node_modules/
+dist/
+build/
+.vite/
+.cache/

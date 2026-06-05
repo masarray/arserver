@@ -179,7 +179,7 @@
                             <StackPanel>
                                 <TextBlock Text="Ready to add this IED configuration to runtime workspace" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
                                 <TextBlock Text="Save will update the IEC 61850 Explorer with the selected live signals and update the Modbus Server publish map. Runtime viewing stays clean; editing stays inside this wizard." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="13" Margin="0,8,0,0"/>
-                                <TextBlock Text="Tip: Only selected signals become MMS polling targets in this MVP. Raw MMS attributes remain available for future edits, but are not published unless selected." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12.5" Margin="0,18,0,0"/>
+                                <TextBlock Text="Tip: Only selected signals become MMS polling targets. Raw MMS attributes remain available for future edits, but are not published unless selected." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12.5" Margin="0,18,0,0"/>
                             </StackPanel>
                         </Border>
                     </Grid>

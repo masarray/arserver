@@ -1,0 +1,16 @@
+{
+  "name": "ARServer",
+  "short_name": "ARServer",
+  "description": "IEC 61850 MMS to Modbus TCP and MQTT gateway for Windows engineering labs.",
+  "start_url": "/arserver/",
+  "display": "standalone",
+  "background_color": "#eff6ff",
+  "theme_color": "#eff6ff",
+  "icons": [
+    {
+      "src": "assets/arserver-icon.png",
+      "sizes": "256x256",
+      "type": "image/png"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 #define MyAppName "ARServer"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "1.0.0"
 #define MyAppPublisher "masarray"
 #define MyAppURL "https://github.com/masarray/arserver"
 #define MyAppExeName "ArServer.exe"
@@ -28,7 +28,7 @@ WizardStyle=modern
 UninstallDisplayIcon={app}\{#MyAppExeName}
 VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
-VersionInfoDescription=IEC 61850 to Modbus TCP and MQTT gateway
+VersionInfoDescription=IEC 61850 MMS to Modbus TCP and MQTT gateway
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 
@@ -39,7 +39,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
 [Files]
-Source: "..\artifacts\publish\win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\artifacts\publish\ARServer-{#MyAppVersion}-win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion

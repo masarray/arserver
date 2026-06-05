@@ -61,7 +61,7 @@
                         <Border Style="{StaticResource Card}" Padding="14" Margin="0,0,10,0">
                             <StackPanel>
                                 <TextBlock Text="5. Run" Style="{StaticResource SectionTitle}"/>
-                                <TextBlock Text="Start runtime. FUXA sebagai Modbus master membaca endpoint ArServer. MVP ini read-only demi safety." Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                <TextBlock Text="Start runtime. FUXA as Modbus master reads ARServer endpoint. The gateway is read-only by design for safety." Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}" Padding="14">

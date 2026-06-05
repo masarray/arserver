@@ -9,7 +9,9 @@
     <RootNamespace>Ari61850Bridge</RootNamespace>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
     <Authors>masarray</Authors>
-    <Description>Windows IEC 61850 MMS to Modbus TCP gateway for HMI and relay-bench workflows.</Description>
+    <Description>Open-source Windows IEC 61850 MMS to Modbus TCP and MQTT gateway for HMI, SCADA, relay testing, FAT/SAT, and substation automation labs.</Description>
+    <Version>1.0.0</Version>
+    <PackageTags>iec61850;iec-61850;mms;modbus-tcp;mqtt;scada;hmi;substation-automation;relay-testing;wpf;dotnet;windows</PackageTags>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/masarray/arserver</RepositoryUrl>
     <PackageProjectUrl>https://github.com/masarray/arserver</PackageProjectUrl>
