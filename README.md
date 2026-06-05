@@ -76,7 +76,7 @@ The fastest way to try ARServer is to download the Windows portable package from
 1. Open the [latest release](https://github.com/masarray/arserver/releases/latest).
 2. Download `ARServer-vX.Y.Z-win-x64-portable.zip`.
 3. Extract the ZIP to a writable folder, for example `C:\Tools\ARServer`.
-4. Run `Start-ARServer.bat` or `ArServer.exe`.
+4. Run `ArServer.exe`. The Windows app binary is packaged as a single executable.
 5. Use mock mode to explore the workflow, or add your IEC 61850 MMS runtime components for real IED testing.
 6. Add an IED, select signals, review the Modbus map, enable Modbus TCP and/or MQTT, then start runtime.
 
@@ -94,8 +94,7 @@ ARServer-vX.Y.Z-win-x64-portable.zip
 
 The package includes:
 
-- the published Windows application;
-- `Start-ARServer.bat` launcher;
+- `ArServer.exe` single-file Windows application executable;
 - quick-start notes;
 - `LICENSE`, `NOTICE`, and third-party notices.
 
@@ -163,8 +162,8 @@ dotnet build ARServer.sln -c Release
 To create a local Windows portable package:
 
 ```powershell
-pwsh ./scripts/publish-windows-portable.ps1 -Version 1.0.0-public-beta
-pwsh ./scripts/verify-release-package.ps1 -PackagePath ./artifacts/release/ARServer-v1.0.0-public-beta-win-x64-portable.zip
+powershell -ExecutionPolicy Bypass -File ./scripts/publish-windows-portable.ps1 -Version 1.0.1-public-beta
+powershell -ExecutionPolicy Bypass -File ./scripts/verify-release-package.ps1 -PackagePath ./artifacts/release/ARServer-v1.0.1-public-beta-win-x64-portable.zip -RequireSingleFileApp
 ```
 
 See [docs/RELEASE_PACKAGING.md](docs/RELEASE_PACKAGING.md) for release automation details.
@@ -177,7 +176,7 @@ See [docs/RELEASE_PACKAGING.md](docs/RELEASE_PACKAGING.md) for release automatio
 - [Validation matrix](docs/VALIDATION_MATRIX.md)
 - [Deployment and GitHub Pages](docs/DEPLOYMENT.md)
 - [Roadmap](docs/ROADMAP.md)
-- [Release notes](docs/RELEASE_NOTES_v1.0.0.md)
+- [Release notes](docs/RELEASE_NOTES_v1.0.1.md)
 - [Security policy](SECURITY.md)
 - [Contributing guide](CONTRIBUTING.md)
 

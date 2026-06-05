@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$PackagePath
+    [string]$PackagePath,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$RequireSingleFileApp
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,7 +13,6 @@ $resolvedPackage = Resolve-Path $PackagePath
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("arserver-release-verify-" + [System.Guid]::NewGuid().ToString("N"))
 $requiredFiles = @(
     "ArServer.exe",
-    "Start-ARServer.bat",
     "README_QUICK_START.txt",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md"
@@ -42,6 +44,20 @@ try {
         if ($matches) {
             $list = ($matches | ForEach-Object { $_.FullName }) -join "`n"
             throw "Forbidden file pattern found: $pattern`n$list"
+        }
+    }
+
+    if ($RequireSingleFileApp) {
+        $rootFiles = Get-ChildItem -Path $tempRoot -File -Force
+        $unexpectedRuntimeFiles = $rootFiles | Where-Object {
+            $_.Name -match '\.(dll|pdb)$' -or
+            $_.Name -like '*.deps.json' -or
+            $_.Name -like '*.runtimeconfig.json'
+        }
+
+        if ($unexpectedRuntimeFiles) {
+            $list = ($unexpectedRuntimeFiles | ForEach-Object { $_.Name }) -join "`n"
+            throw "Single-file app package should not contain extra runtime DLL/PDB/deps/runtimeconfig files:`n$list"
         }
     }
 

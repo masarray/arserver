@@ -18,19 +18,13 @@ C:\Tools\ARServer
 
 ## 2. Start the application
 
-Run either:
-
-```text
-Start-ARServer.bat
-```
-
-or:
+Run:
 
 ```text
 ArServer.exe
 ```
 
-The launcher is included only to make the portable package easier to start from Windows Explorer. The application itself is a Windows desktop app, not a CLI tool.
+The application binary is packaged as a single Windows executable. ARServer is a Windows desktop app, not a CLI tool.
 
 ## 3. Try mock mode first
 

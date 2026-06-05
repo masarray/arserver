@@ -11,15 +11,14 @@ ARServer-v<version>-win-x64-portable.zip
 Example:
 
 ```text
-ARServer-v1.0.0-public-beta-win-x64-portable.zip
+ARServer-v1.0.1-public-beta-win-x64-portable.zip
 ```
 
 ## Package contents
 
 The portable ZIP contains:
 
-- published Windows application files;
-- `Start-ARServer.bat` launcher;
+- `ArServer.exe` single-file Windows application executable;
 - `README_QUICK_START.txt`;
 - `LICENSE`;
 - `NOTICE` if present;
@@ -33,13 +32,13 @@ The package does not include user-supplied IEC 61850 runtime components.
 Run from the repository root:
 
 ```powershell
-pwsh ./scripts/publish-windows-portable.ps1 -Version 1.0.0-public-beta
+powershell -ExecutionPolicy Bypass -File ./scripts/publish-windows-portable.ps1 -Version 1.0.1-public-beta
 ```
 
 Verify the package:
 
 ```powershell
-pwsh ./scripts/verify-release-package.ps1 -PackagePath ./artifacts/release/ARServer-v1.0.0-public-beta-win-x64-portable.zip
+powershell -ExecutionPolicy Bypass -File ./scripts/verify-release-package.ps1 -PackagePath ./artifacts/release/ARServer-v1.0.1-public-beta-win-x64-portable.zip -RequireSingleFileApp
 ```
 
 ## GitHub Actions release workflow

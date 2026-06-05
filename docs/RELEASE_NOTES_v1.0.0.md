@@ -4,7 +4,7 @@ ARServer v1.0.0 public beta packages the project as a user-facing Windows deskto
 
 ## Highlights
 
-- Windows portable release package for users who want to try ARServer without Visual Studio.
+- Single-executable Windows portable release package for users who want to try ARServer without Visual Studio.
 - IEC 61850 IED workspace with signal selection and visible IEC Reference column.
 - Modbus TCP server mapping for HMI/SCADA polling.
 - MQTT topic publishing for broker-based dashboards.
@@ -17,7 +17,7 @@ ARServer v1.0.0 public beta packages the project as a user-facing Windows deskto
 
 1. Download `ARServer-v1.0.0-public-beta-win-x64-portable.zip`.
 2. Extract the ZIP to a writable Windows folder.
-3. Run `Start-ARServer.bat` or `ArServer.exe`.
+3. Run `ArServer.exe`.
 4. Use mock mode first, then add real IEC 61850 runtime components when evaluating with an IED.
 5. Add an IED, select signals, validate the Modbus map, configure MQTT if needed, and start runtime.
 

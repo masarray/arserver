@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
-    [string]$Version = "1.0.0-public-beta",
+    [string]$Version = "1.0.1-public-beta",
 
     [Parameter(Mandatory = $false)]
     [ValidateSet("Release", "Debug")]
@@ -12,6 +12,12 @@ param(
 
     [Parameter(Mandatory = $false)]
     [bool]$SelfContained = $true,
+
+    [Parameter(Mandatory = $false)]
+    [bool]$SingleFile = $true,
+
+    [Parameter(Mandatory = $false)]
+    [bool]$CompressSingleFile = $true,
 
     [Parameter(Mandatory = $false)]
     [switch]$SkipBuild
@@ -40,6 +46,10 @@ if (-not (Test-Path $projectPath)) {
     throw "ARServer.csproj was not found at $projectPath"
 }
 
+if ($SingleFile -and -not $SelfContained) {
+    throw "Single-file Windows portable publishing requires SelfContained=true."
+}
+
 New-Item -ItemType Directory -Force -Path $artifactRoot, $publishRoot, $packageRoot, $releaseRoot | Out-Null
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $publishDir, $packageDir, $zipPath, $shaPath
 
@@ -49,6 +59,9 @@ if (-not $SkipBuild) {
 
     Write-Step "Publishing $appName $Version for $Runtime"
     $selfContainedText = $SelfContained.ToString().ToLowerInvariant()
+    $singleFileText = $SingleFile.ToString().ToLowerInvariant()
+    $compressSingleFileText = $CompressSingleFile.ToString().ToLowerInvariant()
+
     dotnet publish $projectPath `
         -c $Configuration `
         -r $Runtime `
@@ -56,28 +69,31 @@ if (-not $SkipBuild) {
         -p:Version=$Version `
         -p:AssemblyVersion=1.0.0.0 `
         -p:FileVersion=1.0.0.0 `
-        -p:PublishSingleFile=false `
+        -p:PublishSingleFile=$singleFileText `
+        -p:SelfContained=$selfContainedText `
+        -p:IncludeNativeLibrariesForSelfExtract=true `
+        -p:EnableCompressionInSingleFile=$compressSingleFileText `
+        -p:PublishTrimmed=false `
         -p:PublishReadyToRun=false `
         -p:DebugType=None `
         -p:DebugSymbols=false `
         -o $publishDir
 }
 
-if (-not (Test-Path (Join-Path $publishDir $exeName))) {
-    throw "Published executable was not found: $(Join-Path $publishDir $exeName)"
+$publishedExe = Join-Path $publishDir $exeName
+if (-not (Test-Path $publishedExe)) {
+    throw "Published executable was not found: $publishedExe"
 }
 
 Write-Step "Preparing portable package folder"
 New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-Copy-Item -Path (Join-Path $publishDir "*") -Destination $packageDir -Recurse -Force
 
-$launcherPath = Join-Path $packageDir "Start-ARServer.bat"
-@"
-@echo off
-setlocal
-cd /d "%~dp0"
-start "" "%~dp0$exeName"
-"@ | Set-Content -Path $launcherPath -Encoding ASCII
+if ($SingleFile) {
+    Copy-Item -Path $publishedExe -Destination $packageDir -Force
+}
+else {
+    Copy-Item -Path (Join-Path $publishDir "*") -Destination $packageDir -Recurse -Force
+}
 
 $quickStartPath = Join-Path $packageDir "README_QUICK_START.txt"
 @"
@@ -85,9 +101,13 @@ ARServer v$Version - Windows portable package
 
 ARServer is a local Windows desktop gateway for IEC 61850 MMS to Modbus TCP and MQTT workflows.
 
+This release is packaged as a single application executable:
+
+  ArServer.exe
+
 How to run:
 1. Extract this ZIP to a writable folder, for example C:\Tools\ARServer.
-2. Run Start-ARServer.bat or ArServer.exe.
+2. Run ArServer.exe.
 3. Use mock mode to explore the workflow without a real IED.
 4. For real IED testing, place your IEC 61850 MMS runtime components beside ArServer.exe before starting the app.
 5. Add an IED, select signals, validate the Modbus map, configure MQTT if needed, and start runtime.
