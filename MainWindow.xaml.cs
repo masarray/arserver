@@ -1288,7 +1288,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             try
             {
-                var value = await _iecClient.ReadValueAsync(signal.ObjectReference, CancellationToken.None);
+                var value = await _iecClient.ReadValueAsync(signal.ObjectReference, signal.FunctionalConstraint, signal.DataType, CancellationToken.None);
                 if (value == null)
                 {
                     signal.Value = "-";

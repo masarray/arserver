@@ -367,3 +367,37 @@ Next hardening:
 - Probe-read selected discovery candidates before committing to runtime.
 - Use discovered named variable lists as the base for RCB/DataSet/reporting.
 
+
+## Phase N9 — Native value quality/timestamp sidecar hardening
+
+Status: implemented in this branch.
+
+After native IP discovery and first value polling are proven, the next gateway-level hardening is to stop treating every successful `stVal`/measurement read as blindly `Good`. Phase N9 adds slow sidecar reads for IEC 61850 companion attributes:
+
+- `q` quality is read beside selected ST/MX value tags when the object path can be inferred safely.
+- `t` timestamp is read beside selected ST/MX value tags when supported by the IED.
+- Value polling remains the primary path; quality/timestamp reads are throttled and cached so FUXA/Modbus responsiveness is not degraded.
+- If a relay does not expose a companion `q`/`t` for a candidate object, value polling continues and the failure is logged only occasionally.
+- Runtime status shows `+ q/t` once companion sidecar data is available.
+
+Examples of safe companion mapping:
+
+```text
+LD/Q0XCBR1.Pos.stVal        -> LD/Q0XCBR1.Pos.q / LD/Q0XCBR1.Pos.t
+LD/PTOC1.Op.general         -> LD/PTOC1.Op.q / LD/PTOC1.Op.t
+LD/MMXU1.A.phsA.cVal.mag.f  -> LD/MMXU1.A.phsA.q / LD/MMXU1.A.phsA.t
+```
+
+Guardrails:
+
+- No fake quality or timestamp is generated.
+- `q`/`t` support is treated as vendor/model-dependent.
+- Sidecar reads are not attempted for already-selected `q`/`t` attributes or non-ST/MX engineering attributes.
+
+Next hardening:
+
+- Add live validation/probe-read inside the IP discovery wizard before Save to Runtime.
+- Add native GetVariableAccessAttributes-style type discovery for structured objects.
+- Use discovered named variable lists/DataSets to start RCB planning for reporting.
+
+N9 also fixes the initial discovery snapshot path so preview reads pass the discovered Functional Constraint and data type into the native read engine. This avoids a false failure where the runtime path worked because it supplied `[ST]`/`[MX]`, but the initial snapshot used only the object reference.

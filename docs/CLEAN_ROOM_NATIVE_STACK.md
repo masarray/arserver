@@ -189,3 +189,17 @@ Clean-room boundary:
 - Keep wire encoders/decoders small, readable, and traceable to public MMS/IEC 61850 service behavior.
 - Treat native discovery as candidate generation, not as value truth. A tag becomes operational only after native read succeeds at runtime.
 
+
+## N9 quality/timestamp sidecar policy
+
+The native clean-room runtime now reads companion IEC 61850 quality (`q`) and timestamp (`t`) attributes as slow sidecar reads after a value read succeeds. This is intentionally implemented in the runtime layer, not as a hard requirement in the low-level MMS decoder, because IED models vary and not every discovered object candidate exposes the same companion shape.
+
+Design rules:
+
+- The selected value tag remains the source of Modbus/MQTT value truth.
+- `q` and `t` are enrichment attributes only; failure to read them must not make an otherwise valid value disappear.
+- `q`/`t` reads are throttled and cached per binding.
+- The runtime never fabricates `Good`; it starts with successful-read `Good` and upgrades/replaces it with decoded IED quality when available.
+- Companion reference inference is conservative and limited to common ST/MX shapes such as `Pos.stVal`, `Op.general`, and `cVal.mag.f`.
+
+This phase prepares the cache model for future reporting, where value, quality, timestamp, sequence, and reason-for-inclusion will arrive together in `InformationReport` PDUs.

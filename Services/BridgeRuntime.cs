@@ -29,6 +29,9 @@ public sealed class BridgeRuntime : IAsyncDisposable
     private bool _iecDisconnectedLogged;
     private readonly Dictionary<string, DateTime> _lastPerTagReadWarning = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTime> _nextPollDueUtc = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTime> _nextCompanionPollDueUtc = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _lastCompanionQualityByBindingKey = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _lastCompanionTimestampByBindingKey = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _roundRobinCursorByRelay = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ReportControlPlan> _reportPlans = new();
     private readonly Dictionary<string, ReportControlPlan> _reportPlanByBindingKey = new(StringComparer.OrdinalIgnoreCase);
@@ -241,6 +244,9 @@ public sealed class BridgeRuntime : IAsyncDisposable
     private void PrepareBindingsForRuntimeStart()
     {
         _nextPollDueUtc.Clear();
+        _nextCompanionPollDueUtc.Clear();
+        _lastCompanionQualityByBindingKey.Clear();
+        _lastCompanionTimestampByBindingKey.Clear();
         _roundRobinCursorByRelay.Clear();
 
         foreach (var binding in _bindings.Where(b => b.IsEnabled))
@@ -433,6 +439,8 @@ public sealed class BridgeRuntime : IAsyncDisposable
                     binding.Status = GetLiveStatusForBinding(binding);
                     if (changed) binding.Sequence++;
 
+                    await TryRefreshCompanionQualityAndTimestampAsync(binding, client, nowUtc, token);
+
                     // Outputs are cache-based. A FUXA/SCADA read never triggers direct MMS reads.
                     WriteBindingToModbus(binding, value);
                     if (changed ||
@@ -499,6 +507,156 @@ public sealed class BridgeRuntime : IAsyncDisposable
         }
     }
 
+
+    private async Task TryRefreshCompanionQualityAndTimestampAsync(BindingItem binding, IIec61850Client client, DateTime nowUtc, CancellationToken token)
+    {
+        // Phase N9: value reads are no longer treated as "Good" blindly forever.
+        // IEC 61850 quality (q) and timestamp (t) are acquired as slow sidecar reads when the
+        // object shape is inferable from a selected SCADA tag. Polling remains value-first so
+        // Modbus/FUXA responsiveness is not held hostage by q/t support variations between IEDs.
+        if (client is not NativeCleanRoomIec61850Client) return;
+        if (client.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase)) return;
+        if (IsCompanionAttribute(binding.IecReference)) return;
+        if (!IsCompanionEligible(binding)) return;
+
+        var key = GetBindingPollKey(binding);
+        if (_nextCompanionPollDueUtc.TryGetValue(key, out var due) && nowUtc < due)
+        {
+            ApplyCachedCompanionQuality(binding, key);
+            return;
+        }
+
+        _nextCompanionPollDueUtc[key] = nowUtc.AddMilliseconds(GetCompanionPollIntervalMs(binding));
+
+        var qualityUpdated = false;
+        if (TryBuildCompanionReference(binding.IecReference, "q", out var qRef))
+        {
+            try
+            {
+                var q = await client.ReadValueAsync(qRef, binding.FunctionalConstraint, "Quality", token);
+                if (q != null)
+                {
+                    var qText = q.ToString() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(qText))
+                    {
+                        _lastCompanionQualityByBindingKey[key] = qText;
+                        binding.Quality = qText;
+                        qualityUpdated = true;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                if (ShouldLogCompanionWarning(binding, "q"))
+                    Log("INFO", "Native IEC61850", $"{binding.IedName}: quality sidecar not readable for {binding.SignalName} ({qRef}). Value polling continues. {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        if (!qualityUpdated)
+            ApplyCachedCompanionQuality(binding, key);
+
+        if (TryBuildCompanionReference(binding.IecReference, "t", out var tRef))
+        {
+            try
+            {
+                var t = await client.ReadValueAsync(tRef, binding.FunctionalConstraint, "Timestamp", token);
+                if (t != null)
+                {
+                    var tText = t.ToString() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(tText))
+                    {
+                        _lastCompanionTimestampByBindingKey[key] = tText;
+                        if (binding.Status.EndsWith("/Live", StringComparison.OrdinalIgnoreCase))
+                            binding.Status += " + q/t";
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                if (ShouldLogCompanionWarning(binding, "t"))
+                    Log("INFO", "Native IEC61850", $"{binding.IedName}: timestamp sidecar not readable for {binding.SignalName} ({tRef}). Value polling continues. {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+
+    private void ApplyCachedCompanionQuality(BindingItem binding, string key)
+    {
+        if (_lastCompanionQualityByBindingKey.TryGetValue(key, out var cached) && !string.IsNullOrWhiteSpace(cached))
+            binding.Quality = cached;
+        if (_lastCompanionTimestampByBindingKey.ContainsKey(key) && binding.Status.EndsWith("/Live", StringComparison.OrdinalIgnoreCase))
+            binding.Status += " + q/t";
+    }
+
+    private bool ShouldLogCompanionWarning(BindingItem binding, string suffix)
+    {
+        var key = $"companion-{suffix}|{binding.RelayId}|{binding.IecReference}";
+        var now = DateTime.Now;
+        if (_lastPerTagReadWarning.TryGetValue(key, out var last) && (now - last).TotalMinutes < 15)
+            return false;
+        _lastPerTagReadWarning[key] = now;
+        return true;
+    }
+
+    private static bool IsCompanionEligible(BindingItem binding)
+    {
+        var fc = binding.FunctionalConstraint ?? string.Empty;
+        if (!fc.Equals("ST", StringComparison.OrdinalIgnoreCase) && !fc.Equals("MX", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var dataType = binding.IecDataType ?? string.Empty;
+        if (dataType.Equals("Quality", StringComparison.OrdinalIgnoreCase) || dataType.Equals("Timestamp", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var reference = NormalizeIecReference(binding.IecReference);
+        if (reference.EndsWith(".q") || reference.EndsWith(".t")) return false;
+        return reference.EndsWith(".stval") ||
+               reference.EndsWith(".general") ||
+               reference.EndsWith(".mag.f") ||
+               reference.EndsWith(".cval.mag.f") ||
+               reference.EndsWith(".f") ||
+               dataType.Equals("Dbpos", StringComparison.OrdinalIgnoreCase) ||
+               dataType.Equals("Boolean", StringComparison.OrdinalIgnoreCase) ||
+               dataType.Equals("Float32", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int GetCompanionPollIntervalMs(BindingItem binding)
+    {
+        var valuePoll = GetPollIntervalMs(binding);
+        return Math.Clamp(valuePoll * 5, 3000, 30000);
+    }
+
+    private static bool IsCompanionAttribute(string reference)
+    {
+        var r = NormalizeIecReference(reference);
+        return r.EndsWith(".q") || r.EndsWith(".t");
+    }
+
+    private static bool TryBuildCompanionReference(string reference, string companion, out string companionReference)
+    {
+        companionReference = string.Empty;
+        if (!companion.Equals("q", StringComparison.OrdinalIgnoreCase) && !companion.Equals("t", StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.IsNullOrWhiteSpace(reference)) return false;
+
+        var normalized = reference.Replace('$', '.').Trim();
+        if (normalized.EndsWith(".q", StringComparison.OrdinalIgnoreCase) || normalized.EndsWith(".t", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var parent = normalized;
+        if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
+        else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
+        else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];
+        else if (parent.EndsWith(".mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
+        else
+        {
+            var dot = parent.LastIndexOf('.');
+            if (dot <= parent.IndexOf('/')) return false;
+            parent = parent[..dot];
+        }
+
+        if (string.IsNullOrWhiteSpace(parent)) return false;
+        companionReference = $"{parent}.{companion.ToLowerInvariant()}";
+        return true;
+    }
+
+    private static string NormalizeIecReference(string? reference)
+        => (reference ?? string.Empty).Replace('$', '.').Replace("..", ".").ToLowerInvariant();
 
     private string GetLiveStatusForBinding(BindingItem binding)
     {

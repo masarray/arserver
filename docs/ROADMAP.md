@@ -320,3 +320,18 @@ Next hardening:
 - Probe-read selected discovery candidates before committing to runtime.
 - Use discovered named variable lists as the base for RCB/DataSet/reporting.
 
+
+## Phase N9 — Native value quality/timestamp sidecar hardening
+
+Implemented:
+
+- Runtime-side slow polling of IEC 61850 companion `q` and `t` attributes for selected ST/MX tags.
+- Conservative inference from value object to companion object, e.g. `Pos.stVal` → `Pos.q`/`Pos.t` and `cVal.mag.f` → phase-level `q`/`t`.
+- Cached sidecar quality/timestamp so value polling remains fast and stable.
+- Occasional diagnostic logging only; missing `q`/`t` does not break value acquisition.
+
+Next:
+
+- Add discovery-time live validation so users can see which candidates read Good before committing to runtime.
+- Expand native type discovery.
+- Start RCB/DataSet/reporting planning on top of proven native discovery and read services.
