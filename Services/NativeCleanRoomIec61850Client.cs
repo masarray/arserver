@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Ari61850Bridge.Models;
@@ -28,8 +29,12 @@ public sealed class NativeCleanRoomIec61850Client : IIec61850Client
     public string LastErrorMessage { get; private set; } = string.Empty;
     public string LastAssociationResponseHex => _session.LastAssociationResponseHex;
     public string LastAssociationAttemptSummary => _session.LastAssociationAttemptSummary;
+    public string LastReadRequestHex => _session.LastReadRequestHex;
     public string LastReadResponseHex => _session.LastReadResponseHex;
     public string LastReadAttemptSummary => _session.LastReadAttemptSummary;
+    public string LastDiscoveryRequestHex => _session.LastDiscoveryRequestHex;
+    public string LastDiscoveryResponseHex => _session.LastDiscoveryResponseHex;
+    public string LastDiscoverySummary { get; private set; } = string.Empty;
 
     public async Task ConnectAsync(string ipAddress, int port, CancellationToken cancellationToken)
     {
@@ -48,12 +53,37 @@ public sealed class NativeCleanRoomIec61850Client : IIec61850Client
         }
     }
 
-    public Task<IReadOnlyList<SignalDefinition>> DiscoverSignalsAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<SignalDefinition>> DiscoverSignalsAsync(CancellationToken cancellationToken)
     {
-        // Online discovery remains intentionally out of this clean-room phase.
-        // The first native path is SCL-driven: Open SCL -> choose signal -> start session -> polling/report planner.
-        IReadOnlyList<SignalDefinition> empty = Array.Empty<SignalDefinition>();
-        return Task.FromResult(empty);
+        LastDiscoverySummary = string.Empty;
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!_session.IsMmsInitiated)
+        {
+            LastErrorMessage = $"Native online discovery requires ACSE/MMS association. Current state: {_session.State}. {_session.LastAssociationAttemptSummary}";
+            return Array.Empty<SignalDefinition>();
+        }
+
+        try
+        {
+            var domainVariables = await _session.DiscoverDomainVariableNamesAsync(cancellationToken).ConfigureAwait(false);
+            var domainVariableLists = await _session.DiscoverDomainVariableListNamesAsync(cancellationToken).ConfigureAwait(false);
+            var snapshot = new NativeMmsDiscoverySnapshot
+            {
+                DomainVariables = domainVariables,
+                DomainVariableLists = domainVariableLists
+            };
+
+            var signals = NativeMmsDiscoveryMapper.BuildSignals(snapshot);
+            LastDiscoverySummary = $"Native MMS GetNameList discovery: LD={domainVariables.Count}, raw variables={domainVariables.Values.Sum(v => v.Count)}, datasets={domainVariableLists.Values.Sum(v => v.Count)}, SCADA candidates={signals.Count}. {_session.LastDiscoveryAttemptSummary}";
+            LastErrorMessage = LastDiscoverySummary;
+            return signals;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LastErrorMessage = $"Native MMS online discovery failed: {ex.GetType().Name}: {ex.Message}. Last discovery: {_session.LastDiscoveryAttemptSummary}. Last request: {_session.LastDiscoveryRequestHex}";
+            return Array.Empty<SignalDefinition>();
+        }
     }
 
     public Task<object?> ReadValueAsync(string objectReference, CancellationToken cancellationToken)
@@ -92,7 +122,7 @@ public sealed class NativeCleanRoomIec61850Client : IIec61850Client
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            LastErrorMessage = $"Native MMS Confirmed-Read failed for {normalized}: {ex.GetType().Name}: {ex.Message}";
+            LastErrorMessage = $"Native MMS Confirmed-Read failed for {normalized}: {ex.GetType().Name}: {ex.Message}. Last request: {_session.LastReadRequestHex}";
             return null;
         }
     }

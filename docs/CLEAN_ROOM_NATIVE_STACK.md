@@ -116,3 +116,76 @@ Association profiles are explicit and auditable:
 - `LegacyMinimal`: fallback compact AARQ profile.
 
 The stack treats ISO Session Abort `0x19` as a real association failure. This avoids a dangerous false-positive where an abort frame contains bytes that look like Presentation/ACSE markers.
+
+## Phase N6 - Native MMS Read Resilience and Payload Profiler
+
+Phase N6 improves the first native Confirmed-Read slice after field feedback from an IED that accepted ACSE/MMS association but closed TCP immediately after the first read attempt.
+
+Implemented guardrails:
+
+- MMS association is still required before runtime reads.
+- Confirmed-Read now records the exact request payload profile and hex preview used for each attempt.
+- A peer-closed TCP read fault is treated as a protocol/profile failure, not as a live value.
+- The native session can re-establish ACSE/MMS between diagnostic read profiles so one rejected payload does not poison the whole runtime session.
+- Read payload profiles are explicit and auditable:
+  - PresentationDataValues
+  - PresentationDataValuesWithSpecificationResult
+  - SessionDataOnly
+  - RawMmsPdu
+- No fake values and no silent libiec61850 fallback are introduced.
+
+Next focus after N6:
+
+1. Capture which payload profile the target IED accepts or rejects.
+2. If every payload profile closes the TCP session, tune the ISO Presentation P-DATA wrapper.
+3. If the IED returns AccessResult.failure, tune IEC object-name mapping from SCL/FCDA.
+4. Once one `stVal` reads successfully, expand decoder coverage for `q`, `t`, analog values, and DataAttribute structures.
+
+
+## Phase N7 correction: MMS Read envelope
+
+Field testing showed `PresentationDataValues => transport fault` after ACSE/MMS association. The root cause was not the IED IP, COTP, or SCL import. The native read packet was still too compact:
+
+- the ISO Presentation P-DATA `fully-encoded-data` / PDV-list wrapper was missing; and
+- the MMS Read-Request structure missed the `variableAccessSpecification [1]` layer and the `SEQUENCE OF VariableSpecification` wrapper used by strict IEC 61850 MMS servers.
+
+Phase N7 rewrites the clean-room Confirmed-Read encoder to use this post-association shape:
+
+```text
+COTP DT user-data
+  01 00                         session data transfer
+  01 00                         presentation user-data selector
+  61 ...                        fully-encoded-data
+    30 ...                      PDV-list
+      02 01 03                  presentation-context-id = 3
+      A0 ...                    single-ASN1-type
+        A0 ...                  MMS Confirmed-RequestPDU
+          02 ...                invokeID
+          A4 ...                Read-Request
+            A1 ...              variableAccessSpecification
+              A0 ...            listOfVariable
+                30 ...          SEQUENCE OF VariableSpecification
+                  A0 ...        name
+                    A1 ...      ObjectName.domain-specific
+                      1A ...    domainId
+                      1A ...    itemId
+```
+
+The response decoder now also unwraps the same Presentation P-DATA wrapper before decoding the MMS Confirmed-Response. No GPL source code was copied; this phase is based on public protocol traces, public API behavior, and clean-room implementation.
+
+## N8 clean-room discovery implementation notes
+
+The native discovery phase uses public MMS service semantics rather than libiec61850 source code. The implemented browse path is intentionally narrow and auditable:
+
+1. ACSE/MMS association using the existing native association profiler.
+2. MMS `GetNameList` for VMD-specific domain names.
+3. MMS `GetNameList` for domain-specific named variables.
+4. Local mapping from MMS names to IEC 61850 object candidates.
+5. Existing native Confirmed-Read is still responsible for proving live values.
+
+Clean-room boundary:
+
+- Do not port libiec61850 source files, generated ASN.1 files, private helper names, or internal discovery algorithms.
+- Keep wire encoders/decoders small, readable, and traceable to public MMS/IEC 61850 service behavior.
+- Treat native discovery as candidate generation, not as value truth. A tag becomes operational only after native read succeeds at runtime.
+

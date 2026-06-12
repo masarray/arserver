@@ -301,3 +301,69 @@ Next:
 - Parse SCL OSI selectors (`OSI-PSEL`, `OSI-SSEL`, `OSI-TSEL`, `OSI-AP-Title`, `OSI-AE-Qualifier`) into native association options.
 - Replace static association payloads with composable BER builders.
 - Continue MMS Confirmed-Read tuning after association succeeds.
+
+## Phase N6 - Native MMS Read Resilience and Payload Profiler
+
+Phase N6 improves the first native Confirmed-Read slice after field feedback from an IED that accepted ACSE/MMS association but closed TCP immediately after the first read attempt.
+
+Implemented guardrails:
+
+- MMS association is still required before runtime reads.
+- Confirmed-Read now records the exact request payload profile and hex preview used for each attempt.
+- A peer-closed TCP read fault is treated as a protocol/profile failure, not as a live value.
+- The native session can re-establish ACSE/MMS between diagnostic read profiles so one rejected payload does not poison the whole runtime session.
+- Read payload profiles are explicit and auditable:
+  - PresentationDataValues
+  - PresentationDataValuesWithSpecificationResult
+  - SessionDataOnly
+  - RawMmsPdu
+- No fake values and no silent libiec61850 fallback are introduced.
+
+Next focus after N6:
+
+1. Capture which payload profile the target IED accepts or rejects.
+2. If every payload profile closes the TCP session, tune the ISO Presentation P-DATA wrapper.
+3. If the IED returns AccessResult.failure, tune IEC object-name mapping from SCL/FCDA.
+4. Once one `stVal` reads successfully, expand decoder coverage for `q`, `t`, analog values, and DataAttribute structures.
+
+
+### Phase N7 - Correct MMS P-DATA Confirmed-Read envelope
+
+Status: implemented in this branch.
+
+- Fixed the native MMS Confirmed-Read encoder to use ISO Presentation fully-encoded-data / PDV-list with presentation context id 3.
+- Fixed MMS Read-Request structure to include `variableAccessSpecification [1]` and `SEQUENCE OF VariableSpecification` before the domain-specific object name.
+- Fixed response decoder to unwrap Presentation P-DATA before looking for MMS Confirmed-ResponsePDU.
+- Retained strict clean-room discipline: no GPL source copy, no silent runtime fallback, no fake values.
+
+Expected field behavior: a relay that previously closed TCP on `PresentationDataValues` should now either return a decodable Confirmed-Response, an MMS Confirmed-Error/AccessResult.failure, or a clear object-access failure. A raw TCP close after this phase indicates either a still-incompatible association/presentation context or a vendor-specific object naming/FC issue.
+
+## Phase N8 — Native IP Discovery MVP
+
+Status: implemented as the first clean-room online browse slice.
+
+Native IP-only discovery now follows the same high-level service shape used by mature IEC 61850 clients: associate first, read the server directory/domain names, browse each MMS domain for named variables, map MMS names back into IEC 61850 object candidates, then let the user select the SCADA tags that will be routed to Modbus TCP/MQTT.
+
+Implemented scope:
+
+- MMS `GetNameList` request encoder for VMD/domain browse.
+- MMS `GetNameList` response decoder with invokeID validation.
+- Native domain browse: VMD-specific domain list.
+- Native domain variable browse: domain-specific named variables.
+- Optional domain variable-list browse foundation for future DataSet/RCB work.
+- Smart MMS item mapping, for example `Q0XCBR1$ST$Pos` → `LD/Q0XCBR1.Pos.stVal [ST]`.
+- Smart candidate generation for CB/DS position, protection general flags, and MMXU/MMXN cVal magnitudes.
+- IP-only wizard now defaults to native clean-room discovery instead of requiring an external runtime.
+
+Guardrails:
+
+- No GPL runtime fallback is used when native mode is selected.
+- Discovery candidates are not fake values; runtime polling still proves each selected tag by native Confirmed-Read.
+- Open SCL remains the deterministic engineered workflow when CID/SCD is available.
+
+Next hardening:
+
+- Add GetVariableAccessAttributes/GetDataDirectory-style type expansion for structured objects.
+- Probe-read selected discovery candidates before committing to runtime.
+- Use discovered named variable lists as the base for RCB/DataSet/reporting.
+

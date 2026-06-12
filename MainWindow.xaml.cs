@@ -359,7 +359,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         else
         {
-            AddLog("INFO", "IEC61850", "IEC 61850 MMS runtime not detected. Mock mode remains available for UI/Modbus testing.");
+            AddLog("INFO", "IEC61850", "External IEC 61850 runtime not detected. Native clean-room IP/SCL workflow is available; mock mode remains available for UI/Modbus testing.");
         }
 
         UpdateNavigationVisuals(MainTabs.SelectedIndex);
@@ -464,6 +464,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             if (_iecClient is RealLibIec61850Client realOk && !string.IsNullOrWhiteSpace(realOk.LastDiscoverySummary))
                 AddLog("INFO", "Discovery", realOk.LastDiscoverySummary);
+            if (_iecClient is NativeCleanRoomIec61850Client nativeOk && !string.IsNullOrWhiteSpace(nativeOk.LastDiscoverySummary))
+                AddLog("INFO", "Native Discovery", nativeOk.LastDiscoverySummary);
 
             EventStrategyStatus = _iecClient is NativeCleanRoomIec61850Client nativeStatus
                 ? nativeStatus.IsMmsReady
@@ -492,6 +494,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     runtimeIpAddress: relayIp,
                     runtimePort: MmsPort,
                     useRealEngine: UseRealIecEngine,
+                    useNativeCleanRoomEngine: UseNativeCleanRoomEngine,
                     suggestedIedName: suggestedIedName,
                     mode: _iecClient.ConnectionMode,
                     status: "Connected",
@@ -1481,7 +1484,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Owner = this,
             RelayIpAddress = string.IsNullOrWhiteSpace(RelayIpAddress) ? (RecentRelayIps.FirstOrDefault() ?? string.Empty) : RelayIpAddress,
             MmsPort = MmsPort,
-            UseRealIecEngine = UseRealIecEngine
+            UseRealIecEngine = UseRealIecEngine,
+            UseNativeCleanRoomEngine = true
         };
 
         TrackActiveWizard(wizard);
@@ -1509,11 +1513,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         RelayIpAddress = ip;
         MmsPort = wizard.MmsPort;
-        UseRealIecEngine = wizard.UseRealIecEngine;
+        UseNativeCleanRoomEngine = wizard.UseNativeCleanRoomEngine;
+        UseRealIecEngine = !UseNativeCleanRoomEngine && wizard.UseRealIecEngine;
         if (RelayIpTextBox != null)
             RelayIpTextBox.Text = ip;
 
-        AddLog("INFO", "IP Discovery", $"IP-only flow accepted endpoint {ip}:{MmsPort}. Starting online MMS browse before Signal Map and Modbus Binding.");
+        AddLog("INFO", "IP Discovery", $"IP-only flow accepted endpoint {ip}:{MmsPort}. Starting {(UseNativeCleanRoomEngine ? "native clean-room" : UseRealIecEngine ? "external runtime" : "mock")} online MMS browse before Signal Map and Modbus Binding.");
         _openConfigWizardAfterDiscovery = true;
         ConnectDiscover_Click(sender, e);
     }
@@ -1581,6 +1586,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             runtimeIpAddress: ip,
             runtimePort: runtimePortToUse,
             useRealEngine: useRealEngine,
+            useNativeCleanRoomEngine: true,
             suggestedIedName: displayName,
             mode: "CID/SCD model / Native clean-room runtime",
             status: "Configured",
@@ -1613,6 +1619,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         string runtimeIpAddress,
         int runtimePort,
         bool useRealEngine,
+        bool useNativeCleanRoomEngine,
         string suggestedIedName,
         string mode,
         string status,
@@ -1640,9 +1647,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         RelayIpAddress = runtimeIpAddress;
         MmsPort = runtimePort > 0 ? runtimePort : 102;
         UseRealIecEngine = useRealEngine;
-        UseNativeCleanRoomEngine = !string.IsNullOrWhiteSpace(sclFilePath);
+        UseNativeCleanRoomEngine = useNativeCleanRoomEngine;
         if (UseNativeCleanRoomEngine)
-            AddLog("INFO", "Native IEC61850", "SCL workflow committed to native clean-room runtime path. IP-only discovery remains external-runtime/mock until native online browse is implemented.");
+            AddLog("INFO", "Native IEC61850", string.IsNullOrWhiteSpace(sclFilePath)
+                ? "IP-only workflow committed to native clean-room runtime path. Online discovery is based on MMS GetNameList; polling uses the native Confirmed-Read path."
+                : "SCL workflow committed to native clean-room runtime path. Open SCL remains the most deterministic route when engineering files are available.");
         if (RelayIpTextBox != null)
             RelayIpTextBox.Text = RelayIpAddress;
 

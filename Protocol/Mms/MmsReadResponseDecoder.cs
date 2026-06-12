@@ -75,10 +75,68 @@ public static class MmsReadResponseDecoder
 
     private static byte[] StripPresentationPrefix(byte[] payload)
     {
-        // Common post-association presentation data prefix used by MMS over ISO presentation.
-        if (payload.Length > 4 && payload[0] == 0x01 && payload[1] == 0x00 && payload[2] == 0x01 && payload[3] == 0x00)
-            return payload.Skip(4).ToArray();
+        if (payload.Length == 0) return payload;
+
+        // Normal post-association IEC 61850 MMS P-DATA shape:
+        // Session DT SPDU 01 00 + presentation selector 01 00 + User-data fully-encoded-data 61 ...
+        // Then PDV-list carries context-id 3 and presentation-data-values.single-ASN1-type [0]
+        // whose value is the MMS PDU.
+        if (payload.Length > 5 && payload[0] == 0x01 && payload[1] == 0x00 && payload[2] == 0x01 && payload[3] == 0x00 && payload[4] == 0x61)
+        {
+            if (TryExtractMmsFromFullyEncodedData(payload.AsMemory(4), out var mms))
+                return mms;
+        }
+
+        // Some traces/tools expose the presentation user-data without the two session bytes.
+        if (payload.Length > 3 && payload[0] == 0x01 && payload[1] == 0x00 && payload[2] == 0x61)
+        {
+            if (TryExtractMmsFromFullyEncodedData(payload.AsMemory(2), out var mms))
+                return mms;
+        }
+
+        // Some decoders expose only the fully-encoded-data node.
+        if (payload[0] == 0x61 && TryExtractMmsFromFullyEncodedData(payload, out var directMms))
+            return directMms;
+
+        // Diagnostic fallback: some captures expose only the session data-transfer SPDU
+        // before the MMS PDU. Strip it only when the next byte already looks like MMS.
+        if (payload.Length > 2 && payload[0] == 0x01 && payload[1] == 0x00 && (payload[2] & 0xE0) == 0xA0)
+            return payload.Skip(2).ToArray();
+
         return payload;
+    }
+
+    private static bool TryExtractMmsFromFullyEncodedData(ReadOnlyMemory<byte> payload, out byte[] mms)
+    {
+        mms = Array.Empty<byte>();
+
+        try
+        {
+            var outer = new BerReader(payload).ReadTlv();
+            if (outer.Tag != 0x61) return false;
+
+            var listReader = new BerReader(outer.Value);
+            if (listReader.EndOfBuffer) return false;
+            var pdvList = listReader.ReadTlv();
+            if (pdvList.Tag != 0x30) return false;
+
+            var pdvReader = new BerReader(pdvList.Value);
+            while (!pdvReader.EndOfBuffer)
+            {
+                var item = pdvReader.ReadTlv();
+                if (item.Tag == 0xA0)
+                {
+                    mms = item.Value.ToArray();
+                    return mms.Length > 0;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentException or IndexOutOfRangeException)
+        {
+            return false;
+        }
+
+        return false;
     }
 
     private static bool ContainsConfirmedError(byte[] mms, out string message)
