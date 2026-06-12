@@ -15,8 +15,8 @@ public static class MmsReadRequest
     /// - The MMS PDU is wrapped in ISO Presentation P-DATA PDV-list:
     ///   01 00 01 00 61 ... 30 ... 02 01 03 A0 ... <MMS PDU>
     ///
-    /// This remains a clean-room implementation. The wrapper layout is derived from public protocol
-    /// traces/documentation, not from GPL source code.
+    /// This remains a native implementation. The wrapper layout is derived from public protocol
+    /// traces/documentation, not from third-party source code.
     /// </summary>
     public static byte[] BuildSingleVariableRead(int invokeId, MmsObjectReference reference, MmsReadPayloadProfile payloadProfile = MmsReadPayloadProfile.PresentationDataValues)
     {

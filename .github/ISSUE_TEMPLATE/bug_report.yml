@@ -19,8 +19,8 @@ body:
     attributes:
       label: Connection mode
       options:
-        - Mock mode
-        - Real IED
+        - Demo mode
+        - Live IED
         - Modbus TCP only
         - MQTT only
         - Other

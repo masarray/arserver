@@ -5,7 +5,7 @@ Use this matrix when evaluating ARServer on a lab bench, FAT bench, or simulated
 | Area | What to validate | Expected result |
 |---|---|---|
 | Application start | Portable package opens on Windows | Main workspace loads without Visual Studio |
-| Mock mode | Add sample IED and select signals | Values update and can be mapped |
+| Demo mode | Add sample IED and select signals | Values update and can be mapped |
 | IED connection | Connect to test relay on MMS port | Connection status and discovery are visible |
 | SCL import | Import CID/SCD/SCL file | SCADA-ready signals appear in wizard |
 | IEC Reference visibility | Open signal selection wizard | IEC Reference is visible near the Signal column |

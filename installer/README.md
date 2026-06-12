@@ -17,4 +17,4 @@ Installer builds should include:
 - `LICENSES/`;
 - quick-start documentation.
 
-Do not include private engineering files, user secrets, relay exports, packet captures, or user-supplied IEC 61850 runtime binaries in a public installer package unless you have the right to redistribute them.
+Do not include private engineering files, user secrets, relay exports, packet captures, or private runtime test binaries in a public installer package unless you have the right to redistribute them.

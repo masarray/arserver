@@ -53,7 +53,11 @@ public sealed class BridgeRuntime : IAsyncDisposable
     public long MqttPublishedCount => _mqttPublisher.PublishedCount;
     public long MqttDroppedCount => _mqttPublisher.DroppedCount;
     public string MqttEndpointText => _mqttPublisher.EndpointText;
-    public string EventMode { get; private set; } = "Mock Polling Simulation";
+    public string EventMode { get; private set; } = "Demo Polling Simulation";
+
+    private static bool IsDemoClient(IIec61850Client client) =>
+        client.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase) ||
+        client.ConnectionMode.Contains("Demo", StringComparison.OrdinalIgnoreCase);
 
     public void ReplaceIecClient(IIec61850Client iecClient)
     {
@@ -61,8 +65,8 @@ public sealed class BridgeRuntime : IAsyncDisposable
         _iecDisconnectedLogged = false;
         _relayClients.Clear();
         _ownedRelayClientIds.Clear();
-        EventMode = _iecClient.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase)
-            ? "Mock Polling Simulation"
+        EventMode = IsDemoClient(_iecClient)
+            ? "Demo Polling Simulation"
             : "IEC61850 MMS Polling";
         Log("INFO", "Runtime", "IEC 61850 client session refreshed. Modbus TCP server remained running.");
     }
@@ -133,9 +137,9 @@ public sealed class BridgeRuntime : IAsyncDisposable
     private string ResolveRuntimeMode()
     {
         var relayCount = _bindings.Select(b => string.IsNullOrWhiteSpace(b.RelayId) ? "__single__" : b.RelayId).Distinct(StringComparer.OrdinalIgnoreCase).Count();
-        if (_iecClient.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase))
-            return relayCount > 1 ? "Mock Multi-IED Polling" : "Mock Polling Simulation";
-        var mode = _iecClient is NativeCleanRoomIec61850Client native
+        if (IsDemoClient(_iecClient))
+            return relayCount > 1 ? "Demo Multi-IED Polling" : "Demo Polling Simulation";
+        var mode = _iecClient is NativeIec61850Client native
             ? native.IsMmsReady
                 ? (relayCount > 1 ? "Native IEC61850 ACSE/MMS Associated / Multi-IED" : "Native IEC61850 ACSE/MMS Associated")
                 : (relayCount > 1 ? "Native IEC61850 Transport / ACSE Probe / Multi-IED" : "Native IEC61850 Transport / ACSE Probe")
@@ -186,9 +190,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
             if (!client.IsConnected)
             {
                 MarkGroupDisconnected(group, "IEC connect failed");
-                if (client is RealLibIec61850Client real && !string.IsNullOrWhiteSpace(real.LastErrorMessage))
-                    Log("ERROR", "IEC61850", $"{display} {ip}:{port}: {real.LastErrorMessage}");
-                else if (client is NativeCleanRoomIec61850Client native && !string.IsNullOrWhiteSpace(native.LastErrorMessage))
+                if (client is NativeIec61850Client native && !string.IsNullOrWhiteSpace(native.LastErrorMessage))
                     Log("ERROR", "Native IEC61850", $"{display} {ip}:{port}: {native.LastErrorMessage}");
                 else
                     Log("ERROR", "IEC61850", $"{display} {ip}:{port}: MMS client connection failed.");
@@ -199,7 +201,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
             _relayClients[relayId] = client;
             _ownedRelayClientIds.Add(relayId);
-            if (client is NativeCleanRoomIec61850Client nativeStarted)
+            if (client is NativeIec61850Client nativeStarted)
                 Log("INFO", "Native IEC61850", $"{display} {ip}:{port}: native session state={nativeStarted.NativeState}. {nativeStarted.LastErrorMessage}");
             else
                 Log("INFO", "IEC61850", $"{display} {ip}:{port}: isolated MMS client connected.");
@@ -401,9 +403,10 @@ public sealed class BridgeRuntime : IAsyncDisposable
                     {
                         binding.CurrentValue = "-";
                         binding.Quality = "Bad";
+                        binding.DeviceTimestamp = "-";
                         binding.LastUpdate = DateTime.Now;
                         binding.AgeMs = 0;
-                        if (client is NativeCleanRoomIec61850Client nativeClient)
+                        if (client is NativeIec61850Client nativeClient)
                         {
                             binding.Status = nativeClient.IsMmsReady
                                 ? "Native MMS associated / read pending"
@@ -418,7 +421,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
                         if (ShouldLogReadWarning(binding))
                         {
-                            if (client is NativeCleanRoomIec61850Client native && !string.IsNullOrWhiteSpace(native.LastErrorMessage))
+                            if (client is NativeIec61850Client native && !string.IsNullOrWhiteSpace(native.LastErrorMessage))
                                 Log("WARN", "Native IEC61850", $"{binding.IedName}: {binding.SignalName}: {native.LastErrorMessage}");
                             else
                                 Log("WARN", "IEC61850", $"{binding.IedName}: {binding.SignalName} not readable by MMS. IEC object: {binding.IecReference} [{binding.FunctionalConstraint}]");
@@ -514,8 +517,8 @@ public sealed class BridgeRuntime : IAsyncDisposable
         // IEC 61850 quality (q) and timestamp (t) are acquired as slow sidecar reads when the
         // object shape is inferable from a selected SCADA tag. Polling remains value-first so
         // Modbus/FUXA responsiveness is not held hostage by q/t support variations between IEDs.
-        if (client is not NativeCleanRoomIec61850Client) return;
-        if (client.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase)) return;
+        if (client is not NativeIec61850Client) return;
+        if (IsDemoClient(client)) return;
         if (IsCompanionAttribute(binding.IecReference)) return;
         if (!IsCompanionEligible(binding)) return;
 

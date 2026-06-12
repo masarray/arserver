@@ -8,11 +8,11 @@ public sealed record AcseAssociationProfile(string Name, string Description, byt
 public static class AcseMmsInitiateRequest
 {
     /// <summary>
-    /// Native clean-room association profiles.
+    /// Native native association profiles.
     ///
-    /// Real IEC 61850 IEDs are not fully uniform in how strict they are about ACSE AP-title /
+    /// IEC 61850 IEDs are not fully uniform in how strict they are about ACSE AP-title /
     /// AE-qualifier and ISO presentation negotiation. Keep the profiles explicit, small, and
-    /// auditable; do not silently copy any GPL stack internals.
+    /// auditable; do not silently copy any third-party stack internals.
     /// </summary>
     public static IReadOnlyList<AcseAssociationProfile> BuildAssociationProfiles()
     {

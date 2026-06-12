@@ -5,8 +5,7 @@ public class BridgeProject
     public string ProjectName { get; set; } = "ArServer Project";
     public string RelayIpAddress { get; set; } = "192.168.1.10";
     public int MmsPort { get; set; } = 102;
-    public bool UseRealIecEngine { get; set; }
-    public bool UseNativeCleanRoomEngine { get; set; }
+    public bool UseNativeIecEngine { get; set; } = true;
     public string ModbusBindAddress { get; set; } = "0.0.0.0";
     public bool EnableModbusTcp { get; set; } = true;
     public int ModbusPort { get; set; } = 502;

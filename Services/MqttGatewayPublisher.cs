@@ -79,7 +79,6 @@ public sealed class MqttGatewayPublisher : IAsyncDisposable
             iecReference = binding.IecReference,
             functionalConstraint = binding.FunctionalConstraint,
             dataType = binding.IecDataType,
-            timestamp = binding.LastUpdate == DateTime.MinValue ? DateTime.Now : binding.LastUpdate,
             localTimestamp = binding.LastUpdate == DateTime.MinValue ? DateTime.Now : binding.LastUpdate,
             deviceTimestamp = string.IsNullOrWhiteSpace(binding.DeviceTimestamp) ? "-" : binding.DeviceTimestamp,
             sequence = binding.Sequence,
@@ -89,8 +88,6 @@ public sealed class MqttGatewayPublisher : IAsyncDisposable
         EnqueueRaw($"{topicBase}/value", numericValue, _settings.RetainLastValue);
         EnqueueRaw($"{topicBase}/quality", binding.Quality, _settings.RetainLastValue);
         EnqueueRaw($"{topicBase}/status", binding.Status, _settings.RetainLastValue);
-        if (!string.IsNullOrWhiteSpace(binding.DeviceTimestamp) && binding.DeviceTimestamp != "-")
-            EnqueueRaw($"{topicBase}/deviceTimestamp", binding.DeviceTimestamp, _settings.RetainLastValue);
 
         if (_settings.PublishJsonState)
         {

@@ -3,7 +3,7 @@ namespace Ari61850Bridge.Protocol.Osi;
 public static class CotpConnectRequest
 {
     // Minimal RFC1006/COTP connection request placeholder for the next native phase.
-    // Kept separate from TPKT so the OSI layers remain testable and GPL-free.
+    // Kept separate from TPKT so the OSI layers remain testable and independent.
     public static byte[] BuildDefault()
     {
         return new byte[]

@@ -34,7 +34,7 @@ public static class BindingAutoMapper
                 Category = signal.Category,
                 Unit = signal.Unit,
                 Quality = signal.Quality,
-                DeviceTimestamp = string.IsNullOrWhiteSpace(signal.DeviceTimestamp) ? "-" : signal.DeviceTimestamp,
+                DeviceTimestamp = signal.DeviceTimestamp,
                 DataSetReference = signal.DataSetReference,
                 ReportControlReference = signal.ReportControlReference,
                 CurrentValue = signal.Value,

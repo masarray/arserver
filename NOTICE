@@ -1,6 +1,8 @@
+# NOTICE
+
 ARServer
-Copyright 2026 Ari Sulistiono
+Copyright (c) ARServer contributors.
 
-ARServer is licensed under the Apache License, Version 2.0.
+This distribution contains ARServer source code, application assets, documentation, and release scripts.
 
-This distribution contains ARServer source code, application assets, documentation, and release scripts. Optional IEC 61850 MMS runtime components supplied by users are not redistributed as part of ARServer source or release packages.
+ARServer is licensed under the Apache License, Version 2.0. See `LICENSE`.

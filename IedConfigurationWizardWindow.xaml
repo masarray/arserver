@@ -95,6 +95,7 @@
                                 <Button Content="🛡 Protection" Tag="PTOC PTRC PDIF PDIS Op general Tr general Str general" Style="{StaticResource MiniChipButton}" Click="QuickFilter_Click" Margin="0,0,6,0"/>
                                 <Button Content="〽 MMXU cVal" Tag="MMXU cVal mag f" Style="{StaticResource MiniChipButton}" Click="QuickFilter_Click" Margin="0,0,6,0"/>
                                 <Button Content="✓ Select Recommended" Style="{StaticResource MiniChipButton}" Click="SelectRecommended_Click" Margin="0,0,6,0"/>
+                                <Button Content="⚡ Probe Selected" Style="{StaticResource MiniChipButton}" Click="ProbeSelected_Click" Margin="0,0,6,0"/>
                                 <Button Content="× Clear Selection" Style="{StaticResource MiniChipButton}" Click="ClearSelection_Click" Margin="0,0,6,0"/>
                                 <CheckBox Content="Advanced raw" IsChecked="{Binding ShowRaw}" VerticalAlignment="Center" Margin="5,0,10,0"/>
                                 <Button Content="⌫ Clear Filter" Style="{StaticResource MiniChipButton}" Click="ClearFilter_Click"/>
@@ -104,14 +105,13 @@
                         <DataGrid Grid.Row="1" ItemsSource="{Binding SignalsView}" Style="{StaticResource ModernDataGrid}" ToolTip="Select a row and press Ctrl+C to copy it for debugging.">
                             <DataGrid.Columns>
                                 <DataGridCheckBoxColumn Header="Use" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="54"/>
-                                <DataGridTextColumn Header="Priority" Binding="{Binding Category}" Width="110" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="LN" Binding="{Binding LogicalNode}" Width="130" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="Signal" Binding="{Binding Name}" Width="220" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="IEC Reference" Binding="{Binding ObjectReference}" Width="360" MinWidth="280" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="125" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="Quality" Binding="{Binding Quality}" Width="85" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="RCB Plan" Binding="{Binding ReportPlan}" Width="120" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="120" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Timestamp" Binding="{Binding DeviceTimestamp}" Width="140" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Quality" Binding="{Binding Quality}" Width="120" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Probe" Binding="{Binding ProbeStatus}" Width="130" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Type" Binding="{Binding DataType}" Width="85" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="RCB Plan" Binding="{Binding ReportPlan}" Width="150" IsReadOnly="True"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </Grid>

@@ -14,8 +14,6 @@ public partial class AddIedWizardWindow : Window
     public static readonly DependencyProperty MmsPortProperty = DependencyProperty.Register(
         nameof(MmsPort), typeof(int), typeof(AddIedWizardWindow), new PropertyMetadata(102));
 
-    public static readonly DependencyProperty UseRealIecEngineProperty = DependencyProperty.Register(
-        nameof(UseRealIecEngine), typeof(bool), typeof(AddIedWizardWindow), new PropertyMetadata(true));
 
     public static readonly DependencyProperty SclSummaryProperty = DependencyProperty.Register(
         nameof(SclSummary), typeof(string), typeof(AddIedWizardWindow), new PropertyMetadata("No CID/SCD file imported yet."));
@@ -47,11 +45,6 @@ public partial class AddIedWizardWindow : Window
         set => SetValue(MmsPortProperty, value);
     }
 
-    public bool UseRealIecEngine
-    {
-        get => (bool)GetValue(UseRealIecEngineProperty);
-        set => SetValue(UseRealIecEngineProperty, value);
-    }
 
     public string SclSummary
     {

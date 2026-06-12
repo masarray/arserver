@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Collections.Concurrent;
 using System.ComponentModel;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.IO;
@@ -46,8 +45,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private long _mqttPublishedCount;
     private long _mqttDroppedCount;
     private bool _mqttConnected;
-    private bool _useRealIecEngine;
-    private bool _useNativeCleanRoomEngine;
+    private bool _useNativeIecEngine = true;
     private string _discoverySearchText = "";
     private bool _showRawEngineeringAttributes;
     private long _lastObservedModbusReadCount;
@@ -212,8 +210,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
         }
     }
-    public bool UseRealIecEngine { get => _useRealIecEngine; set => Set(ref _useRealIecEngine, value); }
-    public bool UseNativeCleanRoomEngine { get => _useNativeCleanRoomEngine; set => Set(ref _useNativeCleanRoomEngine, value); }
+    public bool UseNativeIecEngine { get => _useNativeIecEngine; set => Set(ref _useNativeIecEngine, value); }
     public string DiscoverySearchText
     {
         get => _discoverySearchText;
@@ -351,16 +348,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MoveWorkflowPill(0, false);
         }));
 
-        if (RealLibIec61850Client.IsRuntimeLibraryAvailable())
-        {
-            UseRealIecEngine = true;
-            UseNativeCleanRoomEngine = false;
-            AddLog("INFO", "IEC61850", "IEC 61850 MMS runtime detected beside EXE. Real IEC 61850 mode enabled automatically.");
-        }
-        else
-        {
-            AddLog("INFO", "IEC61850", "External IEC 61850 runtime not detected. Native clean-room IP/SCL workflow is available; mock mode remains available for UI/Modbus testing.");
-        }
+        UseNativeIecEngine = true;
+        AddLog("INFO", "IEC61850", "Native IEC 61850 MMS engine ready. Add an IED by IP or open an SCL/CID/SCD file to build a gateway map.");
 
         UpdateNavigationVisuals(MainTabs.SelectedIndex);
         MoveWorkflowPill(MainTabs.SelectedIndex, false);
@@ -401,7 +390,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             IedConnectionStatus = "Connecting...";
             EventStrategyStatus = "Scanning...";
-            AddLog("INFO", "IEC61850", $"Connecting to {relayIp}:{MmsPort} using {(UseNativeCleanRoomEngine ? "native clean-room IEC 61850 transport" : UseRealIecEngine ? "real IEC 61850 MMS" : "mock")} IEC 61850 engine.");
+            AddLog("INFO", "IEC61850", $"Connecting to {relayIp}:{MmsPort} using native IEC 61850 MMS engine.");
 
             // The Modbus gateway lifecycle is independent from per-IED connection lifecycle.
             // When runtime is running, keep the Modbus server alive and refresh only the active IEC session.
@@ -423,14 +412,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 Raise(nameof(VisibleSignalCountText));
                 EventStrategyStatus = "Connection failed";
 
-                if (activeClient is RealLibIec61850Client realFailed)
-                    AddLog("ERROR", "IEC61850", string.IsNullOrWhiteSpace(realFailed.LastErrorMessage) ? "Real IEC61850 connection failed. No mock fallback was used." : realFailed.LastErrorMessage);
-                else if (activeClient is NativeCleanRoomIec61850Client nativeFailed)
-                    AddLog("ERROR", "Native IEC61850", string.IsNullOrWhiteSpace(nativeFailed.LastErrorMessage) ? "Native clean-room IEC61850 ACSE/MMS association failed." : nativeFailed.LastErrorMessage);
+                if (activeClient is NativeIec61850Client nativeFailed)
+                    AddLog("ERROR", "Native IEC61850", string.IsNullOrWhiteSpace(nativeFailed.LastErrorMessage) ? "Native IEC61850 ACSE/MMS association failed." : nativeFailed.LastErrorMessage);
                 else
                     AddLog("ERROR", "IEC61850", "IEC61850 connection failed.");
 
-                AddLog("INFO", "Operator Hint", "No mock signals are shown in Real mode. Fix network/MMS endpoint first, then Connect & Discover again.");
+                AddLog("INFO", "Operator Hint", "No live signals are shown until the IED answers MMS discovery. Check IP address, port 102, firewall, network route, and IED MMS service state.");
                 NavigateToTab(3);
                 return;
             }
@@ -462,20 +449,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 AddLog("WARN", "Preferences", $"Relay endpoint was not saved because online model discovery returned no signal: {relayIp}:{MmsPort}");
             }
 
-            if (_iecClient is RealLibIec61850Client realOk && !string.IsNullOrWhiteSpace(realOk.LastDiscoverySummary))
-                AddLog("INFO", "Discovery", realOk.LastDiscoverySummary);
-            if (_iecClient is NativeCleanRoomIec61850Client nativeOk && !string.IsNullOrWhiteSpace(nativeOk.LastDiscoverySummary))
+            if (_iecClient is NativeIec61850Client nativeOk && !string.IsNullOrWhiteSpace(nativeOk.LastDiscoverySummary))
                 AddLog("INFO", "Native Discovery", nativeOk.LastDiscoverySummary);
 
-            EventStrategyStatus = _iecClient is NativeCleanRoomIec61850Client nativeStatus
+            EventStrategyStatus = _iecClient is NativeIec61850Client nativeStatus
                 ? nativeStatus.IsMmsReady
                     ? "Native ACSE/MMS associated / read pending"
                     : nativeStatus.IsMmsInitiateFailed
                         ? "Native transport ready / MMS initiate failed"
                         : "Native transport ready / MMS pending"
-                : _iecClient.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase)
-                    ? "Mock event simulation"
-                    : "Real MMS polling";
+                : "Demo event simulation";
             SignalsView.Refresh();
             Raise(nameof(SignalCount));
             Raise(nameof(VisibleSignalCountText));
@@ -493,8 +476,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     draftBindings: new ObservableCollection<BindingItem>(),
                     runtimeIpAddress: relayIp,
                     runtimePort: MmsPort,
-                    useRealEngine: UseRealIecEngine,
-                    useNativeCleanRoomEngine: UseNativeCleanRoomEngine,
+                    useNativeIecEngine: UseNativeIecEngine,
                     suggestedIedName: suggestedIedName,
                     mode: _iecClient.ConnectionMode,
                     status: "Connected",
@@ -533,7 +515,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private static string GetClientConnectedDisplayStatus(IIec61850Client client)
     {
-        if (client is NativeCleanRoomIec61850Client native)
+        if (client is NativeIec61850Client native)
         {
             if (native.IsMmsReady) return "MMS Associated";
             if (native.IsTransportReady) return native.IsMmsInitiateFailed ? "MMS Initiate Failed" : "Transport Ready";
@@ -936,8 +918,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 ProjectName = ProjectName,
                 RelayIpAddress = RelayIpAddress,
                 MmsPort = MmsPort,
-                UseRealIecEngine = UseRealIecEngine,
-                UseNativeCleanRoomEngine = UseNativeCleanRoomEngine,
+                UseNativeIecEngine = UseNativeIecEngine,
                 ModbusBindAddress = ModbusBindAddress,
                 EnableModbusTcp = EnableModbusTcp,
                 ModbusPort = ModbusPort,
@@ -982,8 +963,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ProjectName = project.ProjectName;
             RelayIpAddress = project.RelayIpAddress;
             MmsPort = project.MmsPort;
-            UseRealIecEngine = project.UseRealIecEngine;
-            UseNativeCleanRoomEngine = project.UseNativeCleanRoomEngine;
+            UseNativeIecEngine = true;
             ModbusBindAddress = string.IsNullOrWhiteSpace(project.ModbusBindAddress) ? "0.0.0.0" : project.ModbusBindAddress;
             EnableModbusTcp = project.EnableModbusTcp;
             ModbusPort = project.ModbusPort <= 0 ? 502 : project.ModbusPort;
@@ -1107,9 +1087,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
                 if (!activeClient.IsConnected)
                 {
-                    if (activeClient is RealLibIec61850Client realFailed)
-                        AddLog("ERROR", "IEC61850", string.IsNullOrWhiteSpace(realFailed.LastErrorMessage) ? "Runtime cannot start because IEC61850 is not connected." : realFailed.LastErrorMessage);
-                    else if (activeClient is NativeCleanRoomIec61850Client nativeFailed)
+                    if (activeClient is NativeIec61850Client nativeFailed)
                         AddLog("ERROR", "Native IEC61850", string.IsNullOrWhiteSpace(nativeFailed.LastErrorMessage) ? "Runtime cannot start because native ACSE/MMS association is not ready." : nativeFailed.LastErrorMessage);
                     AddLog("WARN", "Runtime", "Runtime blocked. IEC61850 downstream is not connected. Modbus server is not started to avoid publishing stale/fake values.");
                     RuntimeStatusText = "Stopped";
@@ -1218,7 +1196,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var sourceBindings = relay != null ? relay.ModbusBindings : new ObservableCollection<BindingItem>(PublishedModbusBindings.Where(b => string.IsNullOrWhiteSpace(b.RelayId)));
         var wizardBindings = CloneBindings(sourceBindings);
 
-        var wizard = new IedConfigurationWizardWindow(wizardSignals, wizardBindings)
+        var wizard = new IedConfigurationWizardWindow(wizardSignals, wizardBindings, _iecClient)
         {
             Owner = this
         };
@@ -1303,7 +1281,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
                 signal.Value = MockIec61850Client.Format(value, signal.DataType, signal.Unit);
                 signal.Quality = "Good";
-                if (string.IsNullOrWhiteSpace(signal.DeviceTimestamp)) signal.DeviceTimestamp = "-";
+                signal.DeviceTimestamp = signal.DeviceTimestamp == "-" ? "-" : signal.DeviceTimestamp;
                 signal.Timestamp = DateTime.Now;
                 UpdateBindingFromSignal(signal);
                 ok++;
@@ -1331,7 +1309,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             binding.CurrentValue = signal.Value;
             binding.Quality = signal.Quality;
-            binding.DeviceTimestamp = string.IsNullOrWhiteSpace(signal.DeviceTimestamp) ? "-" : signal.DeviceTimestamp;
+            binding.DeviceTimestamp = signal.DeviceTimestamp;
             binding.LastUpdate = signal.Timestamp;
             binding.AgeMs = 0;
             binding.Status = signal.Quality == "Good" ? "Mapped/Live" : "Mapped/Bad";
@@ -1351,7 +1329,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 relaySignal.Value = binding.CurrentValue;
                 relaySignal.Quality = binding.Quality;
-                relaySignal.DeviceTimestamp = string.IsNullOrWhiteSpace(binding.DeviceTimestamp) ? "-" : binding.DeviceTimestamp;
+                relaySignal.DeviceTimestamp = binding.DeviceTimestamp;
                 relaySignal.Timestamp = binding.LastUpdate == DateTime.MinValue ? DateTime.Now : binding.LastUpdate;
             }
 
@@ -1367,7 +1345,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (signal == null) return;
         signal.Value = binding.CurrentValue;
         signal.Quality = binding.Quality;
-        signal.DeviceTimestamp = string.IsNullOrWhiteSpace(binding.DeviceTimestamp) ? "-" : binding.DeviceTimestamp;
+        signal.DeviceTimestamp = binding.DeviceTimestamp;
         signal.Timestamp = binding.LastUpdate == DateTime.MinValue ? DateTime.Now : binding.LastUpdate;
 
         if (SelectedRelay != null)
@@ -1490,8 +1468,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Owner = this,
             RelayIpAddress = string.IsNullOrWhiteSpace(RelayIpAddress) ? (RecentRelayIps.FirstOrDefault() ?? string.Empty) : RelayIpAddress,
             MmsPort = MmsPort,
-            UseRealIecEngine = UseRealIecEngine,
-            UseNativeCleanRoomEngine = true
+            UseNativeIecEngine = true
         };
 
         TrackActiveWizard(wizard);
@@ -1519,12 +1496,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         RelayIpAddress = ip;
         MmsPort = wizard.MmsPort;
-        UseNativeCleanRoomEngine = wizard.UseNativeCleanRoomEngine;
-        UseRealIecEngine = !UseNativeCleanRoomEngine && wizard.UseRealIecEngine;
+        UseNativeIecEngine = true;
         if (RelayIpTextBox != null)
             RelayIpTextBox.Text = ip;
 
-        AddLog("INFO", "IP Discovery", $"IP-only flow accepted endpoint {ip}:{MmsPort}. Starting {(UseNativeCleanRoomEngine ? "native clean-room" : UseRealIecEngine ? "external runtime" : "mock")} online MMS browse before Signal Map and Modbus Binding.");
+        AddLog("INFO", "IP Discovery", $"IP-only flow accepted endpoint {ip}:{MmsPort}. Starting native online MMS browse before Signal Map and Modbus Binding.");
         _openConfigWizardAfterDiscovery = true;
         ConnectDiscover_Click(sender, e);
     }
@@ -1555,7 +1531,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 return;
             }
 
-            ApplySclImport(wizard.ImportedScl, UseRealIecEngine, wizard.RuntimeIpAddress, wizard.MmsPort, wizard.SelectedReportControl, wizard.ReportRuntimeMode);
+            ApplySclImport(wizard.ImportedScl, wizard.RuntimeIpAddress, wizard.MmsPort, wizard.SelectedReportControl, wizard.ReportRuntimeMode);
         }
         catch (Exception ex)
         {
@@ -1563,7 +1539,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void ApplySclImport(SclImportResult import, bool useRealEngine, string runtimeIpAddress, int runtimePort, SclReportControlModel? selectedRcb, string reportRuntimeMode)
+    private void ApplySclImport(SclImportResult import, string runtimeIpAddress, int runtimePort, SclReportControlModel? selectedRcb, string reportRuntimeMode)
     {
         if (IsRuntimeRunning)
         {
@@ -1591,10 +1567,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             draftBindings: draftBindings,
             runtimeIpAddress: ip,
             runtimePort: runtimePortToUse,
-            useRealEngine: useRealEngine,
-            useNativeCleanRoomEngine: true,
+            useNativeIecEngine: true,
             suggestedIedName: displayName,
-            mode: "CID/SCD model / Native clean-room runtime",
+            mode: "CID/SCD model / Native IEC61850 runtime",
             status: "Configured",
             heartbeat: "Ready for runtime verification",
             sclIpAddress: sclIp,
@@ -1624,8 +1599,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ObservableCollection<BindingItem> draftBindings,
         string runtimeIpAddress,
         int runtimePort,
-        bool useRealEngine,
-        bool useNativeCleanRoomEngine,
+        bool useNativeIecEngine,
         string suggestedIedName,
         string mode,
         string status,
@@ -1640,7 +1614,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         string reportRuntimeMode = "MMS polling only",
         string rcbMode = "MMS polling")
     {
-        var wizard = new IedConfigurationWizardWindow(draftSignals, draftBindings)
+        var wizard = new IedConfigurationWizardWindow(draftSignals, draftBindings, _iecClient)
         {
             Owner = this
         };
@@ -1652,12 +1626,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         RelayIpAddress = runtimeIpAddress;
         MmsPort = runtimePort > 0 ? runtimePort : 102;
-        UseRealIecEngine = useRealEngine;
-        UseNativeCleanRoomEngine = useNativeCleanRoomEngine;
-        if (UseNativeCleanRoomEngine)
+        UseNativeIecEngine = useNativeIecEngine;
+        if (UseNativeIecEngine)
             AddLog("INFO", "Native IEC61850", string.IsNullOrWhiteSpace(sclFilePath)
-                ? "IP-only workflow committed to native clean-room runtime path. Online discovery is based on MMS GetNameList; polling uses the native Confirmed-Read path."
-                : "SCL workflow committed to native clean-room runtime path. Open SCL remains the most deterministic route when engineering files are available.");
+                ? "IP-only workflow committed to native IEC 61850 runtime path. Online discovery is based on MMS GetNameList; polling uses the native Confirmed-Read path."
+                : "SCL workflow committed to native IEC 61850 runtime path. Open SCL remains the most deterministic route when engineering files are available.");
         if (RelayIpTextBox != null)
             RelayIpTextBox.Text = RelayIpAddress;
 
@@ -1785,7 +1758,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Owner = this,
             RelayIpAddress = relay.IpAddress,
             MmsPort = relay.MmsPort,
-            UseRealIecEngine = UseRealIecEngine
         };
 
         TrackActiveWizard(wizard);
@@ -1793,7 +1765,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             RelayIpAddress = NormalizeRelayIp(wizard.RelayIpAddress);
             MmsPort = wizard.MmsPort;
-            UseRealIecEngine = wizard.UseRealIecEngine;
+            UseNativeIecEngine = true;
             if (RelayIpTextBox != null)
                 RelayIpTextBox.Text = RelayIpAddress;
             AddLog("INFO", "Relay", $"Re-discovering edited IED endpoint {RelayIpAddress}:{MmsPort}. Configuration wizard will open after discovery.");
@@ -1998,7 +1970,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             IpAddress = RelayIpAddress,
             MmsPort = MmsPort,
             Status = IedConnectionStatus,
-            Mode = UseRealIecEngine ? "Real MMS" : "Mock/MMS",
+            Mode = "Native MMS",
             TagCount = Signals.Count,
             HeartbeatText = "Idle",
             IsActive = true,
@@ -2137,7 +2109,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             IecReference = binding.IecReference,
             Value = binding.CurrentValue,
             Quality = binding.Quality,
-            DeviceTimestamp = string.IsNullOrWhiteSpace(binding.DeviceTimestamp) ? "-" : binding.DeviceTimestamp,
+            DeviceTimestamp = binding.DeviceTimestamp,
             Timestamp = binding.LastUpdate,
             Status = binding.Status,
             Sequence = binding.Sequence
@@ -2165,7 +2137,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (signal == null) continue;
             signal.Value = snapshot.Value;
             signal.Quality = snapshot.Quality;
-            signal.DeviceTimestamp = string.IsNullOrWhiteSpace(snapshot.DeviceTimestamp) ? "-" : snapshot.DeviceTimestamp;
+            signal.DeviceTimestamp = snapshot.DeviceTimestamp;
             signal.Timestamp = snapshot.Timestamp;
             applied++;
         }
@@ -2219,7 +2191,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 Source = s.Source,
                 Value = s.Value,
                 Quality = s.Quality,
-                DeviceTimestamp = string.IsNullOrWhiteSpace(s.DeviceTimestamp) ? "-" : s.DeviceTimestamp,
+                DeviceTimestamp = s.DeviceTimestamp,
+                ProbeStatus = s.ProbeStatus,
                 Timestamp = s.Timestamp
             });
         }
@@ -2266,7 +2239,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MqttTopic = b.MqttTopic,
             CurrentValue = b.CurrentValue,
             Quality = b.Quality,
-            DeviceTimestamp = string.IsNullOrWhiteSpace(b.DeviceTimestamp) ? "-" : b.DeviceTimestamp,
+            DeviceTimestamp = b.DeviceTimestamp,
             Status = b.Status,
             Sequence = b.Sequence,
             LastUpdate = b.LastUpdate,
@@ -2325,7 +2298,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (target == null) continue;
             target.Value = signal.Value;
             target.Quality = signal.Quality;
-            target.DeviceTimestamp = string.IsNullOrWhiteSpace(signal.DeviceTimestamp) ? "-" : signal.DeviceTimestamp;
+            target.DeviceTimestamp = signal.DeviceTimestamp;
+            target.ProbeStatus = signal.ProbeStatus;
             target.Timestamp = signal.Timestamp;
         }
     }
@@ -2545,11 +2519,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private IIec61850Client CreateConfiguredIecClient()
     {
-        if (UseNativeCleanRoomEngine)
-            return new NativeCleanRoomIec61850Client();
-
-        return UseRealIecEngine
-            ? new RealLibIec61850Client()
+        return UseNativeIecEngine
+            ? new NativeIec61850Client()
             : new MockIec61850Client();
     }
 

@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -19,6 +21,9 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
     private readonly Dictionary<SignalDefinition, bool> _originalSignalSelection;
     private readonly List<BindingItem> _originalBindings;
     private bool _saved;
+    private readonly IIec61850Client? _probeClient;
+    private CancellationTokenSource? _probeCts;
+    private bool _isProbing;
 
     public ObservableCollection<SignalDefinition> Signals { get; }
     public ObservableCollection<BindingItem> Bindings { get; }
@@ -68,6 +73,17 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         1 => "Save Binding → Review",
         _ => "Add to Runtime"
     };
+
+    public bool IsProbing
+    {
+        get => _isProbing;
+        set
+        {
+            if (_isProbing == value) return;
+            _isProbing = value;
+            Raise(nameof(IsProbing));
+        }
+    }
 
     public string SearchText
     {
@@ -133,10 +149,11 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         ? $"Showing {SignalsView.Cast<object>().Count()} of {Signals.Count} MMS attributes"
         : $"Showing {SignalsView.Cast<object>().Count()} smart SCADA signals of {Signals.Count}";
 
-    public IedConfigurationWizardWindow(ObservableCollection<SignalDefinition> signals, ObservableCollection<BindingItem> bindings)
+    public IedConfigurationWizardWindow(ObservableCollection<SignalDefinition> signals, ObservableCollection<BindingItem> bindings, IIec61850Client? probeClient = null)
     {
         Signals = signals;
         Bindings = bindings;
+        _probeClient = probeClient;
         _originalSignalSelection = signals.ToDictionary(s => s, s => s.IsSelected);
         _originalBindings = bindings.Select(CloneBinding).ToList();
         SignalsView = CollectionViewSource.GetDefaultView(Signals);
@@ -248,6 +265,155 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         }
 
         SaveAndClose();
+    }
+
+    private async void ProbeSelected_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsProbing) return;
+
+        if (_probeClient == null || !_probeClient.IsConnected)
+        {
+            StatusMessage = "Live probe requires an associated IEC 61850 client. Connect/discover first, then probe selected signals.";
+            return;
+        }
+
+        var selected = Signals
+            .Where(s => s.IsSelected && !string.Equals(s.DataType, "Directory", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(s => s.SortPriority)
+            .ThenBy(s => s.LogicalNode)
+            .ThenBy(s => s.Name)
+            .Take(120)
+            .ToList();
+
+        if (selected.Count == 0)
+        {
+            StatusMessage = "Select at least one value signal before running live probe.";
+            return;
+        }
+
+        _probeCts?.Cancel();
+        _probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(Math.Clamp(selected.Count * 2, 8, 60)));
+        IsProbing = true;
+        var ok = 0;
+        var failed = 0;
+        StatusMessage = $"Live probe running for {selected.Count} selected signal(s)...";
+
+        try
+        {
+            foreach (var signal in selected)
+            {
+                _probeCts.Token.ThrowIfCancellationRequested();
+                signal.ProbeStatus = "Reading...";
+                signal.Value = "...";
+                signal.Quality = "Checking";
+                signal.DeviceTimestamp = "-";
+                signal.Timestamp = DateTime.Now;
+
+                try
+                {
+                    var value = await _probeClient.ReadValueAsync(signal.ObjectReference, signal.FunctionalConstraint, signal.DataType, _probeCts.Token).ConfigureAwait(true);
+                    if (value == null)
+                    {
+                        failed++;
+                        signal.Value = "-";
+                        signal.Quality = "Bad";
+                        signal.DeviceTimestamp = "-";
+                        signal.ProbeStatus = "Not readable";
+                        continue;
+                    }
+
+                    signal.Value = MockIec61850Client.Format(value, signal.DataType, signal.Unit);
+                    signal.Quality = "Good";
+                    signal.ProbeStatus = "Readable";
+                    signal.Timestamp = DateTime.Now;
+                    await TryProbeCompanionQualityAndTimestampAsync(signal, _probeClient, _probeCts.Token).ConfigureAwait(true);
+                    ok++;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    failed++;
+                    signal.Value = "Read failed";
+                    signal.Quality = "Bad";
+                    signal.DeviceTimestamp = "-";
+                    signal.ProbeStatus = ex.GetType().Name;
+                }
+            }
+
+            StatusMessage = $"Live probe complete: {ok} readable, {failed} failed. Save only signals that are proven useful for runtime.";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = $"Live probe stopped: {ok} readable, {failed} failed/cancelled.";
+        }
+        finally
+        {
+            IsProbing = false;
+            SignalsView.Refresh();
+        }
+    }
+
+    private static async Task TryProbeCompanionQualityAndTimestampAsync(SignalDefinition signal, IIec61850Client client, CancellationToken token)
+    {
+        if (signal.ObjectReference.EndsWith(".q", StringComparison.OrdinalIgnoreCase) ||
+            signal.ObjectReference.EndsWith(".t", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (TryBuildCompanionReference(signal.ObjectReference, "q", out var qRef))
+        {
+            try
+            {
+                var q = await client.ReadValueAsync(qRef, signal.FunctionalConstraint, "Quality", token).ConfigureAwait(true);
+                var qText = q?.ToString();
+                if (!string.IsNullOrWhiteSpace(qText))
+                    signal.Quality = qText;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Companion quality is optional. A readable value should not be rejected because q is hidden by the IED.
+            }
+        }
+
+        if (TryBuildCompanionReference(signal.ObjectReference, "t", out var tRef))
+        {
+            try
+            {
+                var t = await client.ReadValueAsync(tRef, signal.FunctionalConstraint, "Timestamp", token).ConfigureAwait(true);
+                var tText = t?.ToString();
+                if (!string.IsNullOrWhiteSpace(tText))
+                    signal.DeviceTimestamp = tText;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Companion timestamp is optional. Runtime will continue with local update time if t is not exposed.
+            }
+        }
+    }
+
+    private static bool TryBuildCompanionReference(string reference, string companion, out string companionReference)
+    {
+        companionReference = string.Empty;
+        if (!companion.Equals("q", StringComparison.OrdinalIgnoreCase) && !companion.Equals("t", StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.IsNullOrWhiteSpace(reference)) return false;
+
+        var normalized = reference.Replace('$', '.').Trim();
+        if (normalized.EndsWith(".q", StringComparison.OrdinalIgnoreCase) || normalized.EndsWith(".t", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var parent = normalized;
+        if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
+        else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
+        else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];
+        else if (parent.EndsWith(".mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
+        else
+        {
+            var slash = parent.IndexOf('/');
+            var dot = parent.LastIndexOf('.');
+            if (dot <= slash) return false;
+            parent = parent[..dot];
+        }
+
+        if (string.IsNullOrWhiteSpace(parent)) return false;
+        companionReference = $"{parent}.{companion.ToLowerInvariant()}";
+        return true;
     }
 
     private void SelectRecommended_Click(object sender, RoutedEventArgs e) => SelectRecommendedSignals();
@@ -366,6 +532,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
 
     protected override void OnClosing(CancelEventArgs e)
     {
+        try { _probeCts?.Cancel(); } catch { }
         if (!_saved)
             RestoreOriginalConfiguration();
         base.OnClosing(e);
@@ -410,6 +577,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
             MqttTopic = source.MqttTopic,
             CurrentValue = source.CurrentValue,
             Quality = source.Quality,
+            DeviceTimestamp = source.DeviceTimestamp,
             Status = source.Status,
             Sequence = source.Sequence,
             LastUpdate = source.LastUpdate,

@@ -9,6 +9,7 @@ public class SignalDefinition : ObservableObject
     private string _value = "-";
     private string _quality = "Unknown";
     private string _deviceTimestamp = "-";
+    private string _probeStatus = "Not probed";
     private DateTime _timestamp = DateTime.MinValue;
 
     private static readonly string[] KnownLogicalNodeClasses =
@@ -64,7 +65,8 @@ public class SignalDefinition : ObservableObject
 
     public string Value { get => _value; set => Set(ref _value, value); }
     public string Quality { get => _quality; set => Set(ref _quality, value); }
-    public string DeviceTimestamp { get => _deviceTimestamp; set => Set(ref _deviceTimestamp, value); }
+    public string DeviceTimestamp { get => _deviceTimestamp; set => Set(ref _deviceTimestamp, string.IsNullOrWhiteSpace(value) ? "-" : value); }
+    public string ProbeStatus { get => _probeStatus; set => Set(ref _probeStatus, string.IsNullOrWhiteSpace(value) ? "Not probed" : value); }
     public DateTime Timestamp { get => _timestamp; set => Set(ref _timestamp, value); }
 
     private static string ExtractLogicalNode(string reference)
@@ -82,7 +84,7 @@ public class SignalDefinition : ObservableObject
         if (string.IsNullOrWhiteSpace(logicalNodeName)) return "";
 
         // IEC 61850 logical node names commonly allow vendor/project prefix/suffix.
-        // Example from real IEDs: BI6GGIO1, OCRSR12PROT/PTRC1, CTRLCSWI1.
+        // Example from live IEDs: BI6GGIO1, OCRSR12PROT/PTRC1, CTRLCSWI1.
         // We therefore detect the standard LN class inside the full LN name, not only at the start.
         foreach (var cls in KnownLogicalNodeClasses)
         {

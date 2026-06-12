@@ -204,9 +204,15 @@ Design rules:
 
 This phase prepares the cache model for future reporting, where value, quality, timestamp, sequence, and reason-for-inclusion will arrive together in `InformationReport` PDUs.
 
+## N10 live validation boundary
 
-## Phase N9.1 — Runtime Grid Quality/Timestamp Presentation
+The wizard probe-read feature is a runtime usability layer, not a shortcut around the clean-room protocol boundary. It uses the currently associated IEC client and the native Confirmed-Read path already implemented in the stack. Discovery candidates remain only candidates until a probe or runtime poll proves that the IED accepts the MMS object reference.
 
-- Re-arranged the live IEC 61850 grid into an operator/debug friendly order: IEC Object, Value, Timestamp, Quality, Type.
-- Added a dedicated `DeviceTimestamp` runtime field so IEC 61850 `t` sidecar values are not confused with the local PC update time.
-- MQTT JSON now carries both local timestamp and device timestamp when available.
+Probe-read policy:
+
+- Read selected value object first.
+- Attempt `q` and `t` only as optional companion reads.
+- Do not fabricate value, quality, or timestamp.
+- Preserve failed candidates as visible diagnostics so the operator can remove or keep them knowingly.
+
+This prepares the application for reporting because the UI/cache model now explicitly separates value, device timestamp, local update time, and quality.

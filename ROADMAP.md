@@ -1,410 +1,110 @@
 # ARServer Roadmap
 
-ARServer is an open-source Windows engineering gateway for IEC 61850 MMS, Modbus TCP, and MQTT workflows. The long-term direction is a user-oriented substation gateway: easy enough for HMI/FUXA/SCADA integration, but strict enough for relay testing, FAT/SAT, and protocol evidence.
+ARServer is moving toward a complete native IEC 61850 gateway workflow for practical HMI, SCADA, Modbus TCP, and MQTT use.
 
-## Product direction after HMI/SCADA/gateway review
+## Design direction
 
-ARServer should behave like a proper SCADA acquisition gateway, not like a screen that directly reads a relay every time an operator opens a page.
+The product direction is simple:
 
-Reference concepts studied:
+```text
+IED / Relay → native IEC 61850 MMS client → runtime cache → Modbus TCP / MQTT
+```
 
-- FUXA: modern web HMI/SCADA connects industrial devices through standard protocols such as Modbus, OPC UA, MQTT, and Siemens S7. ARServer should therefore expose clean Modbus/MQTT outputs for HMI tools instead of forcing HMI users to understand IEC 61850.
-- Rapid SCADA: acquisition is built around communication lines, devices, and channels/tags. Communication lines work independently and in parallel. ARServer should keep per-IED client sessions isolated and publish stable cached tags.
-- Apache PLC4X: the strongest architectural lesson is a shared API over multiple industrial protocols. ARServer should keep IEC 61850 acquisition behind interfaces and keep Modbus/MQTT output independent from the source engine.
-- Eclipse Milo / open62541: mature protocol stacks separate low-level wire protocol, stack/session handling, SDK/object model, and application services. ARServer native IEC 61850 must follow the same layering instead of mixing ASN.1/MMS code into UI or runtime code.
-- Node-RED / edge gateway workflows: practical gateways read raw industrial data, transform it into human-readable tags, then publish to MQTT/UNS or Modbus. ARServer should keep transformation, scaling, quality, and stale detection explicit.
-- Mango Automation style data-source/data-point model: device/source health and point reliability are first-class runtime states. ARServer should expose Good/Bad/Stale/Pending and avoid fake fallback values.
+The HMI or SCADA system should not poll the relay directly for every screen refresh. ARServer acts as a gateway layer with selected signals, clear mapping, cached values, device timestamp, quality, and output diagnostics.
 
-## Architectural principles
+## Implemented milestones
 
-1. **HMI reads from ARServer cache, never directly from the relay.**
-   Modbus TCP and MQTT outputs are fed from an internal runtime cache. A FUXA/SCADA read must not trigger a live MMS read.
+### N1 — Native transport foundation
 
-2. **IEC 61850 is a driver, not the application.**
-   UI, project storage, mapping, Modbus, MQTT, diagnostics, and reports must not depend on libiec61850 internals.
-
-3. **SCL-first native clean-room path.**
-   IP discovery may temporarily use user-supplied libiec61850 runtime. The clean-room path starts with Open SCL/CID/SCD -> select signal -> start session -> polling/report planner.
-
-4. **Report preferred, polling fallback.**
-   RCB/reporting is the correct event-grade path, but polling must stay as integrity/watchdog fallback until native report activation and decoding are proven against real relays.
-
-5. **No silent mock fallback.**
-   If native/external MMS cannot read a point, mark it Bad/Not readable. Do not publish simulated values in real runtime.
-
-6. **Protocol forensic visibility.**
-   Runtime should explain whether a point is updated by polling, report fallback polling, report live, stale, not readable, or disconnected.
-
-## Native clean-room roadmap
-
-### N0 — Clear-room foundation and report-aware runtime planner — started
-
-Status: **started in this branch**
-
-Implemented/started:
-
-- `NativeCleanRoomIec61850Client` added as the GPL-free native client boundary.
-- `Protocol/Osi/TpktClient` added for TCP/TPKT framing foundation.
-- `Protocol/Osi/CotpConnectRequest` placeholder added for the next OSI handshake step.
-- `Protocol/Asn1/BerReader` and `Protocol/Asn1/BerWriter` added for BER TLV parsing/writing foundation.
-- `Protocol/Mms/MmsObjectReference` added to normalize IEC object references toward MMS variable names.
-- `ReportRuntimePlanner` added to group selected SCL bindings by RCB/DataSet.
-- `ReportControlPlan` model added.
-- `BridgeRuntime` now builds and logs report plans before acquisition starts.
-- Report-capable points are marked as `Report planned / polling fallback` and successful polling shows `Report fallback polling/Live`.
-
-Purpose:
-
-- Keep existing runtime stable.
-- Make SCL report metadata operationally visible.
-- Prepare native MMS read and native RCB phases without copying GPL code.
-
-Limitations:
-
-- Native MMS confirmed-read encoder/decoder is not enabled yet.
-- Native online IP discovery is intentionally not part of N0.
-- Native RCB activation is planned but not yet active.
-
-### N1 — Native OSI association — in progress
-
-Status: **TCP/TPKT/COTP implemented; ACSE/MMS initiate probe added in this branch**
-
-Implemented/started:
-
-- TCP port 102 connect.
-- TPKT send/receive.
+- TCP port 102 connection.
+- TPKT frame handling.
 - COTP connection request/confirm.
-- ISO Session + Presentation + ACSE AARQ + MMS Initiate-Request interoperability profile.
-- ACSE/MMS initiate response probe with response hex preview in diagnostics.
-- Runtime state now distinguishes:
-  - `Transport Ready`
-  - `MMS Associated`
-  - `MMS initiate failed`
-  - `Confirmed-Read pending`
+- Runtime status separated between transport and application association.
 
-Acceptance target:
+### N2 — ACSE/MMS association
 
-- Native client reaches an associated MMS session against at least one test server/IED.
-- Failure log shows exact layer: TCP, TPKT, COTP, ACSE, Presentation, or MMS Initiate.
-- No libiec61850 DLL is loaded or referenced by the native SCL runtime path.
+- ISO session and presentation handshake.
+- ACSE association request.
+- MMS initiate request/response probe.
+- Diagnostics for association state.
 
-Current limitation:
+### N3/N4 — Confirmed-Read
 
-- MMS Confirmed-Read is still not implemented. If association succeeds, values are intentionally shown as `Native MMS associated / read pending`, not Good/live.
+- Single-variable MMS Confirmed-Read.
+- IEC object to MMS domain/item mapping.
+- response invoke ID validation.
+- first-pass decoder for status, Boolean, integer, float, string, quality, and timestamp-like values.
 
-### N2 — SCL-driven native MMS polling
+### N7 — Correct Presentation P-DATA envelope
 
-Goal:
+- Confirmed-Read wrapped in Presentation P-DATA.
+- Response unwrap before MMS decode.
+- Field-proven read path for CB position values.
 
-- Read selected SCL signal references using MMS confirmed-read.
-- Decode basic IEC 61850 value types:
-  - Boolean
-  - Integer
-  - Dbpos / DPC
-  - Enum
-  - Float32
-  - Quality bit-string
-  - Timestamp
+### N8 — Native IP discovery
 
-Acceptance:
+- Online MMS discovery by IP.
+- Domain browse.
+- domain variable browse.
+- MMS name to IEC object candidate mapping.
+- SCADA-friendly candidate recommendation.
 
-- Open SCL -> select signals -> start runtime -> values update through native clean-room polling.
-- Bad/not-readable/stale status is explicit.
-- Modbus/MQTT continue to publish from cache only.
+### N9 — Quality and timestamp sidecar
 
-### N3 — Report Control Block verification
+- Companion `q` and `t` reads when available.
+- Runtime snapshot carries local timestamp and device timestamp separately.
+- MQTT payload includes value, quality, local timestamp, and device timestamp.
 
-Goal:
+### N10 — Probe before runtime commit
 
-- Read RCB attributes before activation:
-  - `RptID`
-  - `DatSet`
-  - `ConfRev`
-  - `OptFlds`
-  - `TrgOps`
-  - `BufTm`
-  - `IntgPd`
-  - `RptEna`
-  - `Resv` / `ResvTms`
-  - `EntryID`
-- Compare online RCB `DatSet` with imported SCL DataSet.
-- Detect unavailable/already-owned RCB.
+- Wizard-level probe selected signal.
+- Probe validates value and attempts companion quality/timestamp reads.
+- Runtime grid arranged as `IEC Object | Value | Timestamp | Quality | Type`.
 
-Acceptance:
+## Next milestones
 
-- Runtime can show `RCB verifying`, `RCB available`, `RCB owned by another client`, `DataSet mismatch`, or `ConfRev mismatch`.
-- Polling fallback remains active.
+### N11 — Discovery hardening
 
-### N4 — Native report activation and event lane
+- Better filtering for common LN classes.
+- Better handling of vendor-specific MMS names.
+- More deterministic type inference.
+- Discovery report export.
 
-Goal:
+### N12 — Multi-point read optimization
 
-- Reserve RCB when needed.
-- Apply safe optional fields/trigger options when allowed.
-- Enable `RptEna`.
-- Decode incoming reports.
-- Update the same runtime cache used by polling.
-- Keep polling as watchdog/integrity fallback.
+- Group reads by relay and functional constraint.
+- Reduce request count for large mappings.
+- Maintain fast lane for CB/status/protection points.
+- Add timeout and retry profiles per IED.
 
-Acceptance:
+### N13 — Report verification
 
-- Position/protection points can update through reports.
-- Runtime distinguishes `Report live`, `Report stale`, `Polling watchdog`, and `Polling fallback`.
-- On stop, runtime disables `RptEna` and releases reservation safely.
+- Online DataSet browse.
+- Online ReportControl browse.
+- Compare selected signals against DataSet members.
+- Show RCB ownership/readiness before activation.
 
-### N5 — Native online discovery
+### N14 — Report activation with polling fallback
 
-Goal:
+- Enable report-preferred runtime mode.
+- Decode InformationReport values.
+- Preserve polling fallback for stale or failed reports.
+- Show report state in diagnostics.
 
-- Replace IP discovery dependency progressively:
-  - server directory
-  - logical device directory
-  - logical node directory
-  - data directory
-  - variable access attributes
+### N15 — Mapping/report documentation
 
-Acceptance:
+- Export Modbus register map.
+- Export selected IEC object list.
+- Export validation summary.
+- Create FAT-friendly evidence report.
 
-- IP connect/discovery can run without libiec61850 for supported devices.
-- Discovery results still use the same `SignalDefinition` and binding flow.
+## Product principles
 
-### N6 — Engineering-grade validation and release readiness
-
-Goal:
-
-- Protocol trace summary.
-- Per-IED runtime stats.
-- Acquisition latency and failure counters.
-- Mapping validation report.
-- Test matrix with multiple vendor SCL files and real/simulated IEDs.
-
-Acceptance:
-
-- Release notes clearly state supported native features.
-- External libiec61850 path is optional compatibility mode only.
-- Clean-room implementation notes remain documented.
-
-## Current focus
-
-- Keep external-runtime discovery available for field users.
-- Build native clean-room SCL polling path without breaking existing Modbus/MQTT runtime.
-- Make reporting metadata useful before native RCB activation.
-- Preserve professional HMI/SCADA behavior: cached output, quality state, stale state, and per-IED isolation.
-
-## Non-goals
-
-- ARServer is not a protection relay control system.
-- ARServer is not a replacement for engineering validation, cybersecurity hardening, or redundant station-level architecture.
-- ARServer does not turn polling into deterministic event capture. Event-grade workflows should use reporting/RCB where available.
-- ARServer will not copy, translate, or port GPL implementation details into the native clean-room stack.
-
-## Phase N1 - Native clean-room transport handshake
-
-Status: started in this branch.
-
-### What changed
-
-- Added native COTP connection handling on top of the existing TPKT client.
-- Native clean-room sessions now require TCP + TPKT + COTP Connection Confirm before `IsConnected` becomes true.
-- SCL-imported runtime plans are routed to the native clean-room client path, while IP-only discovery remains on the external runtime/mock path until native online browse is implemented.
-- Native read calls now normalize IEC 61850 object references into MMS domain/item form and report a precise blocked state instead of silently behaving like a mock source.
-- Runtime diagnostics now expose native preflight errors and native "transport ready, MMS not enabled yet" messages.
-
-### Engineering meaning
-
-This phase does not claim full MMS client support yet. It moves the clean-room stack from a TCP socket placeholder to a real IEC 61850 transport preflight:
-
-```text
-SCL import -> selected signal -> runtime start
-  -> native TCP connect
-  -> TPKT frame exchange
-  -> COTP connection request / connection confirm
-  -> ACSE + MMS Initiate pending
-  -> MMS Confirmed-Read pending
-  -> polling cache remains protected from fake values
-```
-
-### Next implementation slice
-
-Phase N2 should add the first ACSE AARQ/AARE and Presentation Context negotiation skeleton, still with strict no-fake-value behavior. After ACSE is accepted, add MMS Initiate. Only after MMS Initiate succeeds should Confirmed-Read be enabled for selected SCL points.
-
-### Phase N1.2 — Honest native runtime state
-- Native clean-room path now distinguishes transport readiness from MMS application readiness.
-- The relay card no longer shows `MMS stream active` for null/native-pending reads.
-- SCL runtime can still be started for transport verification, but live values remain Bad until ACSE/MMS Initiate and Confirmed-Read are implemented.
-
-
-### Phase N3 — First native MMS Confirmed-Read slice
-
-Status: implemented in this branch as an initial interoperability slice.
-
-What changed:
-
-- Added `MmsReadRequest` for one SCL-selected domain-specific named variable.
-- Added `MmsReadResponseDecoder` for first-pass MMS data decode.
-- Added native session read path after ACSE/MMS association succeeds.
-- Native runtime can now attempt real MMS Confirmed-Read instead of stopping at `read pending`.
-- Unsupported/failed reads still return null and keep quality Bad; no fake values and no silent GPL fallback.
-
-Acceptance target for field test:
-
-- Start from Open SCL workflow.
-- Select a simple status point such as `*.Pos.stVal`.
-- Native state must reach `MMS Associated`.
-- Polling loop should log either a decoded value or a precise native MMS read failure with response hex preview.
-
-Next slice:
-
-- Tune read request presentation profile if a specific IED rejects the first Confirmed-Read.
-- Add richer DataAttribute path mapping for `stVal`, `q`, and `t` triplets.
-- Add per-tag protocol trace panel so request/response hex can be exported for debugging.
-
-### Phase N4 — Adaptive native read + segmented COTP receive
-
-Status: implemented in this branch.
-
-What changed:
-
-- COTP receive now supports segmented DT responses and reassembles fragments until EOT.
-- Native Confirmed-Read now records per-attempt diagnostics for each tag.
-- Read attempts now try the primary IEC 61850 FC-aware MMS variable name first, then a conservative no-FC alternate if the IED returns an object/access-style failure.
-- MMS response validation now checks Confirmed-Response PDU shape and invokeID correlation.
-- Decoder now surfaces MMS access failure codes more clearly.
-- Decoder now formats IEC 61850 quality bit-strings and UTC time values instead of only showing raw hex.
-
-Acceptance target for field test:
-
-- If the selected point reads successfully, the runtime should show Good quality and write the decoded value to Modbus/MQTT.
-- If the point is rejected, the diagnostics should now show which MMS object profile was attempted and whether the failure was access/object/decode-related.
-- Segmented responses from larger MMS payloads should no longer be truncated at the first COTP fragment.
-
-Next slice:
-
-- Add a visible native protocol trace/export panel in Diagnostics.
-- Add native named-variable list/directory probe after MMS association.
-- Start RCB attribute read phase: `RptID`, `DatSet`, `ConfRev`, `RptEna`, `Resv/ResvTms`, `TrgOps`, `OptFlds`, `IntgPd`.
-
-## Phase N5 - Native ACSE Association Profiler
-
-The native clean-room path now treats IEC 61850 connection readiness as MMS association readiness, not merely TCP/COTP readiness.
-
-Implemented:
-- Added adaptive ACSE association profiles for real IED interoperability:
-  - `BalancedApTitle` profile with populated called/calling AP-title and AE-qualifier.
-  - `LegacyMinimal` fallback profile retained for devices that accept the compact association request.
-- Corrected ISO Session handling: Session Abort SPDU `0x19` is now treated as a hard ACSE/MMS failure, not as an accepted association.
-- Native runtime no longer publishes a transport-only session as connected.
-- Added association attempt summaries so field diagnostics show which profile failed or succeeded.
-- Runtime start is blocked when native ACSE/MMS association is not ready; this prevents Modbus/MQTT from exposing stale or fake IEC 61850 values.
-
-Next:
-- Parse SCL OSI selectors (`OSI-PSEL`, `OSI-SSEL`, `OSI-TSEL`, `OSI-AP-Title`, `OSI-AE-Qualifier`) into native association options.
-- Replace static association payloads with composable BER builders.
-- Continue MMS Confirmed-Read tuning after association succeeds.
-
-## Phase N6 - Native MMS Read Resilience and Payload Profiler
-
-Phase N6 improves the first native Confirmed-Read slice after field feedback from an IED that accepted ACSE/MMS association but closed TCP immediately after the first read attempt.
-
-Implemented guardrails:
-
-- MMS association is still required before runtime reads.
-- Confirmed-Read now records the exact request payload profile and hex preview used for each attempt.
-- A peer-closed TCP read fault is treated as a protocol/profile failure, not as a live value.
-- The native session can re-establish ACSE/MMS between diagnostic read profiles so one rejected payload does not poison the whole runtime session.
-- Read payload profiles are explicit and auditable:
-  - PresentationDataValues
-  - PresentationDataValuesWithSpecificationResult
-  - SessionDataOnly
-  - RawMmsPdu
-- No fake values and no silent libiec61850 fallback are introduced.
-
-Next focus after N6:
-
-1. Capture which payload profile the target IED accepts or rejects.
-2. If every payload profile closes the TCP session, tune the ISO Presentation P-DATA wrapper.
-3. If the IED returns AccessResult.failure, tune IEC object-name mapping from SCL/FCDA.
-4. Once one `stVal` reads successfully, expand decoder coverage for `q`, `t`, analog values, and DataAttribute structures.
-
-
-### Phase N7 - Correct MMS P-DATA Confirmed-Read envelope
-
-Status: implemented in this branch.
-
-- Fixed the native MMS Confirmed-Read encoder to use ISO Presentation fully-encoded-data / PDV-list with presentation context id 3.
-- Fixed MMS Read-Request structure to include `variableAccessSpecification [1]` and `SEQUENCE OF VariableSpecification` before the domain-specific object name.
-- Fixed response decoder to unwrap Presentation P-DATA before looking for MMS Confirmed-ResponsePDU.
-- Retained strict clean-room discipline: no GPL source copy, no silent runtime fallback, no fake values.
-
-Expected field behavior: a relay that previously closed TCP on `PresentationDataValues` should now either return a decodable Confirmed-Response, an MMS Confirmed-Error/AccessResult.failure, or a clear object-access failure. A raw TCP close after this phase indicates either a still-incompatible association/presentation context or a vendor-specific object naming/FC issue.
-
-## Phase N8 — Native IP Discovery MVP
-
-Status: implemented as the first clean-room online browse slice.
-
-Native IP-only discovery now follows the same high-level service shape used by mature IEC 61850 clients: associate first, read the server directory/domain names, browse each MMS domain for named variables, map MMS names back into IEC 61850 object candidates, then let the user select the SCADA tags that will be routed to Modbus TCP/MQTT.
-
-Implemented scope:
-
-- MMS `GetNameList` request encoder for VMD/domain browse.
-- MMS `GetNameList` response decoder with invokeID validation.
-- Native domain browse: VMD-specific domain list.
-- Native domain variable browse: domain-specific named variables.
-- Optional domain variable-list browse foundation for future DataSet/RCB work.
-- Smart MMS item mapping, for example `Q0XCBR1$ST$Pos` → `LD/Q0XCBR1.Pos.stVal [ST]`.
-- Smart candidate generation for CB/DS position, protection general flags, and MMXU/MMXN cVal magnitudes.
-- IP-only wizard now defaults to native clean-room discovery instead of requiring an external runtime.
-
-Guardrails:
-
-- No GPL runtime fallback is used when native mode is selected.
-- Discovery candidates are not fake values; runtime polling still proves each selected tag by native Confirmed-Read.
-- Open SCL remains the deterministic engineered workflow when CID/SCD is available.
-
-Next hardening:
-
-- Add GetVariableAccessAttributes/GetDataDirectory-style type expansion for structured objects.
-- Probe-read selected discovery candidates before committing to runtime.
-- Use discovered named variable lists as the base for RCB/DataSet/reporting.
-
-
-## Phase N9 — Native value quality/timestamp sidecar hardening
-
-Status: implemented in this branch.
-
-After native IP discovery and first value polling are proven, the next gateway-level hardening is to stop treating every successful `stVal`/measurement read as blindly `Good`. Phase N9 adds slow sidecar reads for IEC 61850 companion attributes:
-
-- `q` quality is read beside selected ST/MX value tags when the object path can be inferred safely.
-- `t` timestamp is read beside selected ST/MX value tags when supported by the IED.
-- Value polling remains the primary path; quality/timestamp reads are throttled and cached so FUXA/Modbus responsiveness is not degraded.
-- If a relay does not expose a companion `q`/`t` for a candidate object, value polling continues and the failure is logged only occasionally.
-- Runtime status shows `+ q/t` once companion sidecar data is available.
-
-Examples of safe companion mapping:
-
-```text
-LD/Q0XCBR1.Pos.stVal        -> LD/Q0XCBR1.Pos.q / LD/Q0XCBR1.Pos.t
-LD/PTOC1.Op.general         -> LD/PTOC1.Op.q / LD/PTOC1.Op.t
-LD/MMXU1.A.phsA.cVal.mag.f  -> LD/MMXU1.A.phsA.q / LD/MMXU1.A.phsA.t
-```
-
-Guardrails:
-
-- No fake quality or timestamp is generated.
-- `q`/`t` support is treated as vendor/model-dependent.
-- Sidecar reads are not attempted for already-selected `q`/`t` attributes or non-ST/MX engineering attributes.
-
-Next hardening:
-
-- Add live validation/probe-read inside the IP discovery wizard before Save to Runtime.
-- Add native GetVariableAccessAttributes-style type discovery for structured objects.
-- Use discovered named variable lists/DataSets to start RCB planning for reporting.
-
-N9 also fixes the initial discovery snapshot path so preview reads pass the discovered Functional Constraint and data type into the native read engine. This avoids a false failure where the runtime path worked because it supplied `[ST]`/`[MX]`, but the initial snapshot used only the object reference.
-
-
-## Phase N9.1 — Runtime Grid Quality/Timestamp Presentation
-
-- Re-arranged the live IEC 61850 grid into an operator/debug friendly order: IEC Object, Value, Timestamp, Quality, Type.
-- Added a dedicated `DeviceTimestamp` runtime field so IEC 61850 `t` sidecar values are not confused with the local PC update time.
-- MQTT JSON now carries both local timestamp and device timestamp when available.
+- Read-only operation first.
+- Never invent field values.
+- Keep device timestamp separate from local PC timestamp.
+- Make Modbus and MQTT mapping explicit.
+- Prefer SCL when engineering files are available.
+- Use IP discovery for quick online setup.
+- Keep diagnostics useful for field troubleshooting.
+- Keep the repository Apache-2.0 and self-contained.

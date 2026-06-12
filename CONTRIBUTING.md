@@ -10,7 +10,7 @@ Contributions are welcome from automation engineers, protection engineers, syste
 - Fast acquisition diagnostics.
 - UI improvements for engineering workflows.
 - Documentation, screenshots, and quick-start examples.
-- Mock data sets that can be shared publicly.
+- Sample data sets that can be shared publicly.
 
 ## Before opening an issue
 
@@ -19,7 +19,7 @@ Please check:
 - the latest release;
 - existing issues;
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md);
-- whether the problem appears in mock mode or only with a real IED.
+- whether the problem appears in demo mode or only with a live IED.
 
 ## Issue report checklist
 
@@ -27,7 +27,7 @@ Include:
 
 - ARServer version;
 - Windows version;
-- connection mode: mock or real IED;
+- connection mode: demo or live IED;
 - steps to reproduce;
 - expected behavior;
 - actual behavior;

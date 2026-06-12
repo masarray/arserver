@@ -1,96 +1,100 @@
-# ARServer Troubleshooting
+# Troubleshooting
 
-This page lists common setup and runtime issues when using ARServer as an IEC 61850 MMS to Modbus TCP and MQTT gateway.
+## IED does not connect
 
-## The app starts, but real IED communication is not available
+Check these items first:
 
-ARServer can run in mock mode without external runtime files. For real IEC 61850 MMS communication, the required runtime components must be placed beside `ArServer.exe`.
+- IP address is correct.
+- MMS port is correct, usually `102`.
+- PC and IED are in the same routed network.
+- Windows firewall allows ARServer outbound access and Modbus inbound access when used.
+- IED MMS service is enabled.
+- Another engineering tool is not exhausting available client sessions.
+- VLAN, gateway, subnet mask, and switch port are correct.
 
-Check:
+## Discovery connects but returns few or no signals
 
-- the runtime files are in the same folder as `ArServer.exe`;
-- Windows did not block downloaded DLL files;
-- the x64/x86 architecture matches the application package;
-- the runtime version supports the methods expected by ARServer;
-- the application was restarted after copying the runtime files.
+Possible causes:
 
-## Cannot connect to IED on port 102
+- The IED restricts online model browsing.
+- The selected access point is not the MMS access point.
+- The IED model exposes object names in a vendor-specific shape.
+- The relay allows reading known objects but limits directory browsing.
 
-Check:
+Recommended action:
 
-- IP address is reachable using `ping` where allowed by the network;
-- TCP `102` is not blocked by firewall rules;
-- the relay MMS server is enabled;
-- another engineering tool is not holding the MMS association;
-- VLAN, routing, and subnet settings are correct;
-- Windows Defender Firewall allows ARServer on the selected network profile.
+- Try Open SCL/CID/SCD if available.
+- Check diagnostics for domain and variable browse messages.
+- Probe a known CB position or measurement from SCL.
 
-## Modbus client cannot connect
+## Probe selected fails
 
-Check:
+Probe validates the final object path and functional constraint. Failure may mean:
 
-- Modbus TCP output is enabled before runtime starts;
-- the configured port is not already used by another program;
-- the Modbus client uses the correct IP address and port;
-- the Unit ID matches the ARServer setting;
-- the client is reading the correct register area and address base.
+- object path differs from the discovered candidate,
+- functional constraint is wrong,
+- the relay does not allow the attribute read,
+- the point is not present in this IED variant,
+- the connection was closed by the IED after a malformed or unsupported request.
 
-## Values are stale or slower than the configured polling time
+Try another candidate from the same logical node, or use SCL import for more deterministic object references.
 
-The MMS polling value is a scheduler target, not a guaranteed device response time.
+## Value is live but timestamp is blank
 
-Actual refresh depends on:
+The value attribute may be readable while the companion `t` timestamp attribute is not present or not allowed. ARServer leaves timestamp blank rather than generating a device timestamp.
 
-- IED response time;
-- number of selected points;
-- number of active IED workspaces;
-- network latency and retransmission;
-- timeout/retry behavior;
-- Windows scheduling load.
+## Value is live but quality is blank or Bad
 
-Use **Fast CB** for breaker/status evaluation and keep the selected point count small when testing 10–50 ms acquisition.
+Quality comes from the companion `q` attribute when available. If the relay returns an invalid or unavailable quality, ARServer shows that state.
 
-## MQTT topics do not update
+## Modbus client connects but values do not change
 
 Check:
 
-- the MQTT broker is running;
-- host, port, username, password, TLS, and client ID are correct;
-- Windows firewall allows outbound broker connection;
-- selected rows are enabled for MQTT publishing;
-- the topic root is correct;
-- the subscriber uses the same topic path and wildcard strategy.
+- Runtime is running.
+- The IEC value is live in the runtime grid.
+- The binding is enabled.
+- The Modbus register address is correct.
+- The client uses the correct Unit ID.
+- The client uses the same zero-based or one-based address convention as your mapping.
+- The client reads the correct data type size.
 
-## Float or register value looks wrong in HMI
+## MQTT publishes nothing
 
 Check:
 
-- Modbus area: input register vs holding register;
-- address base: zero-based vs human display addressing;
-- word order for Float32;
-- scale and engineering unit;
-- whether the HMI is reading one register or two registers for 32-bit values.
+- MQTT is enabled globally.
+- MQTT is enabled for the selected binding.
+- Broker host and port are correct.
+- Broker accepts anonymous or configured credentials.
+- Network/firewall allows broker access.
+- Diagnostics tab shows MQTT connected.
 
-## The release ZIP is blocked by Windows
+## Runtime is blocked
 
-After downloading a ZIP from the internet, Windows may mark files as blocked.
+ARServer blocks runtime when it cannot create a safe live IEC session. This avoids publishing stale or invented values.
 
-Try:
+Fix the IEC connection first, then start runtime again.
 
-1. Right-click the ZIP file.
-2. Open **Properties**.
-3. Tick **Unblock** if available.
-4. Extract again.
+## When to use SCL import
 
-## Good issue report checklist
+Use SCL/CID/SCD/ICD when:
 
-When opening a GitHub issue, include:
+- IP discovery returns too many candidates,
+- online browse is restricted,
+- you need DataSet or RCB planning,
+- you want a repeatable engineered mapping,
+- the relay object structure is known from the project file.
 
-- ARServer version;
-- Windows version;
-- whether the issue occurs in mock mode;
-- steps to reproduce;
-- screenshot or log excerpt;
-- sanitized signal/reference examples.
+## What information to include in a bug report
 
-Do not include private substation files, credentials, public IP addresses, customer names, or confidential relay settings.
+Include:
+
+- ARServer version,
+- Windows version,
+- relay vendor/model/firmware when shareable,
+- whether the workflow used Add by IP or Open SCL,
+- screenshot of diagnostics,
+- selected IEC object,
+- expected value and observed value,
+- Modbus/MQTT settings if the issue is output-related.

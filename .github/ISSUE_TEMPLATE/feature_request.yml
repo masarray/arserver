@@ -21,4 +21,4 @@ body:
     id: validation
     attributes:
       label: How this can be validated
-      description: Describe a mock-mode, bench, Modbus, MQTT, or documentation check that proves the feature works.
+      description: Describe a demo-mode, bench, Modbus, MQTT, or documentation check that proves the feature works.

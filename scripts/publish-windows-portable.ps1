@@ -108,8 +108,8 @@ This release is packaged as a single application executable:
 How to run:
 1. Extract this ZIP to a writable folder, for example C:\Tools\ARServer.
 2. Run ArServer.exe.
-3. Use mock mode to explore the workflow without a real IED.
-4. For real IED testing, place your IEC 61850 MMS runtime components beside ArServer.exe before starting the app.
+3. Use Add by IP or Open SCL to create a gateway mapping.
+4. For IED testing, connect the PC to the relay network and use MMS port 102 unless the project requires another port.
 5. Add an IED, select signals, validate the Modbus map, configure MQTT if needed, and start runtime.
 
 Useful links:

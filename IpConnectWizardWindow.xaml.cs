@@ -6,13 +6,11 @@ public partial class IpConnectWizardWindow : Window
 {
     public static readonly DependencyProperty RelayIpAddressProperty = DependencyProperty.Register(nameof(RelayIpAddress), typeof(string), typeof(IpConnectWizardWindow), new PropertyMetadata(string.Empty));
     public static readonly DependencyProperty MmsPortProperty = DependencyProperty.Register(nameof(MmsPort), typeof(int), typeof(IpConnectWizardWindow), new PropertyMetadata(102));
-    public static readonly DependencyProperty UseRealIecEngineProperty = DependencyProperty.Register(nameof(UseRealIecEngine), typeof(bool), typeof(IpConnectWizardWindow), new PropertyMetadata(false));
-    public static readonly DependencyProperty UseNativeCleanRoomEngineProperty = DependencyProperty.Register(nameof(UseNativeCleanRoomEngine), typeof(bool), typeof(IpConnectWizardWindow), new PropertyMetadata(true));
+    public static readonly DependencyProperty UseNativeIecEngineProperty = DependencyProperty.Register(nameof(UseNativeIecEngine), typeof(bool), typeof(IpConnectWizardWindow), new PropertyMetadata(true));
 
     public string RelayIpAddress { get => (string)GetValue(RelayIpAddressProperty); set => SetValue(RelayIpAddressProperty, value); }
     public int MmsPort { get => (int)GetValue(MmsPortProperty); set => SetValue(MmsPortProperty, value); }
-    public bool UseRealIecEngine { get => (bool)GetValue(UseRealIecEngineProperty); set => SetValue(UseRealIecEngineProperty, value); }
-    public bool UseNativeCleanRoomEngine { get => (bool)GetValue(UseNativeCleanRoomEngineProperty); set => SetValue(UseNativeCleanRoomEngineProperty, value); }
+    public bool UseNativeIecEngine { get => (bool)GetValue(UseNativeIecEngineProperty); set => SetValue(UseNativeIecEngineProperty, value); }
 
     public IpConnectWizardWindow()
     {
