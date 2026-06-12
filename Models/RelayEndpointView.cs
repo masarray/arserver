@@ -75,7 +75,7 @@ public class RelayEndpointView : ObservableObject
     public string RcbSummaryText => ReportControlCount > 0
         ? $"RCB: {RcbName} • {ReportRuntimeMode} • DS {DataSetCount} • RCB {ReportControlCount}"
         : $"RCB: {RcbName} • {RcbMode}";
-    public bool IsConnectedLike => Status.Contains("Connected", StringComparison.OrdinalIgnoreCase) || Status.Contains("Live", StringComparison.OrdinalIgnoreCase);
+    public bool IsConnectedLike => Status.Contains("Connected", StringComparison.OrdinalIgnoreCase) || Status.Contains("Live", StringComparison.OrdinalIgnoreCase) || Status.Contains("Transport Ready", StringComparison.OrdinalIgnoreCase);
     public string ConnectionActionText => IsConnectedLike ? "Disconnect" : "Connect";
 
     public void RefreshComputed()
@@ -93,9 +93,9 @@ public class RelayEndpointView : ObservableObject
     {
         var color = status.ToLowerInvariant() switch
         {
-            var s when s.Contains("live") || s.Contains("connected") => MediaColor.FromRgb(34, 197, 94),
-            var s when s.Contains("connecting") => MediaColor.FromRgb(37, 99, 235),
-            var s when s.Contains("stale") || s.Contains("warning") => MediaColor.FromRgb(245, 158, 11),
+            var s when s.Contains("live") || s.Contains("connected") || s.Contains("associated") => MediaColor.FromRgb(34, 197, 94),
+            var s when s.Contains("connecting") || s.Contains("transport ready") => MediaColor.FromRgb(37, 99, 235),
+            var s when s.Contains("stale") || s.Contains("warning") || s.Contains("pending") => MediaColor.FromRgb(245, 158, 11),
             var s when s.Contains("failed") || s.Contains("error") => MediaColor.FromRgb(239, 68, 68),
             _ => MediaColor.FromRgb(148, 163, 184)
         };

@@ -30,6 +30,8 @@ public sealed class BridgeRuntime : IAsyncDisposable
     private readonly Dictionary<string, DateTime> _lastPerTagReadWarning = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTime> _nextPollDueUtc = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _roundRobinCursorByRelay = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<ReportControlPlan> _reportPlans = new();
+    private readonly Dictionary<string, ReportControlPlan> _reportPlanByBindingKey = new(StringComparer.OrdinalIgnoreCase);
     private const int MaxReadsPerIedPerCycle = 8;
     private const int MaxFastReadsPerIedPerCycle = 16;
     private const int MaxNormalReadsPerIedPerCycleWhenFastLaneActive = 4;
@@ -95,6 +97,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
         if (IsRunning) return;
 
         PrepareBindingsForRuntimeStart();
+        BuildReportPlansForRuntimeStart();
         await EnsureIecClientsAsync(_cts.Token);
 
         var safeUnitId = unitId < 1 || unitId > 247 ? 1 : unitId;
@@ -110,6 +113,8 @@ public sealed class BridgeRuntime : IAsyncDisposable
         var fastestPollMs = _bindings.Count == 0 ? DefaultMmsPollingIntervalMs : _bindings.Min(GetPollIntervalMs);
         var fastCandidateCount = _fastAcquisitionEnabled ? _bindings.Count(IsFastAcquisitionCandidate) : 0;
         Log("INFO", "Runtime", $"Runtime started. Active bindings: {_bindings.Count}. Scheduler: target fastest MMS poll {fastestPollMs} ms, fast CB lane {(_fastAcquisitionEnabled ? "ON" : "OFF")} ({fastCandidateCount} candidate point(s)), UI grid uses buffered snapshots.");
+        if (_reportPlans.Count > 0)
+            Log("INFO", "Reports", $"Report-aware runtime planner active: {_reportPlans.Count} RCB/DataSet plan(s), {_reportPlans.Sum(p => p.BindingCount)} mapped tag(s). Polling remains the safe fallback until native RCB activation is enabled.");
         if (fastestPollMs <= 50)
             Log("WARN", "Runtime", "Fast MMS polling mode is enabled. Effective speed still depends on relay response time, network latency, number of active tags, and MMS server limits; use reports/RCB for critical event capture when available.");
         if (_fastAcquisitionEnabled)
@@ -127,7 +132,12 @@ public sealed class BridgeRuntime : IAsyncDisposable
         var relayCount = _bindings.Select(b => string.IsNullOrWhiteSpace(b.RelayId) ? "__single__" : b.RelayId).Distinct(StringComparer.OrdinalIgnoreCase).Count();
         if (_iecClient.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase))
             return relayCount > 1 ? "Mock Multi-IED Polling" : "Mock Polling Simulation";
-        var mode = relayCount > 1 ? "IEC61850 MMS Polling / Multi-IED" : "IEC61850 MMS Polling";
+        var mode = _iecClient is NativeCleanRoomIec61850Client native
+            ? native.IsMmsReady
+                ? (relayCount > 1 ? "Native IEC61850 ACSE/MMS Associated / Multi-IED" : "Native IEC61850 ACSE/MMS Associated")
+                : (relayCount > 1 ? "Native IEC61850 Transport / ACSE Probe / Multi-IED" : "Native IEC61850 Transport / ACSE Probe")
+            : relayCount > 1 ? "IEC61850 MMS Polling / Multi-IED" : "IEC61850 MMS Polling";
+        if (_reportPlans.Count > 0) mode += " + Report Planner";
         return _fastAcquisitionEnabled ? $"{mode} + Fast CB Lane" : mode;
     }
 
@@ -175,6 +185,8 @@ public sealed class BridgeRuntime : IAsyncDisposable
                 MarkGroupDisconnected(group, "IEC connect failed");
                 if (client is RealLibIec61850Client real && !string.IsNullOrWhiteSpace(real.LastErrorMessage))
                     Log("ERROR", "IEC61850", $"{display} {ip}:{port}: {real.LastErrorMessage}");
+                else if (client is NativeCleanRoomIec61850Client native && !string.IsNullOrWhiteSpace(native.LastErrorMessage))
+                    Log("ERROR", "Native IEC61850", $"{display} {ip}:{port}: {native.LastErrorMessage}");
                 else
                     Log("ERROR", "IEC61850", $"{display} {ip}:{port}: MMS client connection failed.");
 
@@ -184,7 +196,10 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
             _relayClients[relayId] = client;
             _ownedRelayClientIds.Add(relayId);
-            Log("INFO", "IEC61850", $"{display} {ip}:{port}: isolated MMS client connected.");
+            if (client is NativeCleanRoomIec61850Client nativeStarted)
+                Log("INFO", "Native IEC61850", $"{display} {ip}:{port}: native session state={nativeStarted.NativeState}. {nativeStarted.LastErrorMessage}");
+            else
+                Log("INFO", "IEC61850", $"{display} {ip}:{port}: isolated MMS client connected.");
         }
     }
 
@@ -241,6 +256,32 @@ public sealed class BridgeRuntime : IAsyncDisposable
             }
 
             binding.AgeMs = 0;
+        }
+    }
+
+    private void BuildReportPlansForRuntimeStart()
+    {
+        _reportPlans.Clear();
+        _reportPlanByBindingKey.Clear();
+
+        var planner = new ReportRuntimePlanner(_relayIndex);
+        _reportPlans.AddRange(planner.BuildPlans(_bindings));
+
+        if (_reportPlans.Count == 0)
+        {
+            Log("INFO", "Reports", "No report-capable SCL bindings were selected. Runtime will use MMS polling only.");
+            return;
+        }
+
+        foreach (var plan in _reportPlans)
+        {
+            Log("INFO", "Reports", $"Planned {plan.Summary}. Mode: {plan.Mode}. Status: polling fallback armed.");
+            foreach (var binding in plan.Bindings)
+            {
+                _reportPlanByBindingKey[GetBindingPollKey(binding)] = plan;
+                if (binding.Status.Equals("Queued", StringComparison.OrdinalIgnoreCase))
+                    binding.Status = "Report planned / polling fallback";
+            }
         }
     }
 
@@ -356,10 +397,26 @@ public sealed class BridgeRuntime : IAsyncDisposable
                         binding.Quality = "Bad";
                         binding.LastUpdate = DateTime.Now;
                         binding.AgeMs = 0;
-                        binding.Status = "Not readable";
+                        if (client is NativeCleanRoomIec61850Client nativeClient)
+                        {
+                            binding.Status = nativeClient.IsMmsReady
+                                ? "Native MMS associated / read pending"
+                                : nativeClient.IsMmsInitiateFailed
+                                    ? "Native MMS initiate failed"
+                                    : "Native MMS pending";
+                        }
+                        else
+                        {
+                            binding.Status = "Not readable";
+                        }
 
                         if (ShouldLogReadWarning(binding))
-                            Log("WARN", "IEC61850", $"{binding.IedName}: {binding.SignalName} not readable by MMS. IEC object: {binding.IecReference} [{binding.FunctionalConstraint}]");
+                        {
+                            if (client is NativeCleanRoomIec61850Client native && !string.IsNullOrWhiteSpace(native.LastErrorMessage))
+                                Log("WARN", "Native IEC61850", $"{binding.IedName}: {binding.SignalName}: {native.LastErrorMessage}");
+                            else
+                                Log("WARN", "IEC61850", $"{binding.IedName}: {binding.SignalName} not readable by MMS. IEC object: {binding.IecReference} [{binding.FunctionalConstraint}]");
+                        }
 
                         PublishBindingToMqtt(binding, null, binding.CurrentValue);
                         BindingUpdated?.Invoke(binding);
@@ -373,7 +430,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
                     binding.Quality = "Good";
                     binding.LastUpdate = DateTime.Now;
                     binding.AgeMs = 0;
-                    binding.Status = "MMS Polling/Live";
+                    binding.Status = GetLiveStatusForBinding(binding);
                     if (changed) binding.Sequence++;
 
                     // Outputs are cache-based. A FUXA/SCADA read never triggers direct MMS reads.
@@ -442,6 +499,13 @@ public sealed class BridgeRuntime : IAsyncDisposable
         }
     }
 
+
+    private string GetLiveStatusForBinding(BindingItem binding)
+    {
+        return _reportPlanByBindingKey.ContainsKey(GetBindingPollKey(binding))
+            ? "Report fallback polling/Live"
+            : "MMS Polling/Live";
+    }
 
     public static bool IsFastAcquisitionCandidate(BindingItem binding)
     {

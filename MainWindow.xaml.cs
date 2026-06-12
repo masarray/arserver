@@ -47,6 +47,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private long _mqttDroppedCount;
     private bool _mqttConnected;
     private bool _useRealIecEngine;
+    private bool _useNativeCleanRoomEngine;
     private string _discoverySearchText = "";
     private bool _showRawEngineeringAttributes;
     private long _lastObservedModbusReadCount;
@@ -212,6 +213,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
     public bool UseRealIecEngine { get => _useRealIecEngine; set => Set(ref _useRealIecEngine, value); }
+    public bool UseNativeCleanRoomEngine { get => _useNativeCleanRoomEngine; set => Set(ref _useNativeCleanRoomEngine, value); }
     public string DiscoverySearchText
     {
         get => _discoverySearchText;
@@ -352,6 +354,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (RealLibIec61850Client.IsRuntimeLibraryAvailable())
         {
             UseRealIecEngine = true;
+            UseNativeCleanRoomEngine = false;
             AddLog("INFO", "IEC61850", "IEC 61850 MMS runtime detected beside EXE. Real IEC 61850 mode enabled automatically.");
         }
         else
@@ -398,7 +401,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             IedConnectionStatus = "Connecting...";
             EventStrategyStatus = "Scanning...";
-            AddLog("INFO", "IEC61850", $"Connecting to {relayIp}:{MmsPort} using {(UseRealIecEngine ? "real IEC 61850 MMS" : "mock")} IEC 61850 engine.");
+            AddLog("INFO", "IEC61850", $"Connecting to {relayIp}:{MmsPort} using {(UseNativeCleanRoomEngine ? "native clean-room IEC 61850 transport" : UseRealIecEngine ? "real IEC 61850 MMS" : "mock")} IEC 61850 engine.");
 
             // The Modbus gateway lifecycle is independent from per-IED connection lifecycle.
             // When runtime is running, keep the Modbus server alive and refresh only the active IEC session.
@@ -410,7 +413,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             await ConnectActiveIecClientAsync(relayIp, MmsPort, CancellationToken.None);
             var activeClient = _iecClient ?? throw new InvalidOperationException("IEC client was not created.");
-            IedConnectionStatus = activeClient.IsConnected ? "Connected" : "Failed";
+            IedConnectionStatus = GetClientConnectedDisplayStatus(activeClient);
 
             if (!activeClient.IsConnected)
             {
@@ -422,6 +425,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
                 if (activeClient is RealLibIec61850Client realFailed)
                     AddLog("ERROR", "IEC61850", string.IsNullOrWhiteSpace(realFailed.LastErrorMessage) ? "Real IEC61850 connection failed. No mock fallback was used." : realFailed.LastErrorMessage);
+                else if (activeClient is NativeCleanRoomIec61850Client nativeFailed)
+                    AddLog("ERROR", "Native IEC61850", string.IsNullOrWhiteSpace(nativeFailed.LastErrorMessage) ? "Native clean-room IEC61850 ACSE/MMS association failed." : nativeFailed.LastErrorMessage);
                 else
                     AddLog("ERROR", "IEC61850", "IEC61850 connection failed.");
 
@@ -460,9 +465,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (_iecClient is RealLibIec61850Client realOk && !string.IsNullOrWhiteSpace(realOk.LastDiscoverySummary))
                 AddLog("INFO", "Discovery", realOk.LastDiscoverySummary);
 
-            EventStrategyStatus = _iecClient.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase)
-                ? "Mock event simulation"
-                : "Real MMS polling";
+            EventStrategyStatus = _iecClient is NativeCleanRoomIec61850Client nativeStatus
+                ? nativeStatus.IsMmsReady
+                    ? "Native ACSE/MMS associated / read pending"
+                    : nativeStatus.IsMmsInitiateFailed
+                        ? "Native transport ready / MMS initiate failed"
+                        : "Native transport ready / MMS pending"
+                : _iecClient.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase)
+                    ? "Mock event simulation"
+                    : "Real MMS polling";
             SignalsView.Refresh();
             Raise(nameof(SignalCount));
             Raise(nameof(VisibleSignalCountText));
@@ -515,6 +526,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             AddExceptionLog("IEC61850", ex, $"Connect/Discover failed for {relayIp}:{MmsPort}");
             AddLog("INFO", "Operator Hint", "Cek IP relay, VLAN/subnet, firewall Windows, port TCP 102, MMS server di relay, dan pastikan belum ada client lain yang mengunci association/RCB.");
         }
+    }
+
+    private static string GetClientConnectedDisplayStatus(IIec61850Client client)
+    {
+        if (client is NativeCleanRoomIec61850Client native)
+        {
+            if (native.IsMmsReady) return "MMS Associated";
+            if (native.IsTransportReady) return native.IsMmsInitiateFailed ? "MMS Initiate Failed" : "Transport Ready";
+            return "Failed";
+        }
+
+        if (!client.IsConnected) return "Failed";
+        return "Connected";
     }
 
     private void SelectRecommended_Click(object sender, RoutedEventArgs e)
@@ -910,6 +934,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 RelayIpAddress = RelayIpAddress,
                 MmsPort = MmsPort,
                 UseRealIecEngine = UseRealIecEngine,
+                UseNativeCleanRoomEngine = UseNativeCleanRoomEngine,
                 ModbusBindAddress = ModbusBindAddress,
                 EnableModbusTcp = EnableModbusTcp,
                 ModbusPort = ModbusPort,
@@ -955,6 +980,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             RelayIpAddress = project.RelayIpAddress;
             MmsPort = project.MmsPort;
             UseRealIecEngine = project.UseRealIecEngine;
+            UseNativeCleanRoomEngine = project.UseNativeCleanRoomEngine;
             ModbusBindAddress = string.IsNullOrWhiteSpace(project.ModbusBindAddress) ? "0.0.0.0" : project.ModbusBindAddress;
             EnableModbusTcp = project.EnableModbusTcp;
             ModbusPort = project.ModbusPort <= 0 ? 502 : project.ModbusPort;
@@ -1080,6 +1106,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 {
                     if (activeClient is RealLibIec61850Client realFailed)
                         AddLog("ERROR", "IEC61850", string.IsNullOrWhiteSpace(realFailed.LastErrorMessage) ? "Runtime cannot start because IEC61850 is not connected." : realFailed.LastErrorMessage);
+                    else if (activeClient is NativeCleanRoomIec61850Client nativeFailed)
+                        AddLog("ERROR", "Native IEC61850", string.IsNullOrWhiteSpace(nativeFailed.LastErrorMessage) ? "Runtime cannot start because native ACSE/MMS association is not ready." : nativeFailed.LastErrorMessage);
                     AddLog("WARN", "Runtime", "Runtime blocked. IEC61850 downstream is not connected. Modbus server is not started to avoid publishing stale/fake values.");
                     RuntimeStatusText = "Stopped";
                     MoveRuntimeToggle(false, true);
@@ -1091,9 +1119,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 // Multi-IED runtime uses isolated per-IED MMS clients inside BridgeRuntime.
                 // Do not pre-connect a single global client to the selected relay; that was
                 // the root cause of last-added/selected IED sessions stealing the first IED.
-                _iecClient = UseRealIecEngine
-                    ? new RealLibIec61850Client()
-                    : new MockIec61850Client();
+                _iecClient = CreateConfiguredIecClient();
             }
 
             if (_runtime != null)
@@ -1103,7 +1129,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 _iecClient,
                 PublishedModbusBindings,
                 Relays,
-                () => UseRealIecEngine ? (IIec61850Client)new RealLibIec61850Client() : new MockIec61850Client(),
+                () => CreateConfiguredIecClient(),
                 EnableModbusTcp,
                 CloneMqttSettings(MqttSettings),
                 FastAcquisitionEnabled);
@@ -1321,10 +1347,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 relaySignal.Timestamp = binding.LastUpdate == DateTime.MinValue ? DateTime.Now : binding.LastUpdate;
             }
 
-            relay.Status = binding.Quality.Equals("Good", StringComparison.OrdinalIgnoreCase) ? "Connected" : relay.Status;
-            relay.HeartbeatText = binding.Quality.Equals("Good", StringComparison.OrdinalIgnoreCase) ? "MMS stream active" : "MMS read warning";
-            relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
-            relay.RefreshComputed();
+            ApplyRelayRuntimeReadState(relay, binding);
         }
 
         if (SelectedRelay != null && relay != null && relay.RelayId != SelectedRelay.RelayId)
@@ -1340,6 +1363,51 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (SelectedRelay != null)
             SyncLiveWorkspaceToRelay(SelectedRelay);
+    }
+
+    private static void ApplyRelayRuntimeReadState(RelayEndpointView relay, BindingItem binding)
+    {
+        var statusText = binding.Status ?? string.Empty;
+        var good = binding.Quality.Equals("Good", StringComparison.OrdinalIgnoreCase);
+        var nativeAssociated = statusText.Contains("Native MMS associated", StringComparison.OrdinalIgnoreCase) ||
+                               statusText.Contains("Confirmed-Read", StringComparison.OrdinalIgnoreCase);
+        var nativeFailed = statusText.Contains("Native MMS initiate failed", StringComparison.OrdinalIgnoreCase);
+        var nativePending = statusText.Contains("Native transport", StringComparison.OrdinalIgnoreCase) ||
+                            statusText.Contains("Native MMS pending", StringComparison.OrdinalIgnoreCase) ||
+                            statusText.Contains("ACSE/MMS", StringComparison.OrdinalIgnoreCase) ||
+                            statusText.Contains("Not readable", StringComparison.OrdinalIgnoreCase) ||
+                            nativeAssociated ||
+                            nativeFailed;
+
+        if (good)
+        {
+            relay.Status = "Connected";
+            relay.HeartbeatText = "MMS stream active";
+            relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
+            relay.ActivityBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(34, 197, 94));
+        }
+        else if (nativePending)
+        {
+            relay.Status = nativeAssociated ? "MMS Associated" : "Transport Ready";
+            relay.HeartbeatText = nativeAssociated
+                ? "Confirmed-Read pending"
+                : nativeFailed
+                    ? "MMS initiate failed"
+                    : "Native MMS pending";
+            relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
+            relay.ActivityBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 158, 11));
+        }
+        else
+        {
+            relay.Status = string.IsNullOrWhiteSpace(relay.Status) || relay.Status.Contains("Connected", StringComparison.OrdinalIgnoreCase)
+                ? "Read warning"
+                : relay.Status;
+            relay.HeartbeatText = "MMS read warning";
+            relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
+            relay.ActivityBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 158, 11));
+        }
+
+        relay.RefreshComputed();
     }
 
     private RelayEndpointView? FindRelayForBinding(BindingItem binding)
@@ -1514,7 +1582,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             runtimePort: runtimePortToUse,
             useRealEngine: useRealEngine,
             suggestedIedName: displayName,
-            mode: "CID/SCD model",
+            mode: "CID/SCD model / Native clean-room runtime",
             status: "Configured",
             heartbeat: "Ready for runtime verification",
             sclIpAddress: sclIp,
@@ -1572,6 +1640,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         RelayIpAddress = runtimeIpAddress;
         MmsPort = runtimePort > 0 ? runtimePort : 102;
         UseRealIecEngine = useRealEngine;
+        UseNativeCleanRoomEngine = !string.IsNullOrWhiteSpace(sclFilePath);
+        if (UseNativeCleanRoomEngine)
+            AddLog("INFO", "Native IEC61850", "SCL workflow committed to native clean-room runtime path. IP-only discovery remains external-runtime/mock until native online browse is implemented.");
         if (RelayIpTextBox != null)
             RelayIpTextBox.Text = RelayIpAddress;
 
@@ -1597,8 +1668,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         relay.RcbMode = string.IsNullOrWhiteSpace(rcbMode) ? "MMS polling" : rcbMode;
         relay.ReportRuntimeMode = string.IsNullOrWhiteSpace(reportRuntimeMode) ? "MMS polling only" : reportRuntimeMode;
         relay.SelectedReportControlReference = selectedRcbReference ?? string.Empty;
-        relay.StatusBrush = RelayEndpointView.BrushForStatus(status.Contains("failed", StringComparison.OrdinalIgnoreCase) ? status : "Connected");
-        relay.ActivityBrush = RelayEndpointView.BrushForStatus("Connecting");
+        relay.StatusBrush = RelayEndpointView.BrushForStatus(status);
+        relay.ActivityBrush = RelayEndpointView.BrushForStatus(status);
 
         SaveWorkspaceToRelay(relay, wizard.Signals, wizard.Bindings);
         relay.RcbName = string.IsNullOrWhiteSpace(selectedRcbName) ? relay.RcbName : selectedRcbName;
@@ -1990,14 +2061,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (relay != null)
         {
             relay.LastMmsActivityUtc = DateTime.Now;
-            relay.ActivityBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(34, 197, 94));
-            relay.HeartbeatText = "MMS stream active";
-            if (!relay.Status.Contains("failed", StringComparison.OrdinalIgnoreCase) && !relay.Status.Contains("error", StringComparison.OrdinalIgnoreCase))
+
+            if (binding != null && !binding.Quality.Equals("Good", StringComparison.OrdinalIgnoreCase))
             {
-                relay.Status = "Connected";
-                relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
+                ApplyRelayRuntimeReadState(relay, binding);
             }
-            relay.RefreshComputed();
+            else
+            {
+                relay.ActivityBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(34, 197, 94));
+                relay.HeartbeatText = "MMS stream active";
+                if (!relay.Status.Contains("failed", StringComparison.OrdinalIgnoreCase) && !relay.Status.Contains("error", StringComparison.OrdinalIgnoreCase))
+                {
+                    relay.Status = "Connected";
+                    relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
+                }
+                relay.RefreshComputed();
+            }
+
             if (relay.IsActive)
                 Raise(nameof(ActiveRelaySubtitle));
         }
@@ -2443,12 +2523,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                string.Equals(_iecClientEndpointKey, BuildIecEndpointKey(ipAddress, port), StringComparison.OrdinalIgnoreCase);
     }
 
+    private IIec61850Client CreateConfiguredIecClient()
+    {
+        if (UseNativeCleanRoomEngine)
+            return new NativeCleanRoomIec61850Client();
+
+        return UseRealIecEngine
+            ? new RealLibIec61850Client()
+            : new MockIec61850Client();
+    }
+
     private async Task ConnectActiveIecClientAsync(string ipAddress, int port, CancellationToken cancellationToken)
     {
         await DisposeActiveIecClientAsync();
-        _iecClient = UseRealIecEngine
-            ? new RealLibIec61850Client()
-            : new MockIec61850Client();
+        _iecClient = CreateConfiguredIecClient();
         await _iecClient.ConnectAsync(ipAddress, port, cancellationToken);
         _iecClientEndpointKey = _iecClient.IsConnected ? BuildIecEndpointKey(ipAddress, port) : "";
     }

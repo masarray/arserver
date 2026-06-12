@@ -236,33 +236,68 @@ Phase N2 should add the first ACSE AARQ/AARE and Presentation Context negotiatio
 
 ### Phase N3 — First native MMS Confirmed-Read slice
 
-- Adds initial single-variable Confirmed-Read request/response path for SCL-selected points.
-- Keeps runtime safety: failed/unsupported read remains Bad/null, never fake-live.
-- Focus field validation on simple status data first: `Pos.stVal`, `Beh.stVal`, `Mod.stVal`, then quality/time.
+Status: implemented in this branch as an initial interoperability slice.
+
+What changed:
+
+- Added `MmsReadRequest` for one SCL-selected domain-specific named variable.
+- Added `MmsReadResponseDecoder` for first-pass MMS data decode.
+- Added native session read path after ACSE/MMS association succeeds.
+- Native runtime can now attempt real MMS Confirmed-Read instead of stopping at `read pending`.
+- Unsupported/failed reads still return null and keep quality Bad; no fake values and no silent GPL fallback.
+
+Acceptance target for field test:
+
+- Start from Open SCL workflow.
+- Select a simple status point such as `*.Pos.stVal`.
+- Native state must reach `MMS Associated`.
+- Polling loop should log either a decoded value or a precise native MMS read failure with response hex preview.
+
+Next slice:
+
+- Tune read request presentation profile if a specific IED rejects the first Confirmed-Read.
+- Add richer DataAttribute path mapping for `stVal`, `q`, and `t` triplets.
+- Add per-tag protocol trace panel so request/response hex can be exported for debugging.
 
 ### Phase N4 — Adaptive native read + segmented COTP receive
 
 Status: implemented in this branch.
 
-- COTP receive now reassembles segmented DT responses until EOT.
-- Native read now records per-attempt diagnostics.
-- Confirmed-Read now validates response PDU shape and invokeID correlation.
-- FC-aware object names remain primary; a conservative no-FC alternate can be attempted after access/object-style failure.
-- Quality bit-string and UTC time values now get readable formatting.
-- Runtime still publishes no fake values and does not silently fall back to external GPL runtime.
+What changed:
+
+- COTP receive now supports segmented DT responses and reassembles fragments until EOT.
+- Native Confirmed-Read now records per-attempt diagnostics for each tag.
+- Read attempts now try the primary IEC 61850 FC-aware MMS variable name first, then a conservative no-FC alternate if the IED returns an object/access-style failure.
+- MMS response validation now checks Confirmed-Response PDU shape and invokeID correlation.
+- Decoder now surfaces MMS access failure codes more clearly.
+- Decoder now formats IEC 61850 quality bit-strings and UTC time values instead of only showing raw hex.
+
+Acceptance target for field test:
+
+- If the selected point reads successfully, the runtime should show Good quality and write the decoded value to Modbus/MQTT.
+- If the point is rejected, the diagnostics should now show which MMS object profile was attempted and whether the failure was access/object/decode-related.
+- Segmented responses from larger MMS payloads should no longer be truncated at the first COTP fragment.
+
+Next slice:
+
+- Add a visible native protocol trace/export panel in Diagnostics.
+- Add native named-variable list/directory probe after MMS association.
+- Start RCB attribute read phase: `RptID`, `DatSet`, `ConfRev`, `RptEna`, `Resv/ResvTms`, `TrgOps`, `OptFlds`, `IntgPd`.
 
 ## Phase N5 - Native ACSE Association Profiler
 
-The native clean-room path now separates transport readiness from MMS association readiness.
+The native clean-room path now treats IEC 61850 connection readiness as MMS association readiness, not merely TCP/COTP readiness.
 
 Implemented:
-- Adaptive ACSE association profiles: `BalancedApTitle` first, `LegacyMinimal` fallback.
-- ISO Session Abort `0x19` is now correctly treated as failure.
-- Native `IsConnected` means ACSE/MMS associated, not only TCP/COTP connected.
-- Field diagnostics include profile-by-profile association attempt summaries.
-- Runtime blocks Modbus/MQTT publication when the native IEC 61850 path is not MMS-associated.
+- Added adaptive ACSE association profiles for real IED interoperability:
+  - `BalancedApTitle` profile with populated called/calling AP-title and AE-qualifier.
+  - `LegacyMinimal` fallback profile retained for devices that accept the compact association request.
+- Corrected ISO Session handling: Session Abort SPDU `0x19` is now treated as a hard ACSE/MMS failure, not as an accepted association.
+- Native runtime no longer publishes a transport-only session as connected.
+- Added association attempt summaries so field diagnostics show which profile failed or succeeded.
+- Runtime start is blocked when native ACSE/MMS association is not ready; this prevents Modbus/MQTT from exposing stale or fake IEC 61850 values.
 
 Next:
-- Import SCL OSI selector parameters.
-- Convert static association profiles into configurable clean-room BER encoders.
-- Continue Confirmed-Read decoder validation with real relay traces.
+- Parse SCL OSI selectors (`OSI-PSEL`, `OSI-SSEL`, `OSI-TSEL`, `OSI-AP-Title`, `OSI-AE-Qualifier`) into native association options.
+- Replace static association payloads with composable BER builders.
+- Continue MMS Confirmed-Read tuning after association succeeds.
