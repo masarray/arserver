@@ -43,13 +43,13 @@
             </StackPanel>
         </Grid>
 
-        <!-- Gateway navigation: Explorer, Modbus, MQTT, Diagnostics. -->
+        <!-- Gateway navigation: runtime views only. Report/DataSet planning lives inside Edit IED Wizard. -->
         <Grid Grid.Row="1" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <Border x:Name="WorkflowNavShell" Width="760" Height="42" HorizontalAlignment="Left" Background="#E7ECF5" CornerRadius="21" Padding="4" Effect="{StaticResource SoftShadow}">
+            <Border x:Name="WorkflowNavShell" Width="720" Height="42" HorizontalAlignment="Left" Background="#E7ECF5" CornerRadius="21" Padding="4" Effect="{StaticResource SoftShadow}">
                 <Grid x:Name="WorkflowNavGrid" ClipToBounds="True">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -57,7 +57,7 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <Border x:Name="WorkflowPill" Grid.ColumnSpan="4" Width="182" Height="34" HorizontalAlignment="Left" VerticalAlignment="Center" CornerRadius="17" Background="{StaticResource Accent}" RenderTransformOrigin="0.5,0.5">
+                    <Border x:Name="WorkflowPill" Grid.ColumnSpan="4" Width="172" Height="34" HorizontalAlignment="Left" VerticalAlignment="Center" CornerRadius="17" Background="{StaticResource Accent}" RenderTransformOrigin="0.5,0.5">
                         <Border.RenderTransform>
                             <TransformGroup>
                                 <ScaleTransform x:Name="WorkflowPillScale" ScaleX="1" ScaleY="1"/>
@@ -235,6 +235,7 @@
                                             </StackPanel>
                                         </Border>
                                         <Button Content="✎ Edit IED Wizard" Style="{StaticResource PrimaryButton}" Click="EditActiveRelay_Click" Margin="0,0,8,0" IsEnabled="{Binding IsProjectEditable}"/>
+                                        <Button Content="Report Plan" Style="{StaticResource SoftButton}" Click="OpenReportStudio_Click" Margin="0,0,8,0" IsEnabled="{Binding IsProjectEditable}"/>
                                         <Button Content="⇢ Open Modbus Server" Style="{StaticResource SoftButton}" Click="OpenModbusServer_Click"/>
                                     </WrapPanel>
                                 </Grid>
@@ -494,6 +495,8 @@
                     </Border>
                 </Grid>
             </TabItem>
+
+
         </TabControl>
 
         <Border Grid.Row="3" Margin="0,10,0,0" CornerRadius="14" Background="#EEF4FF" Padding="12,8" BorderBrush="#D7E3F7" BorderThickness="1">

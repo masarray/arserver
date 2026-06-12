@@ -237,6 +237,8 @@ public static class MmsReadResponseDecoder
             return TryDecodeInteger(values, out value) || TryDecodeDbpos(values, out value) || TryDecodeBoolean(values, out value);
         if (hint.Contains("time") || hint.Contains("timestamp") || hint == "t")
             return TryDecodeTime(values, out value);
+        if (hint.Contains("string") || hint.Contains("visible") || hint.Contains("id") || hint.Contains("datset"))
+            return TryDecodeVisibleString(values, out value);
         return false;
     }
 

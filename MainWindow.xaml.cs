@@ -25,6 +25,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private BridgeRuntime? _runtime;
     private BindingItem? _selectedBinding;
     private RelayEndpointView? _selectedRelay;
+    private NativeReportControlCandidate? _selectedReportControl;
+    private NativeDataSetCandidate? _selectedDataSet;
+    private string _reportStudioStatusText = "Report planning is inside Edit IED Wizard. Select an IED, then choose Report Plan from the Explorer.";
     private string _projectName = "ArServer Project";
     private string _relayIpAddress = "192.168.1.10";
     private int _mmsPort = 102;
@@ -288,9 +291,56 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 Raise(nameof(SelectedExplorerVisibility));
                 Raise(nameof(ActiveRelayTitle));
                 Raise(nameof(ActiveRelaySubtitle));
+                SelectedReportControl = SelectedRelay?.ReportControls.FirstOrDefault(r => string.Equals(r.Reference, SelectedRelay.SelectedReportControlReference, StringComparison.OrdinalIgnoreCase))
+                    ?? SelectedRelay?.ReportControls.FirstOrDefault();
+                SelectedDataSet = SelectedRelay?.DataSets.FirstOrDefault(ds => SelectedReportControl != null && string.Equals(ds.Reference, SelectedReportControl.DataSetReference, StringComparison.OrdinalIgnoreCase))
+                    ?? SelectedRelay?.DataSets.FirstOrDefault();
+                Raise(nameof(SelectedReportControlSummary));
+                Raise(nameof(SelectedDataSetSummary));
             }
         }
     }
+
+    public NativeReportControlCandidate? SelectedReportControl
+    {
+        get => _selectedReportControl;
+        set
+        {
+            if (Set(ref _selectedReportControl, value))
+            {
+                MatchSelectedDataSetToReportControl();
+                RebuildSelectedDataSetMembers();
+                Raise(nameof(SelectedReportControlSummary));
+            }
+        }
+    }
+
+    public NativeDataSetCandidate? SelectedDataSet
+    {
+        get => _selectedDataSet;
+        set
+        {
+            if (Set(ref _selectedDataSet, value))
+            {
+                RebuildSelectedDataSetMembers();
+                Raise(nameof(SelectedDataSetSummary));
+            }
+        }
+    }
+
+    public string ReportStudioStatusText
+    {
+        get => _reportStudioStatusText;
+        set => Set(ref _reportStudioStatusText, value);
+    }
+
+    public string SelectedReportControlSummary => SelectedReportControl == null
+        ? "No RCB selected. Select one RCB to run a read-only attribute probe."
+        : $"{SelectedReportControl.Mode} • {SelectedReportControl.Reference} • DS: {(string.IsNullOrWhiteSpace(SelectedReportControl.DataSetReference) ? "not confirmed" : SelectedReportControl.DataSetReference)}";
+
+    public string SelectedDataSetSummary => SelectedDataSet == null
+        ? "No DataSet selected. DataSet member directory is planned for the next phase; current view shows known SCL members or online DataSet candidates."
+        : $"{SelectedDataSet.Reference} • source: {(string.IsNullOrWhiteSpace(SelectedDataSet.RawMmsName) ? "SCL/static" : SelectedDataSet.RawMmsName)}";
 
     public Visibility EmptyExplorerVisibility => SelectedRelay == null ? Visibility.Visible : Visibility.Collapsed;
     public Visibility SelectedExplorerVisibility => SelectedRelay != null ? Visibility.Visible : Visibility.Collapsed;
@@ -482,7 +532,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     mode: _iecClient.ConnectionMode,
                     status: "Connected",
                     heartbeat: "MMS polling ready",
-                    rcbMode: "MMS polling");
+                    rcbMode: "MMS polling",
+                    reportInventory: _iecClient is NativeIec61850Client nativeInventory ? nativeInventory.LastReportInventory : null);
 
                 if (saved)
                 {
@@ -1175,7 +1226,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
 
-    private async void OpenConfigurationWizardInternal(string context)
+    private async void OpenConfigurationWizardInternal(string context, int initialStep = 0)
     {
         if (IsRuntimeRunning)
         {
@@ -1197,10 +1248,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var sourceBindings = relay != null ? relay.ModbusBindings : new ObservableCollection<BindingItem>(PublishedModbusBindings.Where(b => string.IsNullOrWhiteSpace(b.RelayId)));
         var wizardBindings = CloneBindings(sourceBindings);
 
-        var wizard = new IedConfigurationWizardWindow(wizardSignals, wizardBindings, _iecClient)
+        var reportInventory = relay != null ? BuildReportInventoryFromRelay(relay) : null;
+        var wizard = new IedConfigurationWizardWindow(wizardSignals, wizardBindings, _iecClient, reportInventory, relay?.SelectedReportControlReference ?? string.Empty)
         {
             Owner = this
         };
+        wizard.StepIndex = Math.Max(0, Math.Min(3, initialStep));
 
         AddLog("INFO", "Wizard", $"Configuration wizard opened for {context}. Selection, filtering, binding and save are isolated inside the popup window.");
         TrackActiveWizard(wizard);
@@ -1215,6 +1268,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (relay != null)
             {
                 SaveWorkspaceToRelay(relay, wizardSignals, wizardBindings);
+                ApplyWizardReportPlanToRelay(relay, wizard);
                 SetActiveRelay(relay);
                 RebuildPublishedBindingsFromRelays();
             }
@@ -1423,6 +1477,103 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         NavigateToTab(1);
     }
 
+
+
+    private void OpenReportStudio_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedRelay == null)
+        {
+            AddLog("WARN", "Reports", "No IED selected. Add or select an IED before editing the report plan.");
+            return;
+        }
+
+        OpenConfigurationWizardInternal($"report plan for {SelectedRelay.DisplayName}", initialStep: 2);
+    }
+
+    private async void ProbeSelectedReportControl_Click(object sender, RoutedEventArgs e)
+    {
+        var relay = SelectedRelay;
+        var rcb = SelectedReportControl;
+        if (relay == null || rcb == null)
+        {
+            ReportStudioStatusText = "Select an IED and one RCB before probing.";
+            AddLog("WARN", "Reports", ReportStudioStatusText);
+            return;
+        }
+
+        try
+        {
+            ReportStudioStatusText = $"Probing {rcb.Reference} read-only...";
+            AddLog("INFO", "Reports", $"Read-only RCB attribute probe started: {rcb.Reference}. No RptEna/reservation write will be sent.");
+            var native = await EnsureNativeClientForRelayAsync(relay).ConfigureAwait(true);
+            if (native == null)
+            {
+                ReportStudioStatusText = "Probe failed: native MMS association is not available.";
+                AddLog("ERROR", "Reports", ReportStudioStatusText);
+                return;
+            }
+
+            await native.ProbeReportControlAsync(rcb, CancellationToken.None).ConfigureAwait(true);
+            relay.SelectedReportControlReference = rcb.Reference;
+            relay.RcbName = rcb.Name;
+            relay.RcbMode = "RCB probed / polling fallback";
+            relay.ReportRuntimeMode = "Report preferred + polling fallback (planned)";
+            relay.RefreshComputed();
+            MatchSelectedDataSetToReportControl();
+            RebuildSelectedDataSetMembers();
+            Raise(nameof(SelectedReportControlSummary));
+            Raise(nameof(SelectedDataSetSummary));
+            ReportStudioStatusText = $"Probe complete: {rcb.Status}. DataSet: {(string.IsNullOrWhiteSpace(rcb.DataSetReference) ? "not confirmed" : rcb.DataSetReference)}.";
+            AddLog("INFO", "Reports", ReportStudioStatusText);
+        }
+        catch (Exception ex)
+        {
+            ReportStudioStatusText = $"Probe failed: {ex.GetType().Name}: {ex.Message}";
+            AddExceptionLog("Reports", ex, "Read-only RCB probe failed");
+        }
+    }
+
+    private void UseSelectedReportControl_Click(object sender, RoutedEventArgs e)
+    {
+        var relay = SelectedRelay;
+        var rcb = SelectedReportControl;
+        if (relay == null || rcb == null)
+        {
+            ReportStudioStatusText = "Select one RCB first.";
+            AddLog("WARN", "Reports", ReportStudioStatusText);
+            return;
+        }
+
+        relay.SelectedReportControlReference = rcb.Reference;
+        relay.RcbName = string.IsNullOrWhiteSpace(rcb.Name) ? rcb.Mode : rcb.Name;
+        relay.RcbMode = "Report selected / polling fallback";
+        relay.ReportRuntimeMode = "Report preferred + polling fallback (planned)";
+        relay.RefreshComputed();
+        ReportStudioStatusText = $"Selected {rcb.Reference} as report plan. Runtime still uses MMS polling until explicit report activation is implemented.";
+        AddLog("INFO", "Reports", ReportStudioStatusText);
+        Raise(nameof(SelectedReportControlSummary));
+    }
+
+    private async Task<NativeIec61850Client?> EnsureNativeClientForRelayAsync(RelayEndpointView relay)
+    {
+        if (_iecClient is NativeIec61850Client active && active.IsMmsReady && string.Equals(RelayIpAddress, relay.IpAddress, StringComparison.OrdinalIgnoreCase))
+            return active;
+
+        if (string.IsNullOrWhiteSpace(relay.IpAddress))
+            return null;
+
+        UseNativeIecEngine = true;
+        RelayIpAddress = NormalizeRelayIp(relay.IpAddress);
+        MmsPort = relay.MmsPort <= 0 ? 102 : relay.MmsPort;
+        if (RelayIpTextBox != null)
+            RelayIpTextBox.Text = RelayIpAddress;
+
+        await ConnectActiveIecClientAsync(RelayIpAddress, MmsPort, CancellationToken.None).ConfigureAwait(true);
+        if (_iecClient is NativeIec61850Client native && native.IsMmsReady)
+            return native;
+        return null;
+    }
+
     private void Help_Click(object sender, RoutedEventArgs e)
     {
         var window = new HelpWindow { Owner = this };
@@ -1581,7 +1732,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             selectedRcbName: chosenRcb?.Name ?? "Polling",
             selectedRcbReference: chosenRcb?.Reference ?? string.Empty,
             reportRuntimeMode: string.IsNullOrWhiteSpace(reportRuntimeMode) ? "Static RCB candidate" : reportRuntimeMode,
-            rcbMode: import.ReportControls.Count > 0 ? "RCB candidate / MMS polling fallback" : "MMS polling");
+            rcbMode: import.ReportControls.Count > 0 ? "RCB candidate / MMS polling fallback" : "MMS polling",
+            reportInventory: BuildReportInventoryFromSclImport(import));
 
         if (!saved)
         {
@@ -1613,9 +1765,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         string selectedRcbName = "Polling",
         string selectedRcbReference = "",
         string reportRuntimeMode = "MMS polling only",
-        string rcbMode = "MMS polling")
+        string rcbMode = "MMS polling",
+        NativeReportInventory? reportInventory = null)
     {
-        var wizard = new IedConfigurationWizardWindow(draftSignals, draftBindings, _iecClient)
+        var wizard = new IedConfigurationWizardWindow(draftSignals, draftBindings, _iecClient, reportInventory, selectedRcbReference)
         {
             Owner = this
         };
@@ -1659,17 +1812,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         relay.SelectedReportControlReference = selectedRcbReference ?? string.Empty;
         relay.StatusBrush = RelayEndpointView.BrushForStatus(status);
         relay.ActivityBrush = RelayEndpointView.BrushForStatus(status);
+        ApplyReportInventoryToRelay(relay, reportInventory);
 
         SaveWorkspaceToRelay(relay, wizard.Signals, wizard.Bindings);
-        relay.RcbName = string.IsNullOrWhiteSpace(selectedRcbName) ? relay.RcbName : selectedRcbName;
-        relay.RcbMode = string.IsNullOrWhiteSpace(rcbMode) ? relay.RcbMode : rcbMode;
-        relay.ReportRuntimeMode = string.IsNullOrWhiteSpace(reportRuntimeMode) ? relay.ReportRuntimeMode : reportRuntimeMode;
-        relay.SelectedReportControlReference = selectedRcbReference ?? relay.SelectedReportControlReference;
+        ApplyWizardReportPlanToRelay(relay, wizard);
+        if (!string.IsNullOrWhiteSpace(selectedRcbName) && !selectedRcbName.Equals("Polling", StringComparison.OrdinalIgnoreCase))
+            relay.RcbName = selectedRcbName;
+        if (relay.ReportControls.Count == 0 && !string.IsNullOrWhiteSpace(rcbMode))
+            relay.RcbMode = rcbMode;
+        if (!string.IsNullOrWhiteSpace(reportRuntimeMode) && (relay.ReportControls.Count == 0 || !reportRuntimeMode.Equals("MMS polling only", StringComparison.OrdinalIgnoreCase)))
+            relay.ReportRuntimeMode = reportRuntimeMode;
+        if (!string.IsNullOrWhiteSpace(selectedRcbReference))
+            relay.SelectedReportControlReference = selectedRcbReference;
         relay.SclIpAddress = sclIpAddress;
         relay.SclFilePath = sclFilePath;
         relay.SclSummary = sclSummary;
-        relay.DataSetCount = dataSetCount;
-        relay.ReportControlCount = reportControlCount;
+        relay.DataSetCount = Math.Max(relay.DataSetCount, dataSetCount);
+        relay.ReportControlCount = Math.Max(relay.ReportControlCount, reportControlCount);
         relay.RefreshComputed();
 
         SetActiveRelay(relay);
@@ -1681,6 +1840,215 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Raise(nameof(BindingCount));
         AddLog("INFO", "Wizard", $"{relay.DisplayName} committed to runtime. Selected IEC signals: {relay.Signals.Count(s => s.IsSelected)}. Published Modbus map: {PublishedModbusBindings.Count} binding(s) from all saved IEDs.");
         return true;
+    }
+
+
+
+    private static NativeReportInventory BuildReportInventoryFromRelay(RelayEndpointView relay)
+    {
+        var inventory = new NativeReportInventory();
+        foreach (var ds in relay.DataSets)
+            inventory.DataSets.Add(CloneDataSetCandidate(ds));
+        foreach (var rcb in relay.ReportControls)
+            inventory.ReportControls.Add(CloneReportControlCandidate(rcb));
+        return inventory;
+    }
+
+    private void ApplyWizardReportPlanToRelay(RelayEndpointView relay, IedConfigurationWizardWindow wizard)
+    {
+        relay.SelectedReportControlReference = wizard.SelectedReportControlReference;
+        if (string.IsNullOrWhiteSpace(wizard.SelectedReportControlReference))
+        {
+            relay.RcbName = "Polling";
+            relay.RcbMode = "MMS polling";
+            relay.ReportRuntimeMode = "MMS polling only";
+            relay.RefreshComputed();
+            return;
+        }
+
+        relay.RcbName = string.IsNullOrWhiteSpace(wizard.SelectedReportControlName) ? "Report Plan" : wizard.SelectedReportControlName;
+        relay.RcbMode = "Report planned / MMS polling fallback";
+        relay.ReportRuntimeMode = wizard.ReportRuntimeMode;
+        relay.RefreshComputed();
+    }
+
+    private static NativeReportInventory BuildReportInventoryFromSclImport(SclImportResult import)
+    {
+        var inventory = new NativeReportInventory();
+        foreach (var ds in import.DataSets)
+        {
+            inventory.DataSets.Add(new NativeDataSetCandidate
+            {
+                Domain = ds.LogicalDevice,
+                LogicalNode = string.IsNullOrWhiteSpace(ds.LogicalNode) ? "LLN0" : ds.LogicalNode,
+                Name = ds.Name,
+                Reference = ds.Reference,
+                RawMmsName = "SCL"
+            });
+        }
+
+        foreach (var rcb in import.ReportControls)
+        {
+            var parsed = ParseReportReference(rcb.Reference, rcb.Buffered);
+            inventory.ReportControls.Add(new NativeReportControlCandidate
+            {
+                Domain = parsed.Domain,
+                LogicalNode = parsed.LogicalNode,
+                FunctionalConstraint = rcb.Buffered ? "BR" : "RP",
+                Name = string.IsNullOrWhiteSpace(rcb.Name) ? parsed.Name : rcb.Name,
+                Reference = rcb.Reference,
+                Buffered = rcb.Buffered,
+                DataSetReference = rcb.DataSetReference,
+                ReportId = rcb.ReportId,
+                IntegrityPeriodMs = rcb.IntegrityPeriodMs > 0 ? rcb.IntegrityPeriodMs.ToString() : string.Empty,
+                Status = "SCL inventory",
+                Attributes = new List<string> { "RptID", "DatSet", "ConfRev", "OptFlds", "TrgOps", "IntgPd", "RptEna" }
+            });
+        }
+
+        return inventory;
+    }
+
+    private static (string Domain, string LogicalNode, string Name) ParseReportReference(string reference, bool buffered)
+    {
+        var domain = string.Empty;
+        var logicalNode = "LLN0";
+        var name = string.Empty;
+        if (!string.IsNullOrWhiteSpace(reference))
+        {
+            var slash = reference.IndexOf('/');
+            if (slash > 0)
+            {
+                domain = reference[..slash];
+                var rest = reference[(slash + 1)..];
+                var parts = rest.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (parts.Length > 0) logicalNode = parts[0];
+                if (parts.Length > 0) name = parts[^1];
+            }
+        }
+        if (string.IsNullOrWhiteSpace(name)) name = buffered ? "BRCB" : "URCB";
+        return (domain, logicalNode, name);
+    }
+
+    private void ApplyReportInventoryToRelay(RelayEndpointView relay, NativeReportInventory? inventory)
+    {
+        relay.DataSets.Clear();
+        relay.ReportControls.Clear();
+        relay.DataSetMembers.Clear();
+
+        if (inventory != null)
+        {
+            foreach (var ds in inventory.DataSets.OrderBy(x => x.Domain).ThenBy(x => x.LogicalNode).ThenBy(x => x.Name))
+                relay.DataSets.Add(CloneDataSetCandidate(ds));
+            foreach (var rcb in inventory.ReportControls.OrderByDescending(x => x.Buffered).ThenBy(x => x.Domain).ThenBy(x => x.LogicalNode).ThenBy(x => x.Name))
+                relay.ReportControls.Add(CloneReportControlCandidate(rcb));
+        }
+
+        relay.DataSetCount = relay.DataSets.Count;
+        relay.ReportControlCount = relay.ReportControls.Count;
+        if (relay.ReportControls.Count > 0 && string.IsNullOrWhiteSpace(relay.SelectedReportControlReference))
+            relay.SelectedReportControlReference = relay.ReportControls[0].Reference;
+        if (relay.ReportControls.Count > 0 && relay.RcbName.Equals("Polling", StringComparison.OrdinalIgnoreCase))
+            relay.RcbName = relay.ReportControls[0].Name;
+        if (relay.ReportControls.Count > 0)
+        {
+            relay.RcbMode = "Report plan ready / polling fallback";
+            relay.ReportRuntimeMode = "Report plan ready / polling fallback";
+        }
+        relay.RefreshComputed();
+    }
+
+    private static NativeDataSetCandidate CloneDataSetCandidate(NativeDataSetCandidate ds) => new()
+    {
+        Domain = ds.Domain,
+        LogicalNode = ds.LogicalNode,
+        Name = ds.Name,
+        Reference = ds.Reference,
+        RawMmsName = ds.RawMmsName
+    };
+
+    private static NativeReportControlCandidate CloneReportControlCandidate(NativeReportControlCandidate rcb) => new()
+    {
+        Domain = rcb.Domain,
+        LogicalNode = rcb.LogicalNode,
+        FunctionalConstraint = rcb.FunctionalConstraint,
+        Name = rcb.Name,
+        Reference = rcb.Reference,
+        Buffered = rcb.Buffered,
+        DataSetReference = rcb.DataSetReference,
+        ReportId = rcb.ReportId,
+        ConfRev = rcb.ConfRev,
+        IntegrityPeriodMs = rcb.IntegrityPeriodMs,
+        EnabledState = rcb.EnabledState,
+        Status = rcb.Status,
+        Attributes = rcb.Attributes.ToList()
+    };
+
+    private void MatchSelectedDataSetToReportControl()
+    {
+        if (SelectedRelay == null || SelectedReportControl == null)
+            return;
+
+        var target = SelectedReportControl.DataSetReference;
+        if (string.IsNullOrWhiteSpace(target))
+            return;
+
+        var match = SelectedRelay.DataSets.FirstOrDefault(ds => ReferencesMatch(ds.Reference, target));
+        if (match != null && !ReferenceEquals(match, SelectedDataSet))
+        {
+            _selectedDataSet = match; // avoid setter recursion; caller raises computed state.
+            Raise(nameof(SelectedDataSet));
+        }
+    }
+
+    private static bool ReferencesMatch(string a, string b)
+    {
+        static string Clean(string x) => (x ?? string.Empty).Trim().Replace('$', '.').Replace("//", "/");
+        var left = Clean(a);
+        var right = Clean(b);
+        if (left.Equals(right, StringComparison.OrdinalIgnoreCase)) return true;
+        return left.EndsWith(right, StringComparison.OrdinalIgnoreCase) || right.EndsWith(left, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RebuildSelectedDataSetMembers()
+    {
+        if (SelectedRelay == null)
+            return;
+
+        SelectedRelay.DataSetMembers.Clear();
+        var selectedDataSet = SelectedDataSet;
+        if (selectedDataSet == null)
+            return;
+
+        // Online MMS GetNameList exposes DataSet names but not member directory yet. Until the native
+        // DataSetDirectory service lands, show selected runtime signals as coverage hints. SCL imports
+        // already mark signal DataSetReference when the engineering file contained FCDA members.
+        var directMembers = SelectedRelay.Signals
+            .Where(s => !string.IsNullOrWhiteSpace(s.DataSetReference) && ReferencesMatch(s.DataSetReference, selectedDataSet.Reference))
+            .OrderBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (directMembers.Count == 0)
+        {
+            directMembers = SelectedRelay.Signals
+                .Where(s => s.IsSelected)
+                .OrderBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
+                .Take(80)
+                .ToList();
+        }
+
+        foreach (var signal in directMembers)
+        {
+            SelectedRelay.DataSetMembers.Add(new ReportDataSetMemberView
+            {
+                DataSetReference = selectedDataSet.Reference,
+                ObjectReference = signal.ObjectReference,
+                FunctionalConstraint = signal.FunctionalConstraint,
+                DataType = signal.DataType,
+                Coverage = string.IsNullOrWhiteSpace(signal.DataSetReference) ? "Selected signal / awaiting DataSet directory" : "Covered by DataSet",
+                Source = string.IsNullOrWhiteSpace(signal.DataSetReference) ? "Runtime selection hint" : "SCL FCDA"
+            });
+        }
     }
 
     private void RestoreWorkspaceAfterDraftCancel()
@@ -1873,6 +2241,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         relay.ModbusBindings.Clear();
         relay.Signals.Clear();
+        relay.DataSets.Clear();
+        relay.ReportControls.Clear();
+        relay.DataSetMembers.Clear();
 
         for (var i = Bindings.Count - 1; i >= 0; i--)
         {
@@ -2005,6 +2376,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         relay.StatusBrush = RelayEndpointView.BrushForStatus(status);
         relay.ActivityBrush = RelayEndpointView.BrushForStatus(status.Contains("Connected", StringComparison.OrdinalIgnoreCase) ? "Connecting" : status);
         SaveWorkspaceToRelay(relay, Signals, relay.ModbusBindings.Count > 0 ? relay.ModbusBindings : new ObservableCollection<BindingItem>());
+        if (_iecClient is NativeIec61850Client nativeClient)
+            ApplyReportInventoryToRelay(relay, nativeClient.LastReportInventory);
         relay.RefreshComputed();
         SetActiveRelay(relay);
     }
@@ -2068,6 +2441,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             if (relay.IsActive)
                 Raise(nameof(ActiveRelaySubtitle));
+                SelectedReportControl = SelectedRelay?.ReportControls.FirstOrDefault(r => string.Equals(r.Reference, SelectedRelay.SelectedReportControlReference, StringComparison.OrdinalIgnoreCase))
+                    ?? SelectedRelay?.ReportControls.FirstOrDefault();
+                SelectedDataSet = SelectedRelay?.DataSets.FirstOrDefault(ds => SelectedReportControl != null && string.Equals(ds.Reference, SelectedReportControl.DataSetReference, StringComparison.OrdinalIgnoreCase))
+                    ?? SelectedRelay?.DataSets.FirstOrDefault();
+                Raise(nameof(SelectedReportControlSummary));
+                Raise(nameof(SelectedDataSetSummary));
         }
     }
 
@@ -2148,6 +2527,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Raise(nameof(VisibleSignalCountText));
             if (SelectedRelay != null)
                 Raise(nameof(ActiveRelaySubtitle));
+                SelectedReportControl = SelectedRelay?.ReportControls.FirstOrDefault(r => string.Equals(r.Reference, SelectedRelay.SelectedReportControlReference, StringComparison.OrdinalIgnoreCase))
+                    ?? SelectedRelay?.ReportControls.FirstOrDefault();
+                SelectedDataSet = SelectedRelay?.DataSets.FirstOrDefault(ds => SelectedReportControl != null && string.Equals(ds.Reference, SelectedReportControl.DataSetReference, StringComparison.OrdinalIgnoreCase))
+                    ?? SelectedRelay?.DataSets.FirstOrDefault();
+                Raise(nameof(SelectedReportControlSummary));
+                Raise(nameof(SelectedDataSetSummary));
         }
     }
 
@@ -2283,10 +2668,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         relay.TagCount = relay.Signals.Count(s => s.IsSelected);
-        relay.RcbName = DetectRcbNameForRelay(relay.Signals);
-        relay.RcbMode = relay.Signals.Any(s => s.IsReportCapable) ? "SCL report-aware / MMS polling" : "MMS polling";
-        relay.ReportControlCount = Math.Max(relay.ReportControlCount, relay.Signals.Select(s => s.ReportControlReference).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
-        relay.DataSetCount = Math.Max(relay.DataSetCount, relay.Signals.Select(s => s.DataSetReference).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        if (relay.ReportControls.Count > 0)
+        {
+            var selected = relay.ReportControls.FirstOrDefault(r => string.Equals(r.Reference, relay.SelectedReportControlReference, StringComparison.OrdinalIgnoreCase))
+                ?? relay.ReportControls.FirstOrDefault();
+            relay.RcbName = selected == null ? "Report Plan" : selected.Name;
+            relay.RcbMode = "Report plan ready / MMS polling fallback";
+        }
+        else
+        {
+            relay.RcbName = DetectRcbNameForRelay(relay.Signals);
+            relay.RcbMode = relay.Signals.Any(s => s.IsReportCapable) ? "Report-aware / MMS polling fallback" : "MMS polling";
+        }
+        relay.ReportControlCount = Math.Max(relay.ReportControls.Count, relay.Signals.Select(s => s.ReportControlReference).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        relay.DataSetCount = Math.Max(relay.DataSets.Count, relay.Signals.Select(s => s.DataSetReference).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         relay.RefreshComputed();
     }
 

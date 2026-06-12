@@ -31,6 +31,9 @@ public class RelayEndpointView : ObservableObject
     public string RelayId { get; set; } = Guid.NewGuid().ToString("N");
     public ObservableCollection<SignalDefinition> Signals { get; set; } = new();
     public ObservableCollection<BindingItem> ModbusBindings { get; set; } = new();
+    public ObservableCollection<NativeDataSetCandidate> DataSets { get; set; } = new();
+    public ObservableCollection<NativeReportControlCandidate> ReportControls { get; set; } = new();
+    public ObservableCollection<ReportDataSetMemberView> DataSetMembers { get; set; } = new();
 
     public string IpAddress { get => _ipAddress; set => Set(ref _ipAddress, value); }
     public int MmsPort { get => _mmsPort; set => Set(ref _mmsPort, value); }

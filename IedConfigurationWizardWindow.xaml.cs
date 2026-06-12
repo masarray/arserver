@@ -24,9 +24,15 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
     private readonly IIec61850Client? _probeClient;
     private CancellationTokenSource? _probeCts;
     private bool _isProbing;
+    private NativeReportControlCandidate? _selectedReportControl;
+    private NativeDataSetCandidate? _selectedDataSet;
+    private string _reportPlanStatus = "Report plan is optional. Choose a DataSet/RCB here once; runtime views stay lightweight.";
 
     public ObservableCollection<SignalDefinition> Signals { get; }
     public ObservableCollection<BindingItem> Bindings { get; }
+    public ObservableCollection<NativeReportControlCandidate> ReportControls { get; } = new();
+    public ObservableCollection<NativeDataSetCandidate> DataSets { get; } = new();
+    public ObservableCollection<ReportDataSetMemberView> DataSetMembers { get; } = new();
     public ICollectionView SignalsView { get; }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -36,12 +42,13 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         get => _stepIndex;
         set
         {
-            var next = Math.Max(0, Math.Min(2, value));
+            var next = Math.Max(0, Math.Min(3, value));
             if (_stepIndex == next) return;
             _stepIndex = next;
             Raise(nameof(StepIndex));
             Raise(nameof(Step1Visibility));
             Raise(nameof(Step2Visibility));
+            Raise(nameof(StepReportVisibility));
             Raise(nameof(Step3Visibility));
             Raise(nameof(StepTitle));
             Raise(nameof(StepSubtitle));
@@ -51,28 +58,82 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
 
     public Visibility Step1Visibility => StepIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
     public Visibility Step2Visibility => StepIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility Step3Visibility => StepIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility StepReportVisibility => StepIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility Step3Visibility => StepIndex == 3 ? Visibility.Visible : Visibility.Collapsed;
 
     public string StepTitle => StepIndex switch
     {
         0 => "Step 1 — Select IEC 61850 SCADA Signals",
         1 => "Step 2 — Build Modbus TCP Binding",
-        _ => "Step 3 — Add IED Configuration to Runtime"
+        2 => "Step 3 — Choose Report Plan",
+        _ => "Step 4 — Add IED Configuration to Runtime"
     };
 
     public string StepSubtitle => StepIndex switch
     {
         0 => "Recommended tags are checked by default. Harmonic/statistical MMXU and duplicate instCVal are kept out of default publishing.",
         1 => "Review or edit the Modbus address map. Position uses Input Register, protection uses Discrete Input, measurement uses Holding Register Float32.",
+        2 => "Select the DataSet/RCB once during engineering. Runtime will use the saved plan; no RCB write is done in this phase.",
         _ => "Validate once more, then save. Explorer and Modbus Server will show only the saved runtime view."
     };
 
     public string PrimaryActionText => StepIndex switch
     {
         0 => "Save Selection → Binding",
-        1 => "Save Binding → Review",
+        1 => "Save Binding → Report Plan",
+        2 => "Save Report Plan → Review",
         _ => "Add to Runtime"
     };
+
+    public NativeReportControlCandidate? SelectedReportControl
+    {
+        get => _selectedReportControl;
+        set
+        {
+            if (ReferenceEquals(_selectedReportControl, value)) return;
+            _selectedReportControl = value;
+            Raise(nameof(SelectedReportControl));
+            MatchSelectedDataSetToReportControl();
+            RebuildSelectedDataSetMembers();
+            Raise(nameof(SelectedReportControlSummary));
+            Raise(nameof(SelectedDataSetSummary));
+        }
+    }
+
+    public NativeDataSetCandidate? SelectedDataSet
+    {
+        get => _selectedDataSet;
+        set
+        {
+            if (ReferenceEquals(_selectedDataSet, value)) return;
+            _selectedDataSet = value;
+            Raise(nameof(SelectedDataSet));
+            RebuildSelectedDataSetMembers();
+            Raise(nameof(SelectedDataSetSummary));
+        }
+    }
+
+    public string ReportPlanStatus
+    {
+        get => _reportPlanStatus;
+        set
+        {
+            if (_reportPlanStatus == value) return;
+            _reportPlanStatus = value;
+            Raise(nameof(ReportPlanStatus));
+        }
+    }
+
+    public string SelectedReportControlReference => SelectedReportControl?.Reference ?? string.Empty;
+    public string SelectedReportControlName => SelectedReportControl?.Name ?? string.Empty;
+    public string SelectedDataSetReference => SelectedDataSet?.Reference ?? SelectedReportControl?.DataSetReference ?? string.Empty;
+    public string ReportRuntimeMode => string.IsNullOrWhiteSpace(SelectedReportControlReference) ? "MMS polling only" : "Report preferred + polling fallback (planned)";
+    public string SelectedReportControlSummary => SelectedReportControl == null
+        ? "No RCB selected. Runtime will use MMS polling only."
+        : $"{SelectedReportControl.Mode} • {SelectedReportControl.Reference} • DS: {(string.IsNullOrWhiteSpace(SelectedReportControl.DataSetReference) ? "not confirmed" : SelectedReportControl.DataSetReference)}";
+    public string SelectedDataSetSummary => SelectedDataSet == null
+        ? "No DataSet selected."
+        : $"{SelectedDataSet.Reference} • source: {(string.IsNullOrWhiteSpace(SelectedDataSet.RawMmsName) ? "SCL/static" : SelectedDataSet.RawMmsName)}";
 
     public bool IsProbing
     {
@@ -149,7 +210,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         ? $"Showing {SignalsView.Cast<object>().Count()} of {Signals.Count} MMS attributes"
         : $"Showing {SignalsView.Cast<object>().Count()} smart SCADA signals of {Signals.Count}";
 
-    public IedConfigurationWizardWindow(ObservableCollection<SignalDefinition> signals, ObservableCollection<BindingItem> bindings, IIec61850Client? probeClient = null)
+    public IedConfigurationWizardWindow(ObservableCollection<SignalDefinition> signals, ObservableCollection<BindingItem> bindings, IIec61850Client? probeClient = null, NativeReportInventory? reportInventory = null, string selectedReportControlReference = "")
     {
         Signals = signals;
         Bindings = bindings;
@@ -162,6 +223,8 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         SignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.SortPriority), ListSortDirection.Ascending));
         SignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.LogicalNode), ListSortDirection.Ascending));
         SignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.Name), ListSortDirection.Ascending));
+
+        LoadReportInventory(reportInventory, selectedReportControlReference);
 
         foreach (var signal in Signals)
             signal.PropertyChanged += Signal_PropertyChanged;
@@ -255,16 +318,243 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
             if (errors.Count > 0)
             {
                 ValidationState = "Warning";
-                StatusMessage = $"Fix binding before review: {errors[0]}";
+                StatusMessage = $"Fix binding before report plan: {errors[0]}";
                 return;
             }
             ValidationState = "OK";
-            StatusMessage = "Binding saved. Review the configuration, then add it to runtime.";
+            StatusMessage = "Binding saved. Choose a report plan or keep MMS polling only.";
             StepIndex = 2;
             return;
         }
 
+        if (StepIndex == 2)
+        {
+            ApplySelectedReportPlanToWorkspace();
+            StatusMessage = string.IsNullOrWhiteSpace(SelectedReportControlReference)
+                ? "Report plan saved as polling only. Review the configuration, then add it to runtime."
+                : $"Report plan saved: {SelectedReportControlReference}. Runtime will still use polling fallback until report activation is implemented.";
+            StepIndex = 3;
+            return;
+        }
+
+        ApplySelectedReportPlanToWorkspace();
         SaveAndClose();
+    }
+
+    private void LoadReportInventory(NativeReportInventory? inventory, string selectedReportControlReference)
+    {
+        ReportControls.Clear();
+        DataSets.Clear();
+        DataSetMembers.Clear();
+
+        if (inventory != null)
+        {
+            foreach (var rcb in inventory.ReportControls.OrderByDescending(x => x.Buffered).ThenBy(x => x.Domain).ThenBy(x => x.LogicalNode).ThenBy(x => x.Name))
+                ReportControls.Add(CloneReportControlCandidate(rcb));
+            foreach (var ds in inventory.DataSets.OrderBy(x => x.Domain).ThenBy(x => x.LogicalNode).ThenBy(x => x.Name))
+                DataSets.Add(CloneDataSetCandidate(ds));
+        }
+
+        SelectedReportControl = ReportControls.FirstOrDefault(r => !string.IsNullOrWhiteSpace(selectedReportControlReference) && string.Equals(r.Reference, selectedReportControlReference, StringComparison.OrdinalIgnoreCase))
+            ?? ReportControls.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.DataSetReference))
+            ?? ReportControls.FirstOrDefault();
+
+        if (SelectedReportControl == null)
+        {
+            SelectedDataSet = DataSets.FirstOrDefault();
+            ReportPlanStatus = "No RCB inventory is available for this IED. Runtime will use MMS polling only.";
+        }
+        else
+        {
+            MatchSelectedDataSetToReportControl();
+            ReportPlanStatus = $"Report inventory loaded: {ReportControls.Count} RCB(s), {DataSets.Count} DataSet(s). Select one plan or keep polling only.";
+        }
+        RebuildSelectedDataSetMembers();
+    }
+
+    private static NativeDataSetCandidate CloneDataSetCandidate(NativeDataSetCandidate ds) => new()
+    {
+        Domain = ds.Domain,
+        LogicalNode = ds.LogicalNode,
+        Name = ds.Name,
+        Reference = ds.Reference,
+        RawMmsName = ds.RawMmsName
+    };
+
+    private static NativeReportControlCandidate CloneReportControlCandidate(NativeReportControlCandidate rcb) => new()
+    {
+        Domain = rcb.Domain,
+        LogicalNode = rcb.LogicalNode,
+        FunctionalConstraint = rcb.FunctionalConstraint,
+        Name = rcb.Name,
+        Reference = rcb.Reference,
+        Buffered = rcb.Buffered,
+        DataSetReference = rcb.DataSetReference,
+        ReportId = rcb.ReportId,
+        ConfRev = rcb.ConfRev,
+        IntegrityPeriodMs = rcb.IntegrityPeriodMs,
+        EnabledState = rcb.EnabledState,
+        Status = rcb.Status,
+        Attributes = rcb.Attributes.ToList()
+    };
+
+    private void MatchSelectedDataSetToReportControl()
+    {
+        var target = SelectedReportControl?.DataSetReference;
+        if (string.IsNullOrWhiteSpace(target))
+            return;
+
+        var match = DataSets.FirstOrDefault(ds => ReferencesMatch(ds.Reference, target));
+        if (match != null && !ReferenceEquals(match, _selectedDataSet))
+        {
+            _selectedDataSet = match;
+            Raise(nameof(SelectedDataSet));
+        }
+    }
+
+    private static bool ReferencesMatch(string a, string b)
+    {
+        static string Clean(string x) => (x ?? string.Empty).Trim().Replace('$', '.').Replace("//", "/");
+        var left = Clean(a);
+        var right = Clean(b);
+        if (left.Equals(right, StringComparison.OrdinalIgnoreCase)) return true;
+        return left.EndsWith(right, StringComparison.OrdinalIgnoreCase) || right.EndsWith(left, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RebuildSelectedDataSetMembers()
+    {
+        DataSetMembers.Clear();
+        var selectedDataSet = SelectedDataSet;
+        if (selectedDataSet == null)
+            return;
+
+        var directMembers = Signals
+            .Where(s => !string.IsNullOrWhiteSpace(s.DataSetReference) && ReferencesMatch(s.DataSetReference, selectedDataSet.Reference))
+            .OrderBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (directMembers.Count == 0)
+        {
+            directMembers = Signals
+                .Where(s => s.IsSelected)
+                .OrderBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
+                .Take(80)
+                .ToList();
+        }
+
+        foreach (var signal in directMembers)
+        {
+            DataSetMembers.Add(new ReportDataSetMemberView
+            {
+                DataSetReference = selectedDataSet.Reference,
+                ObjectReference = signal.ObjectReference,
+                FunctionalConstraint = signal.FunctionalConstraint,
+                DataType = signal.DataType,
+                Coverage = string.IsNullOrWhiteSpace(signal.DataSetReference) ? "Selected signal / awaiting DataSet directory" : "Covered by DataSet",
+                Source = string.IsNullOrWhiteSpace(signal.DataSetReference) ? "Runtime selection hint" : "SCL FCDA"
+            });
+        }
+    }
+
+    private async void ProbeSelectedReportControl_Click(object sender, RoutedEventArgs e)
+    {
+        var rcb = SelectedReportControl;
+        if (rcb == null)
+        {
+            ReportPlanStatus = "Select one RCB before probing.";
+            return;
+        }
+
+        if (_probeClient is not NativeIec61850Client native || !native.IsMmsReady)
+        {
+            ReportPlanStatus = "Read-only RCB probe requires native MMS association. Reconnect/discover the IED, then open this wizard again.";
+            return;
+        }
+
+        try
+        {
+            ReportPlanStatus = $"Probing {rcb.Reference} read-only...";
+            await native.ProbeReportControlAsync(rcb, CancellationToken.None).ConfigureAwait(true);
+            MatchSelectedDataSetToReportControl();
+            RebuildSelectedDataSetMembers();
+            ReportPlanStatus = $"Probe complete: {rcb.Status}. DataSet: {(string.IsNullOrWhiteSpace(rcb.DataSetReference) ? "not confirmed" : rcb.DataSetReference)}.";
+            Raise(nameof(SelectedReportControlSummary));
+            Raise(nameof(SelectedDataSetSummary));
+        }
+        catch (Exception ex)
+        {
+            ReportPlanStatus = $"Probe failed: {ex.GetType().Name}: {ex.Message}";
+        }
+    }
+
+    private void UseSelectedReportControl_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedReportControl == null)
+        {
+            ReportPlanStatus = "Select one RCB first, or choose Polling Only.";
+            return;
+        }
+
+        ApplySelectedReportPlanToWorkspace();
+        ReportPlanStatus = $"Selected {SelectedReportControl.Reference} as the saved report plan. Runtime remains polling-safe until report activation is implemented.";
+        SignalsView.Refresh();
+    }
+
+    private void UsePollingOnly_Click(object sender, RoutedEventArgs e)
+    {
+        _selectedReportControl = null;
+        _selectedDataSet = null;
+        foreach (var signal in Signals)
+        {
+            signal.ReportControlReference = string.Empty;
+            signal.DataSetReference = string.Empty;
+            signal.IsReportCapable = false;
+        }
+        foreach (var binding in Bindings)
+        {
+            binding.ReportControlReference = string.Empty;
+            binding.DataSetReference = string.Empty;
+            binding.RcbMode = "MMS polling";
+        }
+        ReportPlanStatus = "Polling-only plan selected. No RCB/DataSet plan will be saved for this IED.";
+        DataSetMembers.Clear();
+        Raise(nameof(SelectedReportControl));
+        Raise(nameof(SelectedDataSet));
+        Raise(nameof(SelectedReportControlSummary));
+        Raise(nameof(SelectedDataSetSummary));
+        SignalsView.Refresh();
+    }
+
+    private void ApplySelectedReportPlanToWorkspace()
+    {
+        var rcbRef = SelectedReportControl?.Reference ?? string.Empty;
+        var dsRef = SelectedReportControl?.DataSetReference;
+        if (string.IsNullOrWhiteSpace(dsRef)) dsRef = SelectedDataSet?.Reference ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(rcbRef) && string.IsNullOrWhiteSpace(dsRef))
+            return;
+
+        foreach (var signal in Signals.Where(s => s.IsSelected))
+        {
+            signal.ReportControlReference = rcbRef;
+            signal.DataSetReference = dsRef ?? string.Empty;
+            signal.IsReportCapable = !string.IsNullOrWhiteSpace(rcbRef) || !string.IsNullOrWhiteSpace(dsRef);
+        }
+
+        foreach (var binding in Bindings)
+        {
+            if (!Signals.Any(s => s.IsSelected && string.Equals(s.ObjectReference, binding.IecReference, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            binding.ReportControlReference = rcbRef;
+            binding.DataSetReference = dsRef ?? string.Empty;
+            binding.RcbMode = string.IsNullOrWhiteSpace(rcbRef) ? "MMS polling" : "Report planned / polling fallback";
+            binding.ReadMode = string.IsNullOrWhiteSpace(rcbRef) ? "MMS polling" : "RCB candidate + MMS polling fallback";
+        }
+        RebuildSelectedDataSetMembers();
+        Raise(nameof(SelectedReportControlReference));
+        Raise(nameof(SelectedReportControlName));
+        Raise(nameof(SelectedDataSetReference));
+        Raise(nameof(ReportRuntimeMode));
     }
 
     private async void ProbeSelected_Click(object sender, RoutedEventArgs e)
@@ -460,6 +750,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         Bindings.Clear();
         foreach (var item in BindingAutoMapper.CreateBindings(selected))
             Bindings.Add(item);
+        ApplySelectedReportPlanToWorkspace();
         SelectedBinding = Bindings.FirstOrDefault();
         RefreshCounts();
     }
@@ -590,6 +881,8 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         Raise(nameof(SelectedSignalCount));
         Raise(nameof(BindingCount));
         Raise(nameof(VisibleSignalCountText));
+        Raise(nameof(SelectedReportControlSummary));
+        Raise(nameof(SelectedDataSetSummary));
     }
 
     private void Raise(string propertyName) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));

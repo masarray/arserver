@@ -35,6 +35,8 @@ Modbus TCP / MQTT
 - Map MMS names into IEC object candidates.
 - Read selected values.
 - Read companion quality and timestamp when available.
+- Discover online DataSet and Report Control Block candidates.
+- Probe selected Report Control Block attributes with bounded, read-only MMS reads.
 - Feed runtime cache for Modbus TCP and MQTT.
 
 ## Runtime safety
@@ -59,4 +61,6 @@ Device timestamp comes from the IED `t` attribute when readable. Local timestamp
 
 ## Reporting direction
 
-Report support should be added after online DataSet and ReportControl verification is mature. The recommended runtime mode is report-preferred with polling fallback, not report-only.
+Reporting is being built in layers. The current native engine can discover DataSet and Report Control Block candidates and attach them to selected signals as a report plan. The active runtime still uses MMS polling as the safe data path.
+
+The next reporting layer is controlled activation: verify RCB ownership, confirm DataSet membership, write safe RCB attributes only when the user enables report-preferred mode, then decode InformationReport messages into the same runtime cache used by Modbus TCP and MQTT. The recommended runtime mode remains report-preferred with polling fallback, not report-only.

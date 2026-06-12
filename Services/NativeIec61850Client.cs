@@ -34,6 +34,7 @@ public sealed class NativeIec61850Client : IIec61850Client
     public string LastDiscoveryRequestHex => _session.LastDiscoveryRequestHex;
     public string LastDiscoveryResponseHex => _session.LastDiscoveryResponseHex;
     public string LastDiscoverySummary { get; private set; } = string.Empty;
+    public NativeReportInventory LastReportInventory { get; private set; } = new();
 
     public async Task ConnectAsync(string ipAddress, int port, CancellationToken cancellationToken)
     {
@@ -73,8 +74,11 @@ public sealed class NativeIec61850Client : IIec61850Client
                 DomainVariableLists = domainVariableLists
             };
 
+            LastReportInventory = NativeReportDiscoveryMapper.BuildInventory(snapshot);
+
             var signals = NativeMmsDiscoveryMapper.BuildSignals(snapshot);
-            LastDiscoverySummary = $"Native MMS GetNameList discovery: LD={domainVariables.Count}, raw variables={domainVariables.Values.Sum(v => v.Count)}, datasets={domainVariableLists.Values.Sum(v => v.Count)}, SCADA candidates={signals.Count}. {_session.LastDiscoveryAttemptSummary}";
+
+            LastDiscoverySummary = $"Native MMS GetNameList discovery: LD={domainVariables.Count}, raw variables={domainVariables.Values.Sum(v => v.Count)}, datasets={LastReportInventory.DataSets.Count}, RCB={LastReportInventory.ReportControls.Count} (BRCB={LastReportInventory.BufferedCount}, URCB={LastReportInventory.UnbufferedCount}), SCADA candidates={signals.Count}. Reporting inventory is read-only and not probed until the user opens the Edit IED Wizard Report Plan step.";
             LastErrorMessage = LastDiscoverySummary;
             return signals;
         }
@@ -83,6 +87,79 @@ public sealed class NativeIec61850Client : IIec61850Client
             LastErrorMessage = $"Native MMS online discovery failed: {ex.GetType().Name}: {ex.Message}. Last discovery: {_session.LastDiscoveryAttemptSummary}. Last request: {_session.LastDiscoveryRequestHex}";
             return Array.Empty<SignalDefinition>();
         }
+    }
+
+
+    public async Task ProbeReportControlAsync(NativeReportControlCandidate rcb, CancellationToken cancellationToken)
+    {
+        if (rcb == null) throw new ArgumentNullException(nameof(rcb));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!_session.IsMmsInitiated)
+        {
+            rcb.Status = $"Probe blocked: ACSE/MMS not associated ({_session.State})";
+            LastErrorMessage = rcb.Status;
+            return;
+        }
+
+        rcb.Status = "Read-only attribute probe running";
+        await TryReadReportAttributeAsync(rcb, "DatSet", value =>
+        {
+            var text = NormalizeReportAttributeText(value);
+            if (!string.IsNullOrWhiteSpace(text))
+                rcb.DataSetReference = NormalizeReportedDataSetReference(rcb.Domain, text);
+        }, cancellationToken).ConfigureAwait(false);
+
+        await TryReadReportAttributeAsync(rcb, "RptID", value => rcb.ReportId = NormalizeReportAttributeText(value), cancellationToken).ConfigureAwait(false);
+        await TryReadReportAttributeAsync(rcb, "ConfRev", value => rcb.ConfRev = NormalizeReportAttributeText(value), cancellationToken).ConfigureAwait(false);
+        await TryReadReportAttributeAsync(rcb, "IntgPd", value => rcb.IntegrityPeriodMs = NormalizeReportAttributeText(value), cancellationToken).ConfigureAwait(false);
+        await TryReadReportAttributeAsync(rcb, "RptEna", value => rcb.EnabledState = NormalizeReportAttributeText(value), cancellationToken).ConfigureAwait(false);
+
+        rcb.Status = string.IsNullOrWhiteSpace(rcb.DataSetReference)
+            ? "Probed: DataSet not returned"
+            : "Probed read-only";
+        LastErrorMessage = rcb.Status;
+    }
+
+    private async Task TryReadReportAttributeAsync(NativeReportControlCandidate rcb, string attribute, Action<object?> apply, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var value = await ReadValueAsync($"{rcb.Reference}.{attribute}", rcb.FunctionalConstraint, GuessReportAttributeType(attribute), cancellationToken).ConfigureAwait(false);
+            if (value != null) apply(value);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            rcb.Status = $"Attribute probe partial: {attribute} {ex.GetType().Name}";
+        }
+    }
+
+    private static string GuessReportAttributeType(string attribute)
+    {
+        return attribute.ToLowerInvariant() switch
+        {
+            "rptid" or "datset" or "entryid" => "String",
+            "rptena" or "resv" or "gi" or "purgebuf" => "Boolean",
+            "confrev" or "intgpd" or "buftm" or "sqnum" or "resvtms" => "UInt32",
+            _ => "String"
+        };
+    }
+
+    private static string NormalizeReportAttributeText(object? value)
+    {
+        var text = value?.ToString()?.Trim() ?? string.Empty;
+        return string.IsNullOrWhiteSpace(text) ? string.Empty : text;
+    }
+
+    private static string NormalizeReportedDataSetReference(string domain, string value)
+    {
+        var text = value.Trim().Replace('$', '.');
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        if (text.Contains('/')) return text;
+
+        // DatSet is commonly returned as LD/LN.DataSet or as a domain-local LN$DataSet.
+        // If the server returns only a DataSet name, keep the LLN0 default as a planner hint.
+        return text.Contains('.') ? $"{domain}/{text}" : $"{domain}/LLN0.{text}";
     }
 
     public Task<object?> ReadValueAsync(string objectReference, CancellationToken cancellationToken)

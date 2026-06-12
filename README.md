@@ -199,7 +199,7 @@ The current focus is read-only gateway operation. Control/write support should b
 
 ### Does ARServer support reports now?
 
-ARServer is report-aware from SCL planning. Runtime report activation is planned after more online RCB verification is implemented. Polling remains the safe baseline.
+ARServer keeps RCB and DataSet planning inside the Edit IED Wizard. This matches the real workflow: select signals, choose one reporting plan, build Modbus/MQTT mapping, then save the IED. IP discovery and polling do not auto-probe or enable RCBs. The wizard can run a read-only RCB attribute probe, but report activation is planned for a later phase after DataSet directory, receive loop, and safe enable/disable sequencing are implemented. Polling remains the safe baseline.
 
 ### What should I check when connection fails?
 

@@ -61,37 +61,50 @@ The HMI or SCADA system should not poll the relay directly for every screen refr
 - Probe validates value and attempts companion quality/timestamp reads.
 - Runtime grid arranged as `IEC Object | Value | Timestamp | Quality | Type`.
 
+### N11R — Report plan in Edit IED Wizard
+
+- RCB/DataSet inventory is shown in the Edit IED Wizard as a configuration step, not as a runtime tab.
+- IP discovery does not auto-probe RCB attributes, so polling discovery stays stable.
+- RCB attribute probe is explicit and read-only after user selection.
+- Runtime remains MMS polling until report activation is implemented.
+
 ## Next milestones
 
-### N11 — Discovery hardening
+### N12 — DataSet directory engine
+
+- Read DataSet member directory for selected RCB/DataSet.
+- Show coverage between DataSet members and selected runtime signals.
+- Keep report activation disabled until receive loop and safe RCB enable sequence are implemented.
+
+### N13 — Discovery hardening
 
 - Better filtering for common LN classes.
 - Better handling of vendor-specific MMS names.
 - More deterministic type inference.
 - Discovery report export.
 
-### N12 — Multi-point read optimization
+### N14 — Multi-point read optimization
 
 - Group reads by relay and functional constraint.
 - Reduce request count for large mappings.
 - Maintain fast lane for CB/status/protection points.
 - Add timeout and retry profiles per IED.
 
-### N13 — Report verification
+### N15 — Report verification
 
 - Online DataSet browse.
 - Online ReportControl browse.
 - Compare selected signals against DataSet members.
 - Show RCB ownership/readiness before activation.
 
-### N14 — Report activation with polling fallback
+### N16 — Report activation with polling fallback
 
 - Enable report-preferred runtime mode.
 - Decode InformationReport values.
 - Preserve polling fallback for stale or failed reports.
 - Show report state in diagnostics.
 
-### N15 — Mapping/report documentation
+### N17 — Mapping/report documentation
 
 - Export Modbus register map.
 - Export selected IEC object list.
