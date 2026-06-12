@@ -8,6 +8,7 @@ public class SignalDefinition : ObservableObject
     private bool _isReportCapable;
     private string _value = "-";
     private string _quality = "Unknown";
+    private string _deviceTimestamp = "-";
     private DateTime _timestamp = DateTime.MinValue;
 
     private static readonly string[] KnownLogicalNodeClasses =
@@ -63,6 +64,7 @@ public class SignalDefinition : ObservableObject
 
     public string Value { get => _value; set => Set(ref _value, value); }
     public string Quality { get => _quality; set => Set(ref _quality, value); }
+    public string DeviceTimestamp { get => _deviceTimestamp; set => Set(ref _deviceTimestamp, value); }
     public DateTime Timestamp { get => _timestamp; set => Set(ref _timestamp, value); }
 
     private static string ExtractLogicalNode(string reference)

@@ -7,6 +7,7 @@ public class BindingItem : ObservableObject
     private bool _publishToMqtt = true;
     private string _currentValue = "-";
     private string _quality = "Unknown";
+    private string _deviceTimestamp = "-";
     private string _status = "Idle";
     private int _sequence;
     private DateTime _lastUpdate = DateTime.MinValue;
@@ -44,6 +45,7 @@ public class BindingItem : ObservableObject
 
     public string CurrentValue { get => _currentValue; set => Set(ref _currentValue, value); }
     public string Quality { get => _quality; set => Set(ref _quality, value); }
+    public string DeviceTimestamp { get => _deviceTimestamp; set => Set(ref _deviceTimestamp, value); }
     public string Status { get => _status; set => Set(ref _status, value); }
     public int Sequence { get => _sequence; set => Set(ref _sequence, value); }
     public DateTime LastUpdate { get => _lastUpdate; set => Set(ref _lastUpdate, value); }

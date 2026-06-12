@@ -203,3 +203,10 @@ Design rules:
 - Companion reference inference is conservative and limited to common ST/MX shapes such as `Pos.stVal`, `Op.general`, and `cVal.mag.f`.
 
 This phase prepares the cache model for future reporting, where value, quality, timestamp, sequence, and reason-for-inclusion will arrive together in `InformationReport` PDUs.
+
+
+## Phase N9.1 — Runtime Grid Quality/Timestamp Presentation
+
+- Re-arranged the live IEC 61850 grid into an operator/debug friendly order: IEC Object, Value, Timestamp, Quality, Type.
+- Added a dedicated `DeviceTimestamp` runtime field so IEC 61850 `t` sidecar values are not confused with the local PC update time.
+- MQTT JSON now carries both local timestamp and device timestamp when available.

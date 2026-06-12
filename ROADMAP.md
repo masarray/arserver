@@ -401,3 +401,10 @@ Next hardening:
 - Use discovered named variable lists/DataSets to start RCB planning for reporting.
 
 N9 also fixes the initial discovery snapshot path so preview reads pass the discovered Functional Constraint and data type into the native read engine. This avoids a false failure where the runtime path worked because it supplied `[ST]`/`[MX]`, but the initial snapshot used only the object reference.
+
+
+## Phase N9.1 — Runtime Grid Quality/Timestamp Presentation
+
+- Re-arranged the live IEC 61850 grid into an operator/debug friendly order: IEC Object, Value, Timestamp, Quality, Type.
+- Added a dedicated `DeviceTimestamp` runtime field so IEC 61850 `t` sidecar values are not confused with the local PC update time.
+- MQTT JSON now carries both local timestamp and device timestamp when available.

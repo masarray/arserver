@@ -566,6 +566,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
                     if (!string.IsNullOrWhiteSpace(tText))
                     {
                         _lastCompanionTimestampByBindingKey[key] = tText;
+                        binding.DeviceTimestamp = tText;
                         if (binding.Status.EndsWith("/Live", StringComparison.OrdinalIgnoreCase))
                             binding.Status += " + q/t";
                     }
@@ -583,8 +584,12 @@ public sealed class BridgeRuntime : IAsyncDisposable
     {
         if (_lastCompanionQualityByBindingKey.TryGetValue(key, out var cached) && !string.IsNullOrWhiteSpace(cached))
             binding.Quality = cached;
-        if (_lastCompanionTimestampByBindingKey.ContainsKey(key) && binding.Status.EndsWith("/Live", StringComparison.OrdinalIgnoreCase))
-            binding.Status += " + q/t";
+        if (_lastCompanionTimestampByBindingKey.TryGetValue(key, out var cachedTimestamp) && !string.IsNullOrWhiteSpace(cachedTimestamp))
+        {
+            binding.DeviceTimestamp = cachedTimestamp;
+            if (binding.Status.EndsWith("/Live", StringComparison.OrdinalIgnoreCase))
+                binding.Status += " + q/t";
+        }
     }
 
     private bool ShouldLogCompanionWarning(BindingItem binding, string suffix)

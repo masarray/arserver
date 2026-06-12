@@ -1293,6 +1293,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 {
                     signal.Value = "-";
                     signal.Quality = "Bad";
+                    signal.DeviceTimestamp = "-";
                     signal.Timestamp = DateTime.Now;
                     failed++;
                     if (failed <= 3)
@@ -1302,6 +1303,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
                 signal.Value = MockIec61850Client.Format(value, signal.DataType, signal.Unit);
                 signal.Quality = "Good";
+                if (string.IsNullOrWhiteSpace(signal.DeviceTimestamp)) signal.DeviceTimestamp = "-";
                 signal.Timestamp = DateTime.Now;
                 UpdateBindingFromSignal(signal);
                 ok++;
@@ -1311,6 +1313,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 failed++;
                 signal.Value = "Read failed";
                 signal.Quality = "Bad";
+                signal.DeviceTimestamp = "-";
                 signal.Timestamp = DateTime.Now;
                 if (failed <= 3)
                     AddLog("WARN", "IEC61850", $"Initial read failed for {signal.Name}: {ex.Message}");
@@ -1328,6 +1331,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             binding.CurrentValue = signal.Value;
             binding.Quality = signal.Quality;
+            binding.DeviceTimestamp = string.IsNullOrWhiteSpace(signal.DeviceTimestamp) ? "-" : signal.DeviceTimestamp;
             binding.LastUpdate = signal.Timestamp;
             binding.AgeMs = 0;
             binding.Status = signal.Quality == "Good" ? "Mapped/Live" : "Mapped/Bad";
@@ -1347,6 +1351,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 relaySignal.Value = binding.CurrentValue;
                 relaySignal.Quality = binding.Quality;
+                relaySignal.DeviceTimestamp = string.IsNullOrWhiteSpace(binding.DeviceTimestamp) ? "-" : binding.DeviceTimestamp;
                 relaySignal.Timestamp = binding.LastUpdate == DateTime.MinValue ? DateTime.Now : binding.LastUpdate;
             }
 
@@ -1362,6 +1367,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (signal == null) return;
         signal.Value = binding.CurrentValue;
         signal.Quality = binding.Quality;
+        signal.DeviceTimestamp = string.IsNullOrWhiteSpace(binding.DeviceTimestamp) ? "-" : binding.DeviceTimestamp;
         signal.Timestamp = binding.LastUpdate == DateTime.MinValue ? DateTime.Now : binding.LastUpdate;
 
         if (SelectedRelay != null)
@@ -2131,6 +2137,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             IecReference = binding.IecReference,
             Value = binding.CurrentValue,
             Quality = binding.Quality,
+            DeviceTimestamp = string.IsNullOrWhiteSpace(binding.DeviceTimestamp) ? "-" : binding.DeviceTimestamp,
             Timestamp = binding.LastUpdate,
             Status = binding.Status,
             Sequence = binding.Sequence
@@ -2158,6 +2165,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (signal == null) continue;
             signal.Value = snapshot.Value;
             signal.Quality = snapshot.Quality;
+            signal.DeviceTimestamp = string.IsNullOrWhiteSpace(snapshot.DeviceTimestamp) ? "-" : snapshot.DeviceTimestamp;
             signal.Timestamp = snapshot.Timestamp;
             applied++;
         }
@@ -2211,6 +2219,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 Source = s.Source,
                 Value = s.Value,
                 Quality = s.Quality,
+                DeviceTimestamp = string.IsNullOrWhiteSpace(s.DeviceTimestamp) ? "-" : s.DeviceTimestamp,
                 Timestamp = s.Timestamp
             });
         }
@@ -2257,6 +2266,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MqttTopic = b.MqttTopic,
             CurrentValue = b.CurrentValue,
             Quality = b.Quality,
+            DeviceTimestamp = string.IsNullOrWhiteSpace(b.DeviceTimestamp) ? "-" : b.DeviceTimestamp,
             Status = b.Status,
             Sequence = b.Sequence,
             LastUpdate = b.LastUpdate,
@@ -2315,6 +2325,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (target == null) continue;
             target.Value = signal.Value;
             target.Quality = signal.Quality;
+            target.DeviceTimestamp = string.IsNullOrWhiteSpace(signal.DeviceTimestamp) ? "-" : signal.DeviceTimestamp;
             target.Timestamp = signal.Timestamp;
         }
     }

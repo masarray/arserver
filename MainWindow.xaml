@@ -249,21 +249,17 @@
                                         </Grid.ColumnDefinitions>
                                         <StackPanel>
                                             <TextBlock Text="Live IEC 61850 Values" FontSize="15.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
-                                            <TextBlock Text="Runtime view only. Use Edit IED Wizard to add/remove signals, filter MMS objects, and update Modbus binding." FontSize="12.2" Foreground="{StaticResource Muted}" Margin="0,2,0,0"/>
+                                            <TextBlock Text="Runtime view only. Timestamp shows IEC 61850 device time when readable; local update time remains available in diagnostics/MQTT." FontSize="12.2" Foreground="{StaticResource Muted}" Margin="0,2,0,0"/>
                                         </StackPanel>
                                         <TextBlock Grid.Column="1" Text="Priority: position → protection → measurement" Foreground="{StaticResource Muted}" FontSize="12.2" VerticalAlignment="Center"/>
                                     </Grid>
                                     <DataGrid ItemsSource="{Binding SignalsView}" IsReadOnly="True" Style="{StaticResource ModernDataGrid}" ScrollViewer.HorizontalScrollBarVisibility="Auto" ToolTip="Select a row and press Ctrl+C to copy it for debugging.">
                                         <DataGrid.Columns>
-                                            <DataGridTextColumn Header="Priority" Binding="{Binding Category}" Width="85*" MinWidth="74"/>
-                                            <DataGridTextColumn Header="LN" Binding="{Binding LogicalNode}" Width="105*" MinWidth="92"/>
-                                            <DataGridTextColumn Header="Signal" Binding="{Binding Name}" Width="180*" MinWidth="150"/>
-                                            <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="100*" MinWidth="78"/>
-                                            <DataGridTextColumn Header="Quality" Binding="{Binding Quality}" Width="80*" MinWidth="68"/>
-                                            <DataGridTextColumn Header="Time" Binding="{Binding Timestamp, StringFormat=HH:mm:ss}" Width="75*" MinWidth="66"/>
-                                            <DataGridTextColumn Header="Mode" Binding="{Binding ReportPlan}" Width="105*" MinWidth="92"/>
-                                            <DataGridTextColumn Header="IEC Object" Binding="{Binding ObjectReference}" Width="200*" MinWidth="170"/>
-                                            <DataGridTextColumn Header="Type" Binding="{Binding DataType}" Width="75*" MinWidth="64"/>
+                                            <DataGridTextColumn Header="IEC Object" Binding="{Binding ObjectReference}" Width="320*" MinWidth="260"/>
+                                            <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="110*" MinWidth="90"/>
+                                            <DataGridTextColumn Header="Timestamp" Binding="{Binding DeviceTimestamp}" Width="170*" MinWidth="135"/>
+                                            <DataGridTextColumn Header="Quality" Binding="{Binding Quality}" Width="120*" MinWidth="95"/>
+                                            <DataGridTextColumn Header="Type" Binding="{Binding DataType}" Width="90*" MinWidth="70"/>
                                         </DataGrid.Columns>
                                     </DataGrid>
                                 </DockPanel>
