@@ -1,0 +1,14 @@
+{
+  "product": "ARServer",
+  "page": "GitHub Pages landing page",
+  "canonicalUrl": "https://masarray.github.io/arserver/",
+  "repository": "https://github.com/masarray/arserver",
+  "releaseUrl": "https://github.com/masarray/arserver/releases",
+  "screenshots": [
+    "assets/screenshots/arserver-start.webp",
+    "assets/screenshots/arserver-iec-values.webp",
+    "assets/screenshots/arserver-modbus-server.webp",
+    "assets/screenshots/arserver-mqtt-topics.webp"
+  ],
+  "notes": "ARServer is a Windows desktop gateway. The landing page is product documentation; the gateway itself runs locally on Windows."
+}

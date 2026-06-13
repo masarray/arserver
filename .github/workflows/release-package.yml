@@ -1,0 +1,135 @@
+name: Release Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without leading v, for example 1.0.1-public-beta'
+        required: true
+        default: '1.0.1-public-beta'
+      publish_release:
+        description: 'Create or update GitHub Release and upload assets'
+        required: true
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Mark GitHub Release as prerelease'
+        required: true
+        type: boolean
+        default: true
+      draft:
+        description: 'Create GitHub Release as draft'
+        required: true
+        type: boolean
+        default: false
+      release_notes_file:
+        description: 'Markdown file used as release body'
+        required: true
+        default: 'docs/RELEASE_NOTES_v1.0.1.md'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Build Windows portable package
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Resolve release settings
+        id: settings
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "push") {
+            $version = "${{ github.ref_name }}" -replace '^v', ''
+            $publishRelease = "true"
+            $preRelease = "false"
+            $draft = "false"
+            $releaseNotesFile = "docs/RELEASE_NOTES_v1.0.1.md"
+          }
+          else {
+            $version = "${{ inputs.version }}"
+            $publishRelease = "${{ inputs.publish_release }}".ToLowerInvariant()
+            $preRelease = "${{ inputs.prerelease }}".ToLowerInvariant()
+            $draft = "${{ inputs.draft }}".ToLowerInvariant()
+            $releaseNotesFile = "${{ inputs.release_notes_file }}"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Version cannot be empty."
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+          "publish_release=$publishRelease" >> $env:GITHUB_OUTPUT
+          "prerelease=$preRelease" >> $env:GITHUB_OUTPUT
+          "draft=$draft" >> $env:GITHUB_OUTPUT
+          "release_notes_file=$releaseNotesFile" >> $env:GITHUB_OUTPUT
+
+      - name: Build portable package
+        shell: pwsh
+        run: ./scripts/publish-windows-portable.ps1 -Version '${{ steps.settings.outputs.version }}' -SingleFile $true
+
+      - name: Verify portable package
+        shell: pwsh
+        run: ./scripts/verify-release-package.ps1 -PackagePath './artifacts/release/ARServer-v${{ steps.settings.outputs.version }}-win-x64-portable.zip' -RequireSingleFileApp
+
+      - name: Prepare release body
+        id: body
+        shell: pwsh
+        run: |
+          $releaseNotesFile = '${{ steps.settings.outputs.release_notes_file }}'
+          $fallback = Join-Path $env:RUNNER_TEMP 'ARServer_RELEASE_BODY.md'
+          if (Test-Path $releaseNotesFile) {
+            Copy-Item $releaseNotesFile $fallback -Force
+          }
+          else {
+            $lines = @(
+              '# ARServer v${{ steps.settings.outputs.version }}',
+              '',
+              'This release provides a Windows portable package for ARServer, an open-source IEC 61850 MMS to Modbus TCP and MQTT gateway for HMI, SCADA, relay testing, FAT/SAT, and substation automation lab workflows.',
+              '',
+              '## Download',
+              '',
+              'Download `ARServer-v${{ steps.settings.outputs.version }}-win-x64-portable.zip`, extract it to a writable Windows folder, then run `ArServer.exe`. The application binary is packaged as a single executable.',
+              '',
+              '## Package verification',
+              '',
+              'Use `SHA256SUMS.txt` to verify the downloaded ZIP.'
+            )
+            $lines | Set-Content -Path $fallback -Encoding UTF8
+          }
+          "path=$fallback" >> $env:GITHUB_OUTPUT
+
+      - name: Upload portable package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ARServer-v${{ steps.settings.outputs.version }}-win-x64-portable
+          path: |
+            artifacts/release/ARServer-v${{ steps.settings.outputs.version }}-win-x64-portable.zip
+            artifacts/release/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: steps.settings.outputs.publish_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.settings.outputs.tag }}
+          name: ARServer v${{ steps.settings.outputs.version }}
+          body_path: ${{ steps.body.outputs.path }}
+          draft: ${{ steps.settings.outputs.draft }}
+          prerelease: ${{ steps.settings.outputs.prerelease }}
+          files: |
+            artifacts/release/ARServer-v${{ steps.settings.outputs.version }}-win-x64-portable.zip
+            artifacts/release/SHA256SUMS.txt

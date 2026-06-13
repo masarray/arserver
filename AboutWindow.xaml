@@ -21,7 +21,7 @@
                     </Border>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                         <TextBlock Text="ArServer" FontSize="30" FontWeight="SemiBold" Foreground="White"/>
-                        <TextBlock Text="IEC 61850 - Modbus TCP Gateway" FontSize="13.5" Foreground="#CBD5E1" Margin="0,4,0,0"/>
+                        <TextBlock Text="IEC 61850 - Modbus TCP + MQTT Gateway" FontSize="13.5" Foreground="#CBD5E1" Margin="0,4,0,0"/>
                     </StackPanel>
                     <Button Grid.Column="2" Content="Close" Style="{StaticResource MiniChipButton}" Click="Close_Click" VerticalAlignment="Top"/>
                 </Grid>
@@ -46,7 +46,7 @@
             </StackPanel>
 
             <Border Grid.Row="2" Background="#F8FAFC" CornerRadius="0,0,26,26" Padding="24,14">
-                <TextBlock Text="Read-only gateway MVP. Control/write commands are intentionally disabled for safety." Foreground="{StaticResource Muted}" FontSize="12.5"/>
+                <TextBlock Text="Read-only gateway. Control/write commands are intentionally disabled for safety." Foreground="{StaticResource Muted}" FontSize="12.5"/>
             </Border>
         </Grid>
     </Border>

@@ -2,8 +2,8 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Collections.Concurrent;
 using System.ComponentModel;
-using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Reflection;
 using System.Text;
 using System.IO;
 using System.Windows;
@@ -25,12 +25,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private BridgeRuntime? _runtime;
     private BindingItem? _selectedBinding;
     private RelayEndpointView? _selectedRelay;
+    private NativeReportControlCandidate? _selectedReportControl;
+    private NativeDataSetCandidate? _selectedDataSet;
+    private string _reportStudioStatusText = "Report planning is inside Edit IED Wizard. Select an IED, then choose Report Plan from the Explorer.";
     private string _projectName = "ArServer Project";
     private string _relayIpAddress = "192.168.1.10";
     private int _mmsPort = 102;
     private string _modbusBindAddress = "0.0.0.0";
     private int _modbusPort = 502;
     private int _modbusUnitId = 1;
+    private int _mmsPollingIntervalMs = BridgeRuntime.DefaultMmsPollingIntervalMs;
+    private bool _fastAcquisitionEnabled = true;
+    private bool _enableModbusTcp = true;
+    private MqttGatewaySettings _mqttSettings = new();
     private string _iedConnectionStatus = "Disconnected";
     private string _runtimeStatusText = "Stopped";
     private string _lastStatusLevel = "INFO";
@@ -39,7 +46,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private int _modbusClientCount;
     private long _modbusReadCount;
     private string _modbusLastClientText = "-";
-    private bool _useRealIecEngine;
+    private long _mqttPublishedCount;
+    private long _mqttDroppedCount;
+    private bool _mqttConnected;
+    private bool _useNativeIecEngine = true;
     private string _discoverySearchText = "";
     private bool _showRawEngineeringAttributes;
     private long _lastObservedModbusReadCount;
@@ -70,6 +80,61 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string ModbusBindAddress { get => _modbusBindAddress; set { if (Set(ref _modbusBindAddress, value)) Raise(nameof(ModbusEndpointText)); } }
     public int ModbusPort { get => _modbusPort; set { if (Set(ref _modbusPort, value)) Raise(nameof(ModbusEndpointText)); } }
     public int ModbusUnitId { get => _modbusUnitId; set { if (Set(ref _modbusUnitId, value)) Raise(nameof(ModbusEndpointText)); } }
+    public int MmsPollingIntervalMs
+    {
+        get => _mmsPollingIntervalMs;
+        set
+        {
+            if (Set(ref _mmsPollingIntervalMs, value))
+            {
+                Raise(nameof(MmsPollingText));
+                Raise(nameof(MmsPollingHintText));
+                Raise(nameof(FastAcquisitionText));
+            }
+        }
+    }
+    public bool FastAcquisitionEnabled
+    {
+        get => _fastAcquisitionEnabled;
+        set
+        {
+            if (Set(ref _fastAcquisitionEnabled, value))
+            {
+                Raise(nameof(FastAcquisitionText));
+                Raise(nameof(MmsPollingHintText));
+            }
+        }
+    }
+    public bool EnableModbusTcp
+    {
+        get => _enableModbusTcp;
+        set
+        {
+            if (Set(ref _enableModbusTcp, value))
+            {
+                Raise(nameof(ModbusEndpointText));
+                Raise(nameof(RuntimeInsightText));
+            }
+        }
+    }
+    public MqttGatewaySettings MqttSettings
+    {
+        get => _mqttSettings;
+        set
+        {
+            value ??= new MqttGatewaySettings();
+            if (ReferenceEquals(_mqttSettings, value))
+                return;
+
+            _mqttSettings.PropertyChanged -= MqttSettings_PropertyChanged;
+            _mqttSettings = value;
+            _mqttSettings.PropertyChanged += MqttSettings_PropertyChanged;
+            Raise(nameof(MqttSettings));
+            Raise(nameof(MqttEndpointText));
+            Raise(nameof(MqttTrafficText));
+            Raise(nameof(RuntimeInsightText));
+        }
+    }
     public string IedConnectionStatus
     {
         get => _iedConnectionStatus;
@@ -119,7 +184,37 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     public string ModbusLastClientText { get => _modbusLastClientText; set => Set(ref _modbusLastClientText, value); }
-    public bool UseRealIecEngine { get => _useRealIecEngine; set => Set(ref _useRealIecEngine, value); }
+    public long MqttPublishedCount
+    {
+        get => _mqttPublishedCount;
+        set
+        {
+            if (Set(ref _mqttPublishedCount, value))
+                Raise(nameof(MqttTrafficText));
+        }
+    }
+    public long MqttDroppedCount
+    {
+        get => _mqttDroppedCount;
+        set
+        {
+            if (Set(ref _mqttDroppedCount, value))
+                Raise(nameof(MqttTrafficText));
+        }
+    }
+    public bool MqttConnected
+    {
+        get => _mqttConnected;
+        set
+        {
+            if (Set(ref _mqttConnected, value))
+            {
+                Raise(nameof(MqttEndpointText));
+                Raise(nameof(MqttTrafficText));
+            }
+        }
+    }
+    public bool UseNativeIecEngine { get => _useNativeIecEngine; set => Set(ref _useNativeIecEngine, value); }
     public string DiscoverySearchText
     {
         get => _discoverySearchText;
@@ -149,12 +244,34 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string VisibleSignalCountText => ShowRawEngineeringAttributes
         ? $"Showing {SignalsView.Cast<object>().Count()} of {Signals.Count} discovered MMS attributes"
         : $"Showing {SignalsView.Cast<object>().Count()} smart SCADA signals of {Signals.Count} discovered attributes";
-    public string ModbusEndpointText => $"{ModbusBindAddress}:{ModbusPort} / UID {ModbusUnitId}";
-    public string RuntimeInsightText => RuntimeStatusText == "Running" ? $"Publishing {PublishedModbusBindings.Count(b => b.IsEnabled)} bindings" : "Ready but not publishing";
+    public string ModbusEndpointText => EnableModbusTcp ? $"{ModbusBindAddress}:{ModbusPort} / UID {ModbusUnitId}" : "Modbus disabled";
+    public string MqttEndpointText => MqttSettings.IsEnabled ? $"{MqttSettings.BrokerHost}:{MqttSettings.BrokerPort} / {MqttSettings.TopicRoot}" : "MQTT disabled";
+    public string MmsPollingText => $"MMS {BridgeRuntime.NormalizeMmsPollingIntervalMs(MmsPollingIntervalMs)} ms";
+    public string FastAcquisitionText => FastAcquisitionEnabled
+        ? $"Fast CB ON / {BridgeRuntime.NormalizeMmsPollingIntervalMs(MmsPollingIntervalMs)} ms target"
+        : "Fast CB OFF";
+    public string MmsPollingHintText => FastAcquisitionEnabled
+        ? "Fast CB lane prioritizes breaker/status points before measurements. Use RCB/GOOSE for protection-event evidence when available."
+        : BridgeRuntime.NormalizeMmsPollingIntervalMs(MmsPollingIntervalMs) <= 50
+            ? "Fast polling: benchmark/monitoring mode, not protection-event substitute."
+            : "Runtime reads IEC MMS into cache; Modbus/MQTT clients read cached values.";
+    public string RuntimeInsightText => RuntimeStatusText == "Running" ? $"Publishing {ActiveOutputBindingCount} routed binding(s) via {RuntimeOutputText}" : $"Ready: {RuntimeOutputText}";
     public string IecInsightText => $"{IedConnectionStatus} / {SignalCount} discovered";
     public string ModbusTrafficText => $"{ModbusClientCount} client(s), {ModbusReadCount} read(s)";
+    public string MqttTrafficText => MqttSettings.IsEnabled ? $"{(MqttConnected ? "connected" : "offline")}, {MqttPublishedCount} pub(s), {MqttDroppedCount} drop(s)" : "disabled";
     public bool IsRuntimeRunning => RuntimeStatusText.Equals("Running", StringComparison.OrdinalIgnoreCase) || RuntimeStatusText.Equals("Starting", StringComparison.OrdinalIgnoreCase);
     public bool IsProjectEditable => !IsRuntimeRunning;
+    private string RuntimeOutputText => (EnableModbusTcp, MqttSettings.IsEnabled) switch
+    {
+        (true, true) => "Modbus + MQTT",
+        (true, false) => "Modbus",
+        (false, true) => "MQTT",
+        _ => "no output"
+    };
+    private int ActiveOutputBindingCount => PublishedModbusBindings.Count(IsRoutedBinding);
+    private int ModbusBindingCount => PublishedModbusBindings.Count(b => b.IsEnabled && b.PublishToModbus);
+    private int MqttBindingCount => PublishedModbusBindings.Count(b => b.IsEnabled && b.PublishToMqtt);
+    private static bool IsRoutedBinding(BindingItem binding) => binding.IsEnabled && (binding.PublishToModbus || binding.PublishToMqtt);
 
     public BindingItem? SelectedBinding
     {
@@ -174,9 +291,56 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 Raise(nameof(SelectedExplorerVisibility));
                 Raise(nameof(ActiveRelayTitle));
                 Raise(nameof(ActiveRelaySubtitle));
+                SelectedReportControl = SelectedRelay?.ReportControls.FirstOrDefault(r => string.Equals(r.Reference, SelectedRelay.SelectedReportControlReference, StringComparison.OrdinalIgnoreCase))
+                    ?? SelectedRelay?.ReportControls.FirstOrDefault();
+                SelectedDataSet = SelectedRelay?.DataSets.FirstOrDefault(ds => SelectedReportControl != null && string.Equals(ds.Reference, SelectedReportControl.DataSetReference, StringComparison.OrdinalIgnoreCase))
+                    ?? SelectedRelay?.DataSets.FirstOrDefault();
+                Raise(nameof(SelectedReportControlSummary));
+                Raise(nameof(SelectedDataSetSummary));
             }
         }
     }
+
+    public NativeReportControlCandidate? SelectedReportControl
+    {
+        get => _selectedReportControl;
+        set
+        {
+            if (Set(ref _selectedReportControl, value))
+            {
+                MatchSelectedDataSetToReportControl();
+                RebuildSelectedDataSetMembers();
+                Raise(nameof(SelectedReportControlSummary));
+            }
+        }
+    }
+
+    public NativeDataSetCandidate? SelectedDataSet
+    {
+        get => _selectedDataSet;
+        set
+        {
+            if (Set(ref _selectedDataSet, value))
+            {
+                RebuildSelectedDataSetMembers();
+                Raise(nameof(SelectedDataSetSummary));
+            }
+        }
+    }
+
+    public string ReportStudioStatusText
+    {
+        get => _reportStudioStatusText;
+        set => Set(ref _reportStudioStatusText, value);
+    }
+
+    public string SelectedReportControlSummary => SelectedReportControl == null
+        ? "No RCB selected. Select one RCB to run a read-only attribute probe."
+        : $"{SelectedReportControl.Mode} • {SelectedReportControl.Reference} • DS: {(string.IsNullOrWhiteSpace(SelectedReportControl.DataSetReference) ? "not confirmed" : SelectedReportControl.DataSetReference)}";
+
+    public string SelectedDataSetSummary => SelectedDataSet == null
+        ? "No DataSet selected. DataSet member directory is planned for the next phase; current view shows known SCL members or online DataSet candidates."
+        : $"{SelectedDataSet.Reference} • source: {(string.IsNullOrWhiteSpace(SelectedDataSet.RawMmsName) ? "SCL/static" : SelectedDataSet.RawMmsName)}";
 
     public Visibility EmptyExplorerVisibility => SelectedRelay == null ? Visibility.Visible : Visibility.Collapsed;
     public Visibility SelectedExplorerVisibility => SelectedRelay != null ? Visibility.Visible : Visibility.Collapsed;
@@ -194,6 +358,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.LogicalNode), ListSortDirection.Ascending));
         SignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.Name), ListSortDirection.Ascending));
         DataContext = this;
+        MqttSettings.PropertyChanged += MqttSettings_PropertyChanged;
         Relays.CollectionChanged += Relays_CollectionChanged;
         Loaded += MainWindow_Loaded;
         _activityResetTimer.Tick += ActivityResetTimer_Tick;
@@ -211,10 +376,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Raise(nameof(ActiveRelaySubtitle));
     }
 
+    private void MqttSettings_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        Raise(nameof(MqttEndpointText));
+        Raise(nameof(MqttTrafficText));
+        Raise(nameof(RuntimeInsightText));
+    }
+
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         _navButtons.Clear();
-        _navButtons.AddRange(new[] { NavConnectButton, NavRuntimeButton, NavDiagnosticsButton });
+        _navButtons.AddRange(new[] { NavConnectButton, NavRuntimeButton, NavMqttButton, NavDiagnosticsButton });
         WorkflowNavShell.SizeChanged += (_, _) => MoveWorkflowPill(MainTabs.SelectedIndex, false);
         RuntimeToggleShell.SizeChanged += (_, _) => MoveRuntimeToggle(RuntimeStatusText == "Running", false);
 
@@ -227,15 +399,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MoveWorkflowPill(0, false);
         }));
 
-        if (RealLibIec61850Client.IsRuntimeLibraryAvailable())
-        {
-            UseRealIecEngine = true;
-            AddLog("INFO", "IEC61850", "libiec61850 .NET/native DLL detected beside EXE. Real IEC 61850 mode enabled automatically.");
-        }
-        else
-        {
-            AddLog("INFO", "IEC61850", "libiec61850 DLL not detected. Mock mode remains available for UI/Modbus testing.");
-        }
+        UseNativeIecEngine = true;
+        AddLog("INFO", "IEC61850", "Native IEC 61850 MMS engine ready. Add an IED by IP or open an SCL/CID/SCD file to build a gateway map.");
 
         UpdateNavigationVisuals(MainTabs.SelectedIndex);
         MoveWorkflowPill(MainTabs.SelectedIndex, false);
@@ -276,7 +441,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             IedConnectionStatus = "Connecting...";
             EventStrategyStatus = "Scanning...";
-            AddLog("INFO", "IEC61850", $"Connecting to {relayIp}:{MmsPort} using {(UseRealIecEngine ? "real libiec61850" : "MVP mock")} IEC61850 engine.");
+            AddLog("INFO", "IEC61850", $"Connecting to {relayIp}:{MmsPort} using native IEC 61850 MMS engine.");
 
             // The Modbus gateway lifecycle is independent from per-IED connection lifecycle.
             // When runtime is running, keep the Modbus server alive and refresh only the active IEC session.
@@ -288,7 +453,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             await ConnectActiveIecClientAsync(relayIp, MmsPort, CancellationToken.None);
             var activeClient = _iecClient ?? throw new InvalidOperationException("IEC client was not created.");
-            IedConnectionStatus = activeClient.IsConnected ? "Connected" : "Failed";
+            IedConnectionStatus = GetClientConnectedDisplayStatus(activeClient);
 
             if (!activeClient.IsConnected)
             {
@@ -298,13 +463,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 Raise(nameof(VisibleSignalCountText));
                 EventStrategyStatus = "Connection failed";
 
-                if (activeClient is RealLibIec61850Client realFailed)
-                    AddLog("ERROR", "IEC61850", string.IsNullOrWhiteSpace(realFailed.LastErrorMessage) ? "Real IEC61850 connection failed. No mock fallback was used." : realFailed.LastErrorMessage);
+                if (activeClient is NativeIec61850Client nativeFailed)
+                    AddLog("ERROR", "Native IEC61850", string.IsNullOrWhiteSpace(nativeFailed.LastErrorMessage) ? "Native IEC61850 ACSE/MMS association failed." : nativeFailed.LastErrorMessage);
                 else
                     AddLog("ERROR", "IEC61850", "IEC61850 connection failed.");
 
-                AddLog("INFO", "Operator Hint", "No mock signals are shown in Real mode. Fix network/MMS endpoint first, then Connect & Discover again.");
-                NavigateToTab(2);
+                AddLog("INFO", "Operator Hint", "No live signals are shown until the IED answers MMS discovery. Check IP address, port 102, firewall, network route, and IED MMS service state.");
+                NavigateToTab(3);
                 return;
             }
 
@@ -335,12 +500,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 AddLog("WARN", "Preferences", $"Relay endpoint was not saved because online model discovery returned no signal: {relayIp}:{MmsPort}");
             }
 
-            if (_iecClient is RealLibIec61850Client realOk && !string.IsNullOrWhiteSpace(realOk.LastDiscoverySummary))
-                AddLog("INFO", "Discovery", realOk.LastDiscoverySummary);
+            if (_iecClient is NativeIec61850Client nativeOk && !string.IsNullOrWhiteSpace(nativeOk.LastDiscoverySummary))
+                AddLog("INFO", "Native Discovery", nativeOk.LastDiscoverySummary);
 
-            EventStrategyStatus = _iecClient.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase)
-                ? "Mock event simulation"
-                : "Real MMS polling";
+            EventStrategyStatus = _iecClient is NativeIec61850Client nativeStatus
+                ? nativeStatus.IsMmsReady
+                    ? "Native ACSE/MMS associated / read pending"
+                    : nativeStatus.IsMmsInitiateFailed
+                        ? "Native transport ready / MMS initiate failed"
+                        : "Native transport ready / MMS pending"
+                : "Demo event simulation";
             SignalsView.Refresh();
             Raise(nameof(SignalCount));
             Raise(nameof(VisibleSignalCountText));
@@ -358,12 +527,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     draftBindings: new ObservableCollection<BindingItem>(),
                     runtimeIpAddress: relayIp,
                     runtimePort: MmsPort,
-                    useRealEngine: UseRealIecEngine,
+                    useNativeIecEngine: UseNativeIecEngine,
                     suggestedIedName: suggestedIedName,
                     mode: _iecClient.ConnectionMode,
                     status: "Connected",
                     heartbeat: "MMS polling ready",
-                    rcbMode: "MMS polling");
+                    rcbMode: "MMS polling",
+                    reportInventory: _iecClient is NativeIec61850Client nativeInventory ? nativeInventory.LastReportInventory : null);
 
                 if (saved)
                 {
@@ -393,6 +563,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             AddExceptionLog("IEC61850", ex, $"Connect/Discover failed for {relayIp}:{MmsPort}");
             AddLog("INFO", "Operator Hint", "Cek IP relay, VLAN/subnet, firewall Windows, port TCP 102, MMS server di relay, dan pastikan belum ada client lain yang mengunci association/RCB.");
         }
+    }
+
+    private static string GetClientConnectedDisplayStatus(IIec61850Client client)
+    {
+        if (client is NativeIec61850Client native)
+        {
+            if (native.IsMmsReady) return "MMS Associated";
+            if (native.IsTransportReady) return native.IsMmsInitiateFailed ? "MMS Initiate Failed" : "Transport Ready";
+            return "Failed";
+        }
+
+        if (!client.IsConnected) return "Failed";
+        return "Connected";
     }
 
     private void SelectRecommended_Click(object sender, RoutedEventArgs e)
@@ -477,6 +660,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         var newBindings = BindingAutoMapper.CreateBindings(selected, relay == null ? 0 : GetRelayBlockIndex(relay));
+        foreach (var item in newBindings)
+            ApplyDefaultTimingToBinding(item);
+
         if (relay != null)
         {
             relay.ModbusBindings.Clear();
@@ -529,6 +715,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var added = 0;
         foreach (var item in BindingAutoMapper.CreateBindings(selected, relay == null ? 0 : GetRelayBlockIndex(relay)))
         {
+            ApplyDefaultTimingToBinding(item);
             if (ownerBindings.Any(b => string.Equals(b.IecReference, item.IecReference, StringComparison.OrdinalIgnoreCase)))
                 continue;
 
@@ -617,25 +804,125 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ValidateBindings(showMessage: true);
     }
 
+    private void ApplyDefaultTimingToBinding(BindingItem binding)
+    {
+        binding.PollingIntervalMs = BridgeRuntime.NormalizeMmsPollingIntervalMs(MmsPollingIntervalMs);
+        binding.StaleTimeoutMs = Math.Max(binding.StaleTimeoutMs, Math.Max(3000, binding.PollingIntervalMs * 10));
+    }
+
+    private void ApplyMmsPollingToMap_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsRuntimeRunning)
+        {
+            AddLog("WARN", "Runtime", "MMS polling time is locked while runtime is running. Stop Runtime before changing polling timing.");
+            return;
+        }
+
+        ApplyProjectPollingIntervalToPublishedMap(logChanges: true);
+        NormalizePublishedBindingTiming(logChanges: true);
+        ValidateBindings(showMessage: false);
+    }
+
+    private void ApplyProjectPollingIntervalToPublishedMap(bool logChanges)
+    {
+        var requested = MmsPollingIntervalMs;
+        var normalized = BridgeRuntime.NormalizeMmsPollingIntervalMs(requested);
+        if (requested != normalized)
+            MmsPollingIntervalMs = normalized;
+
+        var touched = 0;
+        foreach (var binding in EnumerateAllKnownBindings().Where(IsRoutedBinding))
+        {
+            if (binding.PollingIntervalMs != normalized)
+            {
+                binding.PollingIntervalMs = normalized;
+                touched++;
+            }
+
+            binding.StaleTimeoutMs = Math.Max(binding.StaleTimeoutMs, Math.Max(3000, normalized * 10));
+        }
+
+        if (logChanges)
+        {
+            var level = normalized <= 50 ? "WARN" : "INFO";
+            AddLog(level, "Runtime", $"IEC 61850 MMS polling target set to {normalized} ms for {touched} routed binding(s). Minimum allowed target is {BridgeRuntime.MinimumMmsPollingIntervalMs} ms.");
+            if (normalized <= 50)
+                AddLog("WARN", "Runtime", "10-50 ms MMS polling is best treated as expert fast monitoring/bench mode. For protection-grade event capture, prefer Report/RCB or GOOSE/SV path when available.");
+            if (FastAcquisitionEnabled)
+                AddLog("INFO", "Runtime", "Fast CB acquisition is enabled. CB position/status/Boolean/protection flags will be scheduled before measurement tags at runtime.");
+        }
+    }
+
+    private void NormalizePublishedBindingTiming(bool logChanges)
+    {
+        var clamped = 0;
+        foreach (var binding in EnumerateAllKnownBindings().Where(IsRoutedBinding))
+        {
+            var normalized = BridgeRuntime.NormalizeMmsPollingIntervalMs(binding.PollingIntervalMs);
+            if (binding.PollingIntervalMs != normalized)
+            {
+                binding.PollingIntervalMs = normalized;
+                clamped++;
+            }
+
+            binding.StaleTimeoutMs = Math.Max(binding.StaleTimeoutMs, Math.Max(3000, normalized * 10));
+        }
+
+        if (logChanges && clamped > 0)
+            AddLog("WARN", "Runtime", $"Clamped {clamped} polling interval value(s) into safe range {BridgeRuntime.MinimumMmsPollingIntervalMs}..{BridgeRuntime.MaximumMmsPollingIntervalMs} ms.");
+    }
+
+    private IEnumerable<BindingItem> EnumerateAllKnownBindings()
+    {
+        var seen = new HashSet<BindingItem>(ReferenceEqualityComparer.Instance);
+
+        foreach (var binding in PublishedModbusBindings)
+            if (seen.Add(binding))
+                yield return binding;
+
+        foreach (var binding in Bindings)
+            if (seen.Add(binding))
+                yield return binding;
+
+        foreach (var relayBinding in Relays.SelectMany(r => r.ModbusBindings))
+            if (seen.Add(relayBinding))
+                yield return relayBinding;
+    }
+
     private bool ValidateBindings(bool showMessage)
     {
         // Always normalize the global Modbus map before validation. This makes multi-IED
         // projects self-healing: users add IEDs and select signals, ArServer arranges the
         // address blocks automatically instead of forcing manual register planning.
+        NormalizePublishedBindingTiming(logChanges: false);
         ArrangeAllRelayModbusBlocks();
 
         var errors = new List<string>();
         var used = new Dictionary<string, BindingItem>(StringComparer.OrdinalIgnoreCase);
 
-        if (ModbusPort <= 0 || ModbusPort > 65535)
+        if (!EnableModbusTcp && !MqttSettings.IsEnabled)
+            errors.Add("At least one output must be enabled: Modbus TCP or MQTT.");
+        if (EnableModbusTcp && (ModbusPort <= 0 || ModbusPort > 65535))
             errors.Add("Modbus TCP port must be 1..65535.");
-        if (ModbusUnitId < 1 || ModbusUnitId > 247)
+        if (EnableModbusTcp && (ModbusUnitId < 1 || ModbusUnitId > 247))
             errors.Add("Modbus Unit ID must be 1..247.");
+        if (EnableModbusTcp && ModbusBindingCount == 0)
+            errors.Add("Modbus TCP is enabled, but no active signal is routed to Modbus.");
+        if (MqttSettings.IsEnabled && string.IsNullOrWhiteSpace(MqttSettings.BrokerHost))
+            errors.Add("MQTT broker host is required when MQTT is enabled.");
+        if (MqttSettings.IsEnabled && (MqttSettings.BrokerPort <= 0 || MqttSettings.BrokerPort > 65535))
+            errors.Add("MQTT broker port must be 1..65535.");
+        if (MqttSettings.IsEnabled && MqttBindingCount == 0)
+            errors.Add("MQTT is enabled, but no active signal is routed to MQTT.");
 
-        foreach (var binding in PublishedModbusBindings.Where(b => b.IsEnabled))
+        foreach (var binding in PublishedModbusBindings.Where(IsRoutedBinding))
         {
             if (string.IsNullOrWhiteSpace(binding.SignalName)) errors.Add("There is a binding with an empty signal label.");
             if (string.IsNullOrWhiteSpace(binding.IecReference)) errors.Add($"{binding.SignalName}: IEC reference is empty.");
+
+            if (!binding.PublishToModbus)
+                continue;
+
             if (binding.ModbusAddress <= 0) errors.Add($"{binding.SignalName}: invalid Modbus address.");
             if (binding.ModbusDataType == "Float32" && binding.ModbusArea is "Coil" or "DiscreteInput")
                 errors.Add($"{binding.SignalName}: Float32 is not valid for {binding.ModbusArea}. Use HoldingRegister/InputRegister.");
@@ -657,7 +944,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (errors.Count == 0)
         {
-            AddLog("INFO", "Validation", "Binding validation OK. ArServer auto-arranged multi-IED Modbus blocks with no overlap.");
+            AddLog("INFO", "Validation", $"Binding validation OK. Modbus routed: {ModbusBindingCount}, MQTT routed: {MqttBindingCount}.");
             return true;
         }
 
@@ -667,7 +954,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             AddLog("WARN", "Validation", $"{errors.Count - grouped.Count} additional validation warning(s) suppressed. Fix the first warnings or rebuild binding.");
 
         if (showMessage)
-            NavigateToTab(2);
+            NavigateToTab(3);
 
         return false;
     }
@@ -676,15 +963,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         try
         {
+            ApplyProjectPollingIntervalToPublishedMap(logChanges: false);
+            NormalizePublishedBindingTiming(logChanges: false);
             var project = new BridgeProject
             {
                 ProjectName = ProjectName,
                 RelayIpAddress = RelayIpAddress,
                 MmsPort = MmsPort,
-                UseRealIecEngine = UseRealIecEngine,
+                UseNativeIecEngine = UseNativeIecEngine,
                 ModbusBindAddress = ModbusBindAddress,
+                EnableModbusTcp = EnableModbusTcp,
                 ModbusPort = ModbusPort,
                 ModbusUnitId = ModbusUnitId,
+                MmsPollingIntervalMs = BridgeRuntime.NormalizeMmsPollingIntervalMs(MmsPollingIntervalMs),
+                FastAcquisitionEnabled = FastAcquisitionEnabled,
+                Mqtt = CloneMqttSettings(MqttSettings),
                 Signals = Signals.ToList(),
                 Bindings = PublishedModbusBindings.ToList(),
                 Relays = Relays.ToList()
@@ -722,10 +1015,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ProjectName = project.ProjectName;
             RelayIpAddress = project.RelayIpAddress;
             MmsPort = project.MmsPort;
-            UseRealIecEngine = project.UseRealIecEngine;
+            UseNativeIecEngine = true;
             ModbusBindAddress = string.IsNullOrWhiteSpace(project.ModbusBindAddress) ? "0.0.0.0" : project.ModbusBindAddress;
+            EnableModbusTcp = project.EnableModbusTcp;
             ModbusPort = project.ModbusPort <= 0 ? 502 : project.ModbusPort;
             ModbusUnitId = project.ModbusUnitId <= 0 ? 1 : project.ModbusUnitId;
+            MmsPollingIntervalMs = BridgeRuntime.NormalizeMmsPollingIntervalMs(project.MmsPollingIntervalMs <= 0 ? BridgeRuntime.DefaultMmsPollingIntervalMs : project.MmsPollingIntervalMs);
+            FastAcquisitionEnabled = project.FastAcquisitionEnabled;
+            MqttSettings = CloneMqttSettings(project.Mqtt ?? new MqttGatewaySettings());
 
             Signals.Clear();
             foreach (var signal in project.Signals) AddSignal(signal);
@@ -777,10 +1074,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MoveRuntimeToggle(true, true);
 
             PreparePublishedModbusMapForRuntime();
+            ApplyProjectPollingIntervalToPublishedMap(logChanges: true);
+            NormalizePublishedBindingTiming(logChanges: true);
+            if (!EnableModbusTcp && !MqttSettings.IsEnabled)
+            {
+                RuntimeStatusText = "Stopped";
+                MoveRuntimeToggle(false, true);
+                AddLog("ERROR", "Runtime", "Runtime blocked. Enable Modbus TCP, MQTT, or both before starting.");
+                NavigateToTab(1);
+                return;
+            }
+
             if (PublishedModbusBindings.Count == 0)
             {
                 AutoMap_Click(sender, e);
                 PreparePublishedModbusMapForRuntime();
+                ApplyProjectPollingIntervalToPublishedMap(logChanges: true);
+                NormalizePublishedBindingTiming(logChanges: true);
                 if (PublishedModbusBindings.Count == 0)
                 {
                     RuntimeStatusText = "Stopped";
@@ -799,7 +1109,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
 
             var runtimeRelayCount = PublishedModbusBindings
-                .Where(b => b.IsEnabled)
+                .Where(IsRoutedBinding)
                 .Select(b => string.IsNullOrWhiteSpace(b.RelayId) ? "__single__" : b.RelayId)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Count();
@@ -829,8 +1139,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
                 if (!activeClient.IsConnected)
                 {
-                    if (activeClient is RealLibIec61850Client realFailed)
-                        AddLog("ERROR", "IEC61850", string.IsNullOrWhiteSpace(realFailed.LastErrorMessage) ? "Runtime cannot start because IEC61850 is not connected." : realFailed.LastErrorMessage);
+                    if (activeClient is NativeIec61850Client nativeFailed)
+                        AddLog("ERROR", "Native IEC61850", string.IsNullOrWhiteSpace(nativeFailed.LastErrorMessage) ? "Runtime cannot start because native ACSE/MMS association is not ready." : nativeFailed.LastErrorMessage);
                     AddLog("WARN", "Runtime", "Runtime blocked. IEC61850 downstream is not connected. Modbus server is not started to avoid publishing stale/fake values.");
                     RuntimeStatusText = "Stopped";
                     MoveRuntimeToggle(false, true);
@@ -842,17 +1152,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 // Multi-IED runtime uses isolated per-IED MMS clients inside BridgeRuntime.
                 // Do not pre-connect a single global client to the selected relay; that was
                 // the root cause of last-added/selected IED sessions stealing the first IED.
-                _iecClient = UseRealIecEngine
-                    ? new RealLibIec61850Client()
-                    : new MockIec61850Client();
+                _iecClient = CreateConfiguredIecClient();
             }
 
             if (_runtime != null)
                 await _runtime.DisposeAsync();
 
-            _runtime = new BridgeRuntime(_iecClient, PublishedModbusBindings, Relays, () => UseRealIecEngine
-                ? (IIec61850Client)new RealLibIec61850Client()
-                : new MockIec61850Client());
+            _runtime = new BridgeRuntime(
+                _iecClient,
+                PublishedModbusBindings,
+                Relays,
+                () => CreateConfiguredIecClient(),
+                EnableModbusTcp,
+                CloneMqttSettings(MqttSettings),
+                FastAcquisitionEnabled);
             _runtime.Diagnostic += entry => Dispatcher.Invoke(() => AddLog(entry.Level, entry.Source, entry.Message));
             _runtime.BindingUpdated += binding => Dispatcher.Invoke(() =>
             {
@@ -864,8 +1177,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 ModbusClientCount = _runtime.ClientCount;
                 ModbusReadCount = _runtime.ModbusReadCount;
                 ModbusLastClientText = _runtime.LastClientEndpoint;
+                MqttConnected = _runtime.MqttIsConnected;
+                MqttPublishedCount = _runtime.MqttPublishedCount;
+                MqttDroppedCount = _runtime.MqttDroppedCount;
 
-                if (ModbusReadCount > _lastObservedModbusReadCount)
+                if (EnableModbusTcp && ModbusReadCount > _lastObservedModbusReadCount)
                 {
                     _lastObservedModbusReadCount = ModbusReadCount;
                     PulseModbusActivity();
@@ -877,7 +1193,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             RuntimeStatusText = "Running";
             MoveRuntimeToggle(true, true);
             EventStrategyStatus = _runtime.EventMode;
-            AddLog("INFO", "Runtime", $"FUXA can connect to this PC IP, port {ModbusPort}, Unit ID {ModbusUnitId}.");
+            if (EnableModbusTcp)
+                AddLog("INFO", "Runtime", $"FUXA can connect by Modbus TCP to this PC IP, port {ModbusPort}, Unit ID {ModbusUnitId}.");
+            if (MqttSettings.IsEnabled)
+                AddLog("INFO", "Runtime", $"FUXA can subscribe by MQTT via broker {MqttSettings.BrokerHost}:{MqttSettings.BrokerPort}, topic root {MqttSettings.TopicRoot}.");
         }
         catch (Exception ex)
         {
@@ -898,6 +1217,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MoveRuntimeToggle(false, true);
             ModbusClientCount = 0;
             ModbusLastClientText = "-";
+            MqttConnected = false;
         }
         catch (Exception ex)
         {
@@ -906,7 +1226,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
 
-    private async void OpenConfigurationWizardInternal(string context)
+    private async void OpenConfigurationWizardInternal(string context, int initialStep = 0)
     {
         if (IsRuntimeRunning)
         {
@@ -928,10 +1248,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var sourceBindings = relay != null ? relay.ModbusBindings : new ObservableCollection<BindingItem>(PublishedModbusBindings.Where(b => string.IsNullOrWhiteSpace(b.RelayId)));
         var wizardBindings = CloneBindings(sourceBindings);
 
-        var wizard = new IedConfigurationWizardWindow(wizardSignals, wizardBindings)
+        var reportInventory = relay != null ? BuildReportInventoryFromRelay(relay) : null;
+        var wizard = new IedConfigurationWizardWindow(wizardSignals, wizardBindings, _iecClient, reportInventory, relay?.SelectedReportControlReference ?? string.Empty)
         {
             Owner = this
         };
+        wizard.StepIndex = Math.Max(0, Math.Min(3, initialStep));
 
         AddLog("INFO", "Wizard", $"Configuration wizard opened for {context}. Selection, filtering, binding and save are isolated inside the popup window.");
         TrackActiveWizard(wizard);
@@ -946,6 +1268,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (relay != null)
             {
                 SaveWorkspaceToRelay(relay, wizardSignals, wizardBindings);
+                ApplyWizardReportPlanToRelay(relay, wizard);
                 SetActiveRelay(relay);
                 RebuildPublishedBindingsFromRelays();
             }
@@ -998,11 +1321,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             try
             {
-                var value = await _iecClient.ReadValueAsync(signal.ObjectReference, CancellationToken.None);
+                var value = await _iecClient.ReadValueAsync(signal.ObjectReference, signal.FunctionalConstraint, signal.DataType, CancellationToken.None);
                 if (value == null)
                 {
                     signal.Value = "-";
                     signal.Quality = "Bad";
+                    signal.DeviceTimestamp = "-";
                     signal.Timestamp = DateTime.Now;
                     failed++;
                     if (failed <= 3)
@@ -1012,6 +1336,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
                 signal.Value = MockIec61850Client.Format(value, signal.DataType, signal.Unit);
                 signal.Quality = "Good";
+                signal.DeviceTimestamp = signal.DeviceTimestamp == "-" ? "-" : signal.DeviceTimestamp;
                 signal.Timestamp = DateTime.Now;
                 UpdateBindingFromSignal(signal);
                 ok++;
@@ -1021,6 +1346,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 failed++;
                 signal.Value = "Read failed";
                 signal.Quality = "Bad";
+                signal.DeviceTimestamp = "-";
                 signal.Timestamp = DateTime.Now;
                 if (failed <= 3)
                     AddLog("WARN", "IEC61850", $"Initial read failed for {signal.Name}: {ex.Message}");
@@ -1038,6 +1364,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             binding.CurrentValue = signal.Value;
             binding.Quality = signal.Quality;
+            binding.DeviceTimestamp = signal.DeviceTimestamp;
             binding.LastUpdate = signal.Timestamp;
             binding.AgeMs = 0;
             binding.Status = signal.Quality == "Good" ? "Mapped/Live" : "Mapped/Bad";
@@ -1057,13 +1384,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 relaySignal.Value = binding.CurrentValue;
                 relaySignal.Quality = binding.Quality;
+                relaySignal.DeviceTimestamp = binding.DeviceTimestamp;
                 relaySignal.Timestamp = binding.LastUpdate == DateTime.MinValue ? DateTime.Now : binding.LastUpdate;
             }
 
-            relay.Status = binding.Quality.Equals("Good", StringComparison.OrdinalIgnoreCase) ? "Connected" : relay.Status;
-            relay.HeartbeatText = binding.Quality.Equals("Good", StringComparison.OrdinalIgnoreCase) ? "MMS stream active" : "MMS read warning";
-            relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
-            relay.RefreshComputed();
+            ApplyRelayRuntimeReadState(relay, binding);
         }
 
         if (SelectedRelay != null && relay != null && relay.RelayId != SelectedRelay.RelayId)
@@ -1075,10 +1400,56 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (signal == null) return;
         signal.Value = binding.CurrentValue;
         signal.Quality = binding.Quality;
+        signal.DeviceTimestamp = binding.DeviceTimestamp;
         signal.Timestamp = binding.LastUpdate == DateTime.MinValue ? DateTime.Now : binding.LastUpdate;
 
         if (SelectedRelay != null)
             SyncLiveWorkspaceToRelay(SelectedRelay);
+    }
+
+    private static void ApplyRelayRuntimeReadState(RelayEndpointView relay, BindingItem binding)
+    {
+        var statusText = binding.Status ?? string.Empty;
+        var good = binding.Quality.Equals("Good", StringComparison.OrdinalIgnoreCase);
+        var nativeAssociated = statusText.Contains("Native MMS associated", StringComparison.OrdinalIgnoreCase) ||
+                               statusText.Contains("Confirmed-Read", StringComparison.OrdinalIgnoreCase);
+        var nativeFailed = statusText.Contains("Native MMS initiate failed", StringComparison.OrdinalIgnoreCase);
+        var nativePending = statusText.Contains("Native transport", StringComparison.OrdinalIgnoreCase) ||
+                            statusText.Contains("Native MMS pending", StringComparison.OrdinalIgnoreCase) ||
+                            statusText.Contains("ACSE/MMS", StringComparison.OrdinalIgnoreCase) ||
+                            statusText.Contains("Not readable", StringComparison.OrdinalIgnoreCase) ||
+                            nativeAssociated ||
+                            nativeFailed;
+
+        if (good)
+        {
+            relay.Status = "Connected";
+            relay.HeartbeatText = "MMS stream active";
+            relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
+            relay.ActivityBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(34, 197, 94));
+        }
+        else if (nativePending)
+        {
+            relay.Status = nativeAssociated ? "MMS Associated" : "Transport Ready";
+            relay.HeartbeatText = nativeAssociated
+                ? "Confirmed-Read pending"
+                : nativeFailed
+                    ? "MMS initiate failed"
+                    : "Native MMS pending";
+            relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
+            relay.ActivityBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 158, 11));
+        }
+        else
+        {
+            relay.Status = string.IsNullOrWhiteSpace(relay.Status) || relay.Status.Contains("Connected", StringComparison.OrdinalIgnoreCase)
+                ? "Read warning"
+                : relay.Status;
+            relay.HeartbeatText = "MMS read warning";
+            relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
+            relay.ActivityBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(245, 158, 11));
+        }
+
+        relay.RefreshComputed();
     }
 
     private RelayEndpointView? FindRelayForBinding(BindingItem binding)
@@ -1104,6 +1475,103 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void OpenModbusServer_Click(object sender, RoutedEventArgs e)
     {
         NavigateToTab(1);
+    }
+
+
+
+    private void OpenReportStudio_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedRelay == null)
+        {
+            AddLog("WARN", "Reports", "No IED selected. Add or select an IED before editing the report plan.");
+            return;
+        }
+
+        OpenConfigurationWizardInternal($"report plan for {SelectedRelay.DisplayName}", initialStep: 2);
+    }
+
+    private async void ProbeSelectedReportControl_Click(object sender, RoutedEventArgs e)
+    {
+        var relay = SelectedRelay;
+        var rcb = SelectedReportControl;
+        if (relay == null || rcb == null)
+        {
+            ReportStudioStatusText = "Select an IED and one RCB before probing.";
+            AddLog("WARN", "Reports", ReportStudioStatusText);
+            return;
+        }
+
+        try
+        {
+            ReportStudioStatusText = $"Probing {rcb.Reference} read-only...";
+            AddLog("INFO", "Reports", $"Read-only RCB attribute probe started: {rcb.Reference}. No RptEna/reservation write will be sent.");
+            var native = await EnsureNativeClientForRelayAsync(relay).ConfigureAwait(true);
+            if (native == null)
+            {
+                ReportStudioStatusText = "Probe failed: native MMS association is not available.";
+                AddLog("ERROR", "Reports", ReportStudioStatusText);
+                return;
+            }
+
+            await native.ProbeReportControlAsync(rcb, CancellationToken.None).ConfigureAwait(true);
+            relay.SelectedReportControlReference = rcb.Reference;
+            relay.RcbName = rcb.Name;
+            relay.RcbMode = "RCB probed / polling fallback";
+            relay.ReportRuntimeMode = "Report preferred + polling fallback (planned)";
+            relay.RefreshComputed();
+            MatchSelectedDataSetToReportControl();
+            RebuildSelectedDataSetMembers();
+            Raise(nameof(SelectedReportControlSummary));
+            Raise(nameof(SelectedDataSetSummary));
+            ReportStudioStatusText = $"Probe complete: {rcb.Status}. DataSet: {(string.IsNullOrWhiteSpace(rcb.DataSetReference) ? "not confirmed" : rcb.DataSetReference)}.";
+            AddLog("INFO", "Reports", ReportStudioStatusText);
+        }
+        catch (Exception ex)
+        {
+            ReportStudioStatusText = $"Probe failed: {ex.GetType().Name}: {ex.Message}";
+            AddExceptionLog("Reports", ex, "Read-only RCB probe failed");
+        }
+    }
+
+    private void UseSelectedReportControl_Click(object sender, RoutedEventArgs e)
+    {
+        var relay = SelectedRelay;
+        var rcb = SelectedReportControl;
+        if (relay == null || rcb == null)
+        {
+            ReportStudioStatusText = "Select one RCB first.";
+            AddLog("WARN", "Reports", ReportStudioStatusText);
+            return;
+        }
+
+        relay.SelectedReportControlReference = rcb.Reference;
+        relay.RcbName = string.IsNullOrWhiteSpace(rcb.Name) ? rcb.Mode : rcb.Name;
+        relay.RcbMode = "Report selected / polling fallback";
+        relay.ReportRuntimeMode = "Report preferred + polling fallback (planned)";
+        relay.RefreshComputed();
+        ReportStudioStatusText = $"Selected {rcb.Reference} as report plan. Runtime still uses MMS polling until explicit report activation is implemented.";
+        AddLog("INFO", "Reports", ReportStudioStatusText);
+        Raise(nameof(SelectedReportControlSummary));
+    }
+
+    private async Task<NativeIec61850Client?> EnsureNativeClientForRelayAsync(RelayEndpointView relay)
+    {
+        if (_iecClient is NativeIec61850Client active && active.IsMmsReady && string.Equals(RelayIpAddress, relay.IpAddress, StringComparison.OrdinalIgnoreCase))
+            return active;
+
+        if (string.IsNullOrWhiteSpace(relay.IpAddress))
+            return null;
+
+        UseNativeIecEngine = true;
+        RelayIpAddress = NormalizeRelayIp(relay.IpAddress);
+        MmsPort = relay.MmsPort <= 0 ? 102 : relay.MmsPort;
+        if (RelayIpTextBox != null)
+            RelayIpTextBox.Text = RelayIpAddress;
+
+        await ConnectActiveIecClientAsync(RelayIpAddress, MmsPort, CancellationToken.None).ConfigureAwait(true);
+        if (_iecClient is NativeIec61850Client native && native.IsMmsReady)
+            return native;
+        return null;
     }
 
     private void Help_Click(object sender, RoutedEventArgs e)
@@ -1152,7 +1620,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Owner = this,
             RelayIpAddress = string.IsNullOrWhiteSpace(RelayIpAddress) ? (RecentRelayIps.FirstOrDefault() ?? string.Empty) : RelayIpAddress,
             MmsPort = MmsPort,
-            UseRealIecEngine = UseRealIecEngine
+            UseNativeIecEngine = true
         };
 
         TrackActiveWizard(wizard);
@@ -1180,11 +1648,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         RelayIpAddress = ip;
         MmsPort = wizard.MmsPort;
-        UseRealIecEngine = wizard.UseRealIecEngine;
+        UseNativeIecEngine = true;
         if (RelayIpTextBox != null)
             RelayIpTextBox.Text = ip;
 
-        AddLog("INFO", "IP Discovery", $"IP-only flow accepted endpoint {ip}:{MmsPort}. Starting online MMS browse before Signal Map and Modbus Binding.");
+        AddLog("INFO", "IP Discovery", $"IP-only flow accepted endpoint {ip}:{MmsPort}. Starting native online MMS browse before Signal Map and Modbus Binding.");
         _openConfigWizardAfterDiscovery = true;
         ConnectDiscover_Click(sender, e);
     }
@@ -1215,7 +1683,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 return;
             }
 
-            ApplySclImport(wizard.ImportedScl, UseRealIecEngine, wizard.RuntimeIpAddress, wizard.MmsPort, wizard.SelectedReportControl, wizard.ReportRuntimeMode);
+            ApplySclImport(wizard.ImportedScl, wizard.RuntimeIpAddress, wizard.MmsPort, wizard.SelectedReportControl, wizard.ReportRuntimeMode);
         }
         catch (Exception ex)
         {
@@ -1223,7 +1691,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void ApplySclImport(SclImportResult import, bool useRealEngine, string runtimeIpAddress, int runtimePort, SclReportControlModel? selectedRcb, string reportRuntimeMode)
+    private void ApplySclImport(SclImportResult import, string runtimeIpAddress, int runtimePort, SclReportControlModel? selectedRcb, string reportRuntimeMode)
     {
         if (IsRuntimeRunning)
         {
@@ -1251,9 +1719,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             draftBindings: draftBindings,
             runtimeIpAddress: ip,
             runtimePort: runtimePortToUse,
-            useRealEngine: useRealEngine,
+            useNativeIecEngine: true,
             suggestedIedName: displayName,
-            mode: "CID/SCD model",
+            mode: "CID/SCD model / Native IEC61850 runtime",
             status: "Configured",
             heartbeat: "Ready for runtime verification",
             sclIpAddress: sclIp,
@@ -1264,7 +1732,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             selectedRcbName: chosenRcb?.Name ?? "Polling",
             selectedRcbReference: chosenRcb?.Reference ?? string.Empty,
             reportRuntimeMode: string.IsNullOrWhiteSpace(reportRuntimeMode) ? "Static RCB candidate" : reportRuntimeMode,
-            rcbMode: import.ReportControls.Count > 0 ? "RCB candidate / MMS polling fallback" : "MMS polling");
+            rcbMode: import.ReportControls.Count > 0 ? "RCB candidate / MMS polling fallback" : "MMS polling",
+            reportInventory: BuildReportInventoryFromSclImport(import));
 
         if (!saved)
         {
@@ -1283,7 +1752,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ObservableCollection<BindingItem> draftBindings,
         string runtimeIpAddress,
         int runtimePort,
-        bool useRealEngine,
+        bool useNativeIecEngine,
         string suggestedIedName,
         string mode,
         string status,
@@ -1296,9 +1765,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         string selectedRcbName = "Polling",
         string selectedRcbReference = "",
         string reportRuntimeMode = "MMS polling only",
-        string rcbMode = "MMS polling")
+        string rcbMode = "MMS polling",
+        NativeReportInventory? reportInventory = null)
     {
-        var wizard = new IedConfigurationWizardWindow(draftSignals, draftBindings)
+        var wizard = new IedConfigurationWizardWindow(draftSignals, draftBindings, _iecClient, reportInventory, selectedRcbReference)
         {
             Owner = this
         };
@@ -1310,7 +1780,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         RelayIpAddress = runtimeIpAddress;
         MmsPort = runtimePort > 0 ? runtimePort : 102;
-        UseRealIecEngine = useRealEngine;
+        UseNativeIecEngine = useNativeIecEngine;
+        if (UseNativeIecEngine)
+            AddLog("INFO", "Native IEC61850", string.IsNullOrWhiteSpace(sclFilePath)
+                ? "IP-only workflow committed to native IEC 61850 runtime path. Online discovery is based on MMS GetNameList; polling uses the native Confirmed-Read path."
+                : "SCL workflow committed to native IEC 61850 runtime path. Open SCL remains the most deterministic route when engineering files are available.");
         if (RelayIpTextBox != null)
             RelayIpTextBox.Text = RelayIpAddress;
 
@@ -1336,19 +1810,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         relay.RcbMode = string.IsNullOrWhiteSpace(rcbMode) ? "MMS polling" : rcbMode;
         relay.ReportRuntimeMode = string.IsNullOrWhiteSpace(reportRuntimeMode) ? "MMS polling only" : reportRuntimeMode;
         relay.SelectedReportControlReference = selectedRcbReference ?? string.Empty;
-        relay.StatusBrush = RelayEndpointView.BrushForStatus(status.Contains("failed", StringComparison.OrdinalIgnoreCase) ? status : "Connected");
-        relay.ActivityBrush = RelayEndpointView.BrushForStatus("Connecting");
+        relay.StatusBrush = RelayEndpointView.BrushForStatus(status);
+        relay.ActivityBrush = RelayEndpointView.BrushForStatus(status);
+        ApplyReportInventoryToRelay(relay, reportInventory);
 
         SaveWorkspaceToRelay(relay, wizard.Signals, wizard.Bindings);
-        relay.RcbName = string.IsNullOrWhiteSpace(selectedRcbName) ? relay.RcbName : selectedRcbName;
-        relay.RcbMode = string.IsNullOrWhiteSpace(rcbMode) ? relay.RcbMode : rcbMode;
-        relay.ReportRuntimeMode = string.IsNullOrWhiteSpace(reportRuntimeMode) ? relay.ReportRuntimeMode : reportRuntimeMode;
-        relay.SelectedReportControlReference = selectedRcbReference ?? relay.SelectedReportControlReference;
+        ApplyWizardReportPlanToRelay(relay, wizard);
+        if (!string.IsNullOrWhiteSpace(selectedRcbName) && !selectedRcbName.Equals("Polling", StringComparison.OrdinalIgnoreCase))
+            relay.RcbName = selectedRcbName;
+        if (relay.ReportControls.Count == 0 && !string.IsNullOrWhiteSpace(rcbMode))
+            relay.RcbMode = rcbMode;
+        if (!string.IsNullOrWhiteSpace(reportRuntimeMode) && (relay.ReportControls.Count == 0 || !reportRuntimeMode.Equals("MMS polling only", StringComparison.OrdinalIgnoreCase)))
+            relay.ReportRuntimeMode = reportRuntimeMode;
+        if (!string.IsNullOrWhiteSpace(selectedRcbReference))
+            relay.SelectedReportControlReference = selectedRcbReference;
         relay.SclIpAddress = sclIpAddress;
         relay.SclFilePath = sclFilePath;
         relay.SclSummary = sclSummary;
-        relay.DataSetCount = dataSetCount;
-        relay.ReportControlCount = reportControlCount;
+        relay.DataSetCount = Math.Max(relay.DataSetCount, dataSetCount);
+        relay.ReportControlCount = Math.Max(relay.ReportControlCount, reportControlCount);
         relay.RefreshComputed();
 
         SetActiveRelay(relay);
@@ -1360,6 +1840,215 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Raise(nameof(BindingCount));
         AddLog("INFO", "Wizard", $"{relay.DisplayName} committed to runtime. Selected IEC signals: {relay.Signals.Count(s => s.IsSelected)}. Published Modbus map: {PublishedModbusBindings.Count} binding(s) from all saved IEDs.");
         return true;
+    }
+
+
+
+    private static NativeReportInventory BuildReportInventoryFromRelay(RelayEndpointView relay)
+    {
+        var inventory = new NativeReportInventory();
+        foreach (var ds in relay.DataSets)
+            inventory.DataSets.Add(CloneDataSetCandidate(ds));
+        foreach (var rcb in relay.ReportControls)
+            inventory.ReportControls.Add(CloneReportControlCandidate(rcb));
+        return inventory;
+    }
+
+    private void ApplyWizardReportPlanToRelay(RelayEndpointView relay, IedConfigurationWizardWindow wizard)
+    {
+        relay.SelectedReportControlReference = wizard.SelectedReportControlReference;
+        if (string.IsNullOrWhiteSpace(wizard.SelectedReportControlReference))
+        {
+            relay.RcbName = "Polling";
+            relay.RcbMode = "MMS polling";
+            relay.ReportRuntimeMode = "MMS polling only";
+            relay.RefreshComputed();
+            return;
+        }
+
+        relay.RcbName = string.IsNullOrWhiteSpace(wizard.SelectedReportControlName) ? "Report Plan" : wizard.SelectedReportControlName;
+        relay.RcbMode = "Report planned / MMS polling fallback";
+        relay.ReportRuntimeMode = wizard.ReportRuntimeMode;
+        relay.RefreshComputed();
+    }
+
+    private static NativeReportInventory BuildReportInventoryFromSclImport(SclImportResult import)
+    {
+        var inventory = new NativeReportInventory();
+        foreach (var ds in import.DataSets)
+        {
+            inventory.DataSets.Add(new NativeDataSetCandidate
+            {
+                Domain = ds.LogicalDevice,
+                LogicalNode = string.IsNullOrWhiteSpace(ds.LogicalNode) ? "LLN0" : ds.LogicalNode,
+                Name = ds.Name,
+                Reference = ds.Reference,
+                RawMmsName = "SCL"
+            });
+        }
+
+        foreach (var rcb in import.ReportControls)
+        {
+            var parsed = ParseReportReference(rcb.Reference, rcb.Buffered);
+            inventory.ReportControls.Add(new NativeReportControlCandidate
+            {
+                Domain = parsed.Domain,
+                LogicalNode = parsed.LogicalNode,
+                FunctionalConstraint = rcb.Buffered ? "BR" : "RP",
+                Name = string.IsNullOrWhiteSpace(rcb.Name) ? parsed.Name : rcb.Name,
+                Reference = rcb.Reference,
+                Buffered = rcb.Buffered,
+                DataSetReference = rcb.DataSetReference,
+                ReportId = rcb.ReportId,
+                IntegrityPeriodMs = rcb.IntegrityPeriodMs > 0 ? rcb.IntegrityPeriodMs.ToString() : string.Empty,
+                Status = "SCL inventory",
+                Attributes = new List<string> { "RptID", "DatSet", "ConfRev", "OptFlds", "TrgOps", "IntgPd", "RptEna" }
+            });
+        }
+
+        return inventory;
+    }
+
+    private static (string Domain, string LogicalNode, string Name) ParseReportReference(string reference, bool buffered)
+    {
+        var domain = string.Empty;
+        var logicalNode = "LLN0";
+        var name = string.Empty;
+        if (!string.IsNullOrWhiteSpace(reference))
+        {
+            var slash = reference.IndexOf('/');
+            if (slash > 0)
+            {
+                domain = reference[..slash];
+                var rest = reference[(slash + 1)..];
+                var parts = rest.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (parts.Length > 0) logicalNode = parts[0];
+                if (parts.Length > 0) name = parts[^1];
+            }
+        }
+        if (string.IsNullOrWhiteSpace(name)) name = buffered ? "BRCB" : "URCB";
+        return (domain, logicalNode, name);
+    }
+
+    private void ApplyReportInventoryToRelay(RelayEndpointView relay, NativeReportInventory? inventory)
+    {
+        relay.DataSets.Clear();
+        relay.ReportControls.Clear();
+        relay.DataSetMembers.Clear();
+
+        if (inventory != null)
+        {
+            foreach (var ds in inventory.DataSets.OrderBy(x => x.Domain).ThenBy(x => x.LogicalNode).ThenBy(x => x.Name))
+                relay.DataSets.Add(CloneDataSetCandidate(ds));
+            foreach (var rcb in inventory.ReportControls.OrderByDescending(x => x.Buffered).ThenBy(x => x.Domain).ThenBy(x => x.LogicalNode).ThenBy(x => x.Name))
+                relay.ReportControls.Add(CloneReportControlCandidate(rcb));
+        }
+
+        relay.DataSetCount = relay.DataSets.Count;
+        relay.ReportControlCount = relay.ReportControls.Count;
+        if (relay.ReportControls.Count > 0 && string.IsNullOrWhiteSpace(relay.SelectedReportControlReference))
+            relay.SelectedReportControlReference = relay.ReportControls[0].Reference;
+        if (relay.ReportControls.Count > 0 && relay.RcbName.Equals("Polling", StringComparison.OrdinalIgnoreCase))
+            relay.RcbName = relay.ReportControls[0].Name;
+        if (relay.ReportControls.Count > 0)
+        {
+            relay.RcbMode = "Report plan ready / polling fallback";
+            relay.ReportRuntimeMode = "Report plan ready / polling fallback";
+        }
+        relay.RefreshComputed();
+    }
+
+    private static NativeDataSetCandidate CloneDataSetCandidate(NativeDataSetCandidate ds) => new()
+    {
+        Domain = ds.Domain,
+        LogicalNode = ds.LogicalNode,
+        Name = ds.Name,
+        Reference = ds.Reference,
+        RawMmsName = ds.RawMmsName
+    };
+
+    private static NativeReportControlCandidate CloneReportControlCandidate(NativeReportControlCandidate rcb) => new()
+    {
+        Domain = rcb.Domain,
+        LogicalNode = rcb.LogicalNode,
+        FunctionalConstraint = rcb.FunctionalConstraint,
+        Name = rcb.Name,
+        Reference = rcb.Reference,
+        Buffered = rcb.Buffered,
+        DataSetReference = rcb.DataSetReference,
+        ReportId = rcb.ReportId,
+        ConfRev = rcb.ConfRev,
+        IntegrityPeriodMs = rcb.IntegrityPeriodMs,
+        EnabledState = rcb.EnabledState,
+        Status = rcb.Status,
+        Attributes = rcb.Attributes.ToList()
+    };
+
+    private void MatchSelectedDataSetToReportControl()
+    {
+        if (SelectedRelay == null || SelectedReportControl == null)
+            return;
+
+        var target = SelectedReportControl.DataSetReference;
+        if (string.IsNullOrWhiteSpace(target))
+            return;
+
+        var match = SelectedRelay.DataSets.FirstOrDefault(ds => ReferencesMatch(ds.Reference, target));
+        if (match != null && !ReferenceEquals(match, SelectedDataSet))
+        {
+            _selectedDataSet = match; // avoid setter recursion; caller raises computed state.
+            Raise(nameof(SelectedDataSet));
+        }
+    }
+
+    private static bool ReferencesMatch(string a, string b)
+    {
+        static string Clean(string x) => (x ?? string.Empty).Trim().Replace('$', '.').Replace("//", "/");
+        var left = Clean(a);
+        var right = Clean(b);
+        if (left.Equals(right, StringComparison.OrdinalIgnoreCase)) return true;
+        return left.EndsWith(right, StringComparison.OrdinalIgnoreCase) || right.EndsWith(left, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RebuildSelectedDataSetMembers()
+    {
+        if (SelectedRelay == null)
+            return;
+
+        SelectedRelay.DataSetMembers.Clear();
+        var selectedDataSet = SelectedDataSet;
+        if (selectedDataSet == null)
+            return;
+
+        // Online MMS GetNameList exposes DataSet names but not member directory yet. Until the native
+        // DataSetDirectory service lands, show selected runtime signals as coverage hints. SCL imports
+        // already mark signal DataSetReference when the engineering file contained FCDA members.
+        var directMembers = SelectedRelay.Signals
+            .Where(s => !string.IsNullOrWhiteSpace(s.DataSetReference) && ReferencesMatch(s.DataSetReference, selectedDataSet.Reference))
+            .OrderBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (directMembers.Count == 0)
+        {
+            directMembers = SelectedRelay.Signals
+                .Where(s => s.IsSelected)
+                .OrderBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
+                .Take(80)
+                .ToList();
+        }
+
+        foreach (var signal in directMembers)
+        {
+            SelectedRelay.DataSetMembers.Add(new ReportDataSetMemberView
+            {
+                DataSetReference = selectedDataSet.Reference,
+                ObjectReference = signal.ObjectReference,
+                FunctionalConstraint = signal.FunctionalConstraint,
+                DataType = signal.DataType,
+                Coverage = string.IsNullOrWhiteSpace(signal.DataSetReference) ? "Selected signal / awaiting DataSet directory" : "Covered by DataSet",
+                Source = string.IsNullOrWhiteSpace(signal.DataSetReference) ? "Runtime selection hint" : "SCL FCDA"
+            });
+        }
     }
 
     private void RestoreWorkspaceAfterDraftCancel()
@@ -1438,7 +2127,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Owner = this,
             RelayIpAddress = relay.IpAddress,
             MmsPort = relay.MmsPort,
-            UseRealIecEngine = UseRealIecEngine
         };
 
         TrackActiveWizard(wizard);
@@ -1446,7 +2134,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             RelayIpAddress = NormalizeRelayIp(wizard.RelayIpAddress);
             MmsPort = wizard.MmsPort;
-            UseRealIecEngine = wizard.UseRealIecEngine;
+            UseNativeIecEngine = true;
             if (RelayIpTextBox != null)
                 RelayIpTextBox.Text = RelayIpAddress;
             AddLog("INFO", "Relay", $"Re-discovering edited IED endpoint {RelayIpAddress}:{MmsPort}. Configuration wizard will open after discovery.");
@@ -1472,7 +2160,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             relay.StatusBrush = RelayEndpointView.BrushForStatus("Disconnected");
             relay.RefreshComputed();
 
-            // In this MVP there is still one active IEC client instance. Disconnecting the active IED
+            // There is currently one active IEC client instance. Disconnecting the active IED
             // closes the IEC session but intentionally does NOT stop the Modbus TCP server/runtime.
             if (_iecClient != null && string.Equals(RelayIpAddress, relay.IpAddress, StringComparison.OrdinalIgnoreCase))
             {
@@ -1553,6 +2241,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         relay.ModbusBindings.Clear();
         relay.Signals.Clear();
+        relay.DataSets.Clear();
+        relay.ReportControls.Clear();
+        relay.DataSetMembers.Clear();
 
         for (var i = Bindings.Count - 1; i >= 0; i--)
         {
@@ -1651,7 +2342,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             IpAddress = RelayIpAddress,
             MmsPort = MmsPort,
             Status = IedConnectionStatus,
-            Mode = UseRealIecEngine ? "Real MMS" : "Mock/MMS",
+            Mode = "Native MMS",
             TagCount = Signals.Count,
             HeartbeatText = "Idle",
             IsActive = true,
@@ -1685,6 +2376,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         relay.StatusBrush = RelayEndpointView.BrushForStatus(status);
         relay.ActivityBrush = RelayEndpointView.BrushForStatus(status.Contains("Connected", StringComparison.OrdinalIgnoreCase) ? "Connecting" : status);
         SaveWorkspaceToRelay(relay, Signals, relay.ModbusBindings.Count > 0 ? relay.ModbusBindings : new ObservableCollection<BindingItem>());
+        if (_iecClient is NativeIec61850Client nativeClient)
+            ApplyReportInventoryToRelay(relay, nativeClient.LastReportInventory);
         relay.RefreshComputed();
         SetActiveRelay(relay);
     }
@@ -1729,16 +2422,31 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (relay != null)
         {
             relay.LastMmsActivityUtc = DateTime.Now;
-            relay.ActivityBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(34, 197, 94));
-            relay.HeartbeatText = "MMS stream active";
-            if (!relay.Status.Contains("failed", StringComparison.OrdinalIgnoreCase) && !relay.Status.Contains("error", StringComparison.OrdinalIgnoreCase))
+
+            if (binding != null && !binding.Quality.Equals("Good", StringComparison.OrdinalIgnoreCase))
             {
-                relay.Status = "Connected";
-                relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
+                ApplyRelayRuntimeReadState(relay, binding);
             }
-            relay.RefreshComputed();
+            else
+            {
+                relay.ActivityBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(34, 197, 94));
+                relay.HeartbeatText = "MMS stream active";
+                if (!relay.Status.Contains("failed", StringComparison.OrdinalIgnoreCase) && !relay.Status.Contains("error", StringComparison.OrdinalIgnoreCase))
+                {
+                    relay.Status = "Connected";
+                    relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
+                }
+                relay.RefreshComputed();
+            }
+
             if (relay.IsActive)
                 Raise(nameof(ActiveRelaySubtitle));
+                SelectedReportControl = SelectedRelay?.ReportControls.FirstOrDefault(r => string.Equals(r.Reference, SelectedRelay.SelectedReportControlReference, StringComparison.OrdinalIgnoreCase))
+                    ?? SelectedRelay?.ReportControls.FirstOrDefault();
+                SelectedDataSet = SelectedRelay?.DataSets.FirstOrDefault(ds => SelectedReportControl != null && string.Equals(ds.Reference, SelectedReportControl.DataSetReference, StringComparison.OrdinalIgnoreCase))
+                    ?? SelectedRelay?.DataSets.FirstOrDefault();
+                Raise(nameof(SelectedReportControlSummary));
+                Raise(nameof(SelectedDataSetSummary));
         }
     }
 
@@ -1781,6 +2489,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             IecReference = binding.IecReference,
             Value = binding.CurrentValue,
             Quality = binding.Quality,
+            DeviceTimestamp = binding.DeviceTimestamp,
             Timestamp = binding.LastUpdate,
             Status = binding.Status,
             Sequence = binding.Sequence
@@ -1808,6 +2517,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (signal == null) continue;
             signal.Value = snapshot.Value;
             signal.Quality = snapshot.Quality;
+            signal.DeviceTimestamp = snapshot.DeviceTimestamp;
             signal.Timestamp = snapshot.Timestamp;
             applied++;
         }
@@ -1817,6 +2527,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Raise(nameof(VisibleSignalCountText));
             if (SelectedRelay != null)
                 Raise(nameof(ActiveRelaySubtitle));
+                SelectedReportControl = SelectedRelay?.ReportControls.FirstOrDefault(r => string.Equals(r.Reference, SelectedRelay.SelectedReportControlReference, StringComparison.OrdinalIgnoreCase))
+                    ?? SelectedRelay?.ReportControls.FirstOrDefault();
+                SelectedDataSet = SelectedRelay?.DataSets.FirstOrDefault(ds => SelectedReportControl != null && string.Equals(ds.Reference, SelectedReportControl.DataSetReference, StringComparison.OrdinalIgnoreCase))
+                    ?? SelectedRelay?.DataSets.FirstOrDefault();
+                Raise(nameof(SelectedReportControlSummary));
+                Raise(nameof(SelectedDataSetSummary));
         }
     }
 
@@ -1861,6 +2577,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 Source = s.Source,
                 Value = s.Value,
                 Quality = s.Quality,
+                DeviceTimestamp = s.DeviceTimestamp,
+                ProbeStatus = s.ProbeStatus,
                 Timestamp = s.Timestamp
             });
         }
@@ -1883,6 +2601,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             IedName = b.IedName,
             RelayIpAddress = b.RelayIpAddress,
             IsEnabled = b.IsEnabled,
+            PublishToModbus = b.PublishToModbus,
+            PublishToMqtt = b.PublishToMqtt,
             SignalName = b.SignalName,
             IecReference = b.IecReference,
             FunctionalConstraint = b.FunctionalConstraint,
@@ -1902,8 +2622,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Scale = b.Scale,
             Offset = b.Offset,
             FuxaTagName = b.FuxaTagName,
+            MqttTopic = b.MqttTopic,
             CurrentValue = b.CurrentValue,
             Quality = b.Quality,
+            DeviceTimestamp = b.DeviceTimestamp,
             Status = b.Status,
             Sequence = b.Sequence,
             LastUpdate = b.LastUpdate,
@@ -1946,10 +2668,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         relay.TagCount = relay.Signals.Count(s => s.IsSelected);
-        relay.RcbName = DetectRcbNameForRelay(relay.Signals);
-        relay.RcbMode = relay.Signals.Any(s => s.IsReportCapable) ? "SCL report-aware / MMS polling" : "MMS polling";
-        relay.ReportControlCount = Math.Max(relay.ReportControlCount, relay.Signals.Select(s => s.ReportControlReference).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
-        relay.DataSetCount = Math.Max(relay.DataSetCount, relay.Signals.Select(s => s.DataSetReference).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        if (relay.ReportControls.Count > 0)
+        {
+            var selected = relay.ReportControls.FirstOrDefault(r => string.Equals(r.Reference, relay.SelectedReportControlReference, StringComparison.OrdinalIgnoreCase))
+                ?? relay.ReportControls.FirstOrDefault();
+            relay.RcbName = selected == null ? "Report Plan" : selected.Name;
+            relay.RcbMode = "Report plan ready / MMS polling fallback";
+        }
+        else
+        {
+            relay.RcbName = DetectRcbNameForRelay(relay.Signals);
+            relay.RcbMode = relay.Signals.Any(s => s.IsReportCapable) ? "Report-aware / MMS polling fallback" : "MMS polling";
+        }
+        relay.ReportControlCount = Math.Max(relay.ReportControls.Count, relay.Signals.Select(s => s.ReportControlReference).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        relay.DataSetCount = Math.Max(relay.DataSets.Count, relay.Signals.Select(s => s.DataSetReference).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         relay.RefreshComputed();
     }
 
@@ -1962,6 +2694,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (target == null) continue;
             target.Value = signal.Value;
             target.Quality = signal.Quality;
+            target.DeviceTimestamp = signal.DeviceTimestamp;
+            target.ProbeStatus = signal.ProbeStatus;
             target.Timestamp = signal.Timestamp;
         }
     }
@@ -2155,7 +2889,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private (string IpAddress, int Port) ResolveSingleRuntimeEndpoint()
     {
-        var binding = PublishedModbusBindings.FirstOrDefault(b => b.IsEnabled) ?? PublishedModbusBindings.FirstOrDefault();
+        var binding = PublishedModbusBindings.FirstOrDefault(IsRoutedBinding) ?? PublishedModbusBindings.FirstOrDefault();
         var relay = binding == null
             ? SelectedRelay
             : Relays.FirstOrDefault(r => !string.IsNullOrWhiteSpace(binding.RelayId) && string.Equals(r.RelayId, binding.RelayId, StringComparison.OrdinalIgnoreCase))
@@ -2179,12 +2913,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                string.Equals(_iecClientEndpointKey, BuildIecEndpointKey(ipAddress, port), StringComparison.OrdinalIgnoreCase);
     }
 
+    private IIec61850Client CreateConfiguredIecClient()
+    {
+        return UseNativeIecEngine
+            ? new NativeIec61850Client()
+            : new MockIec61850Client();
+    }
+
     private async Task ConnectActiveIecClientAsync(string ipAddress, int port, CancellationToken cancellationToken)
     {
         await DisposeActiveIecClientAsync();
-        _iecClient = UseRealIecEngine
-            ? new RealLibIec61850Client()
-            : new MockIec61850Client();
+        _iecClient = CreateConfiguredIecClient();
         await _iecClient.ConnectAsync(ipAddress, port, cancellationToken);
         _iecClientEndpointKey = _iecClient.IsConnected ? BuildIecEndpointKey(ipAddress, port) : "";
     }
@@ -2200,6 +2939,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     private static string BuildIecEndpointKey(string ipAddress, int port) => $"{NormalizeRelayIp(ipAddress)}:{(port <= 0 ? 102 : port)}";
+
+    private static MqttGatewaySettings CloneMqttSettings(MqttGatewaySettings settings)
+    {
+        return new MqttGatewaySettings
+        {
+            IsEnabled = settings.IsEnabled,
+            BrokerHost = string.IsNullOrWhiteSpace(settings.BrokerHost) ? "127.0.0.1" : settings.BrokerHost.Trim(),
+            BrokerPort = settings.BrokerPort is > 0 and <= 65535 ? settings.BrokerPort : 1883,
+            ClientId = string.IsNullOrWhiteSpace(settings.ClientId) ? $"arserver-{Environment.MachineName}".ToLowerInvariant() : settings.ClientId.Trim(),
+            TopicRoot = string.IsNullOrWhiteSpace(settings.TopicRoot) ? "arserver" : settings.TopicRoot.Trim(),
+            QualityOfService = Math.Clamp(settings.QualityOfService, 0, 1),
+            RetainLastValue = settings.RetainLastValue,
+            PublishJsonState = settings.PublishJsonState,
+            Username = settings.Username?.Trim() ?? "",
+            Password = settings.Password ?? ""
+        };
+    }
 
     private static string NormalizeRelayIp(string? value)
     {
@@ -2316,7 +3072,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 try
                 {
-                    NavigateToTab(2);
+                    NavigateToTab(3);
                 }
                 finally
                 {

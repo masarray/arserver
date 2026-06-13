@@ -3,14 +3,21 @@ namespace Ari61850Bridge.Models;
 public class BindingItem : ObservableObject
 {
     private bool _isEnabled = true;
+    private bool _publishToModbus = true;
+    private bool _publishToMqtt = true;
     private string _currentValue = "-";
     private string _quality = "Unknown";
+    private string _deviceTimestamp = "-";
     private string _status = "Idle";
     private int _sequence;
     private DateTime _lastUpdate = DateTime.MinValue;
     private int _ageMs;
+    private int _pollingIntervalMs = 1000;
+    private int _staleTimeoutMs = 3000;
 
     public bool IsEnabled { get => _isEnabled; set => Set(ref _isEnabled, value); }
+    public bool PublishToModbus { get => _publishToModbus; set => Set(ref _publishToModbus, value); }
+    public bool PublishToMqtt { get => _publishToMqtt; set => Set(ref _publishToMqtt, value); }
     public string RelayId { get; set; } = "";
     public string IedName { get; set; } = "";
     public string RelayIpAddress { get; set; } = "";
@@ -24,8 +31,8 @@ public class BindingItem : ObservableObject
     public string RcbMode { get; set; } = "Auto";
     public string DataSetReference { get; set; } = "";
     public string ReportControlReference { get; set; } = "";
-    public int PollingIntervalMs { get; set; } = 1000;
-    public int StaleTimeoutMs { get; set; } = 3000;
+    public int PollingIntervalMs { get => _pollingIntervalMs; set => Set(ref _pollingIntervalMs, value); }
+    public int StaleTimeoutMs { get => _staleTimeoutMs; set => Set(ref _staleTimeoutMs, value); }
 
     public string ModbusArea { get; set; } = "HoldingRegister";
     public int ModbusAddress { get; set; }
@@ -34,9 +41,11 @@ public class BindingItem : ObservableObject
     public double Scale { get; set; } = 1.0;
     public double Offset { get; set; } = 0.0;
     public string FuxaTagName { get; set; } = "";
+    public string MqttTopic { get; set; } = "";
 
     public string CurrentValue { get => _currentValue; set => Set(ref _currentValue, value); }
     public string Quality { get => _quality; set => Set(ref _quality, value); }
+    public string DeviceTimestamp { get => _deviceTimestamp; set => Set(ref _deviceTimestamp, string.IsNullOrWhiteSpace(value) ? "-" : value); }
     public string Status { get => _status; set => Set(ref _status, value); }
     public int Sequence { get => _sequence; set => Set(ref _sequence, value); }
     public DateTime LastUpdate { get => _lastUpdate; set => Set(ref _lastUpdate, value); }

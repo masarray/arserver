@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest an improvement for ARServer.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow gap
+      description: Explain the user workflow this feature would improve.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior, UI, output, or documentation improvement.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: How this can be validated
+      description: Describe a demo-mode, bench, Modbus, MQTT, or documentation check that proves the feature works.

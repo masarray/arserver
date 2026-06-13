@@ -8,6 +8,13 @@
     <AssemblyName>ArServer</AssemblyName>
     <RootNamespace>Ari61850Bridge</RootNamespace>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
+    <Authors>masarray</Authors>
+    <Description>Open-source Windows IEC 61850 MMS to Modbus TCP and MQTT gateway for HMI, SCADA, relay testing, FAT/SAT, and substation automation labs.</Description>
+    <Version>1.0.1</Version>
+    <PackageTags>iec61850;iec-61850;mms;modbus-tcp;mqtt;scada;hmi;substation-automation;relay-testing;wpf;dotnet;windows</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/masarray/arserver</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/masarray/arserver</PackageProjectUrl>
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets\gateway-hero.png" />
@@ -17,5 +24,8 @@
     <Resource Include="Assets\arserver-logo-horizontal.png" />
     <Resource Include="Assets\arserver-logo-header.png" />
     <Resource Include="Assets\arserver-logo-light.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MQTTnet" Version="5.1.0.1559" />
   </ItemGroup>
 </Project>

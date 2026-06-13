@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a reproducible ARServer issue with sanitized information.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an ARServer issue. Please remove private engineering data before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: ARServer version
+      placeholder: "1.0.0-public-beta"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Connection mode
+      options:
+        - Demo mode
+        - Live IED
+        - Modbus TCP only
+        - MQTT only
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Open...\n2. Click...\n3. Observe..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Sanitized context
+      description: Add screenshots, sanitized log excerpts, or public test model details only.

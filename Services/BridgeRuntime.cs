@@ -6,14 +6,22 @@ namespace Ari61850Bridge.Services;
 
 public sealed class BridgeRuntime : IAsyncDisposable
 {
+    public const int MinimumMmsPollingIntervalMs = 10;
+    public const int DefaultMmsPollingIntervalMs = 1000;
+    public const int MaximumMmsPollingIntervalMs = 600000;
+
     private IIec61850Client _iecClient;
     private readonly Func<IIec61850Client>? _iecClientFactory;
     private readonly Dictionary<string, RelayEndpointView> _relayIndex;
     private readonly Dictionary<string, IIec61850Client> _relayClients = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _ownedRelayClientIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly ModbusTcpServer _modbusServer = new();
+    private readonly MqttGatewayPublisher _mqttPublisher = new();
     private readonly List<BindingItem> _bindings;
     private readonly CancellationTokenSource _cts = new();
+    private readonly bool _enableModbusTcp;
+    private readonly bool _fastAcquisitionEnabled;
+    private readonly MqttGatewaySettings _mqttSettings;
     private Task? _loopTask;
     private DateTime _lastModbusCounterSnapshot = DateTime.Now;
     private DateTime _lastModbusActivityLog = DateTime.MinValue;
@@ -21,8 +29,17 @@ public sealed class BridgeRuntime : IAsyncDisposable
     private bool _iecDisconnectedLogged;
     private readonly Dictionary<string, DateTime> _lastPerTagReadWarning = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTime> _nextPollDueUtc = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTime> _nextCompanionPollDueUtc = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _lastCompanionQualityByBindingKey = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _lastCompanionTimestampByBindingKey = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _roundRobinCursorByRelay = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<ReportControlPlan> _reportPlans = new();
+    private readonly Dictionary<string, ReportControlPlan> _reportPlanByBindingKey = new(StringComparer.OrdinalIgnoreCase);
     private const int MaxReadsPerIedPerCycle = 8;
+    private const int MaxFastReadsPerIedPerCycle = 16;
+    private const int MaxNormalReadsPerIedPerCycleWhenFastLaneActive = 4;
+    private const int SlowSchedulerDelayMs = 120;
+    private const int FastSchedulerDelayMs = 2;
 
     public event Action<DiagnosticEntry>? Diagnostic;
     public event Action<BindingItem>? BindingUpdated;
@@ -32,7 +49,15 @@ public sealed class BridgeRuntime : IAsyncDisposable
     public int ClientCount => _modbusServer.ClientCount;
     public long ModbusReadCount => _modbusServer.ReadRequestCount;
     public string LastClientEndpoint => _modbusServer.LastClientEndpoint;
-    public string EventMode { get; private set; } = "Mock Polling Simulation";
+    public bool MqttIsConnected => _mqttPublisher.IsConnected;
+    public long MqttPublishedCount => _mqttPublisher.PublishedCount;
+    public long MqttDroppedCount => _mqttPublisher.DroppedCount;
+    public string MqttEndpointText => _mqttPublisher.EndpointText;
+    public string EventMode { get; private set; } = "Demo Polling Simulation";
+
+    private static bool IsDemoClient(IIec61850Client client) =>
+        client.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase) ||
+        client.ConnectionMode.Contains("Demo", StringComparison.OrdinalIgnoreCase);
 
     public void ReplaceIecClient(IIec61850Client iecClient)
     {
@@ -40,27 +65,38 @@ public sealed class BridgeRuntime : IAsyncDisposable
         _iecDisconnectedLogged = false;
         _relayClients.Clear();
         _ownedRelayClientIds.Clear();
-        EventMode = _iecClient.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase)
-            ? "Mock Polling Simulation"
+        EventMode = IsDemoClient(_iecClient)
+            ? "Demo Polling Simulation"
             : "IEC61850 MMS Polling";
         Log("INFO", "Runtime", "IEC 61850 client session refreshed. Modbus TCP server remained running.");
     }
 
     public BridgeRuntime(IIec61850Client iecClient, IEnumerable<BindingItem> bindings)
-        : this(iecClient, bindings, Enumerable.Empty<RelayEndpointView>(), null)
+        : this(iecClient, bindings, Enumerable.Empty<RelayEndpointView>(), null, true, new MqttGatewaySettings())
     {
     }
 
-    public BridgeRuntime(IIec61850Client iecClient, IEnumerable<BindingItem> bindings, IEnumerable<RelayEndpointView> relays, Func<IIec61850Client>? iecClientFactory)
+    public BridgeRuntime(
+        IIec61850Client iecClient,
+        IEnumerable<BindingItem> bindings,
+        IEnumerable<RelayEndpointView> relays,
+        Func<IIec61850Client>? iecClientFactory,
+        bool enableModbusTcp,
+        MqttGatewaySettings mqttSettings,
+        bool fastAcquisitionEnabled = true)
     {
         _iecClient = iecClient;
         _iecClientFactory = iecClientFactory;
-        _bindings = bindings.Where(b => b.IsEnabled).ToList();
+        _enableModbusTcp = enableModbusTcp;
+        _fastAcquisitionEnabled = fastAcquisitionEnabled;
+        _mqttSettings = mqttSettings;
+        _bindings = bindings.Where(b => b.IsEnabled && (b.PublishToModbus || b.PublishToMqtt)).ToList();
         _relayIndex = relays
             .Where(r => !string.IsNullOrWhiteSpace(r.RelayId))
             .GroupBy(r => r.RelayId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         _modbusServer.Log += (level, message) => Log(level, "Modbus", message);
+        _mqttPublisher.Log += (level, message) => Log(level, "MQTT", message);
     }
 
     public async Task StartAsync(string modbusBindAddress, int modbusPort, int unitId)
@@ -68,25 +104,48 @@ public sealed class BridgeRuntime : IAsyncDisposable
         if (IsRunning) return;
 
         PrepareBindingsForRuntimeStart();
+        BuildReportPlansForRuntimeStart();
         await EnsureIecClientsAsync(_cts.Token);
 
         var safeUnitId = unitId < 1 || unitId > 247 ? 1 : unitId;
-        await _modbusServer.StartAsync(modbusBindAddress, modbusPort, (byte)safeUnitId, _cts.Token);
+        if (_enableModbusTcp)
+            await _modbusServer.StartAsync(modbusBindAddress, modbusPort, (byte)safeUnitId, _cts.Token);
+        else
+            Log("INFO", "Modbus", "Modbus TCP output is disabled for this runtime session.");
+
+        await _mqttPublisher.StartAsync(_mqttSettings, _cts.Token);
         IsRunning = true;
         EventMode = ResolveRuntimeMode();
 
-        Log("INFO", "Runtime", $"Runtime started. Active bindings: {_bindings.Count}. Scheduler: max {MaxReadsPerIedPerCycle} MMS reads/IED/cycle, UI grid uses buffered snapshots.");
+        var fastestPollMs = _bindings.Count == 0 ? DefaultMmsPollingIntervalMs : _bindings.Min(GetPollIntervalMs);
+        var fastCandidateCount = _fastAcquisitionEnabled ? _bindings.Count(IsFastAcquisitionCandidate) : 0;
+        Log("INFO", "Runtime", $"Runtime started. Active bindings: {_bindings.Count}. Scheduler: target fastest MMS poll {fastestPollMs} ms, fast CB lane {(_fastAcquisitionEnabled ? "ON" : "OFF")} ({fastCandidateCount} candidate point(s)), UI grid uses buffered snapshots.");
+        if (_reportPlans.Count > 0)
+            Log("INFO", "Reports", $"Report-aware runtime planner active: {_reportPlans.Count} RCB/DataSet plan(s), {_reportPlans.Sum(p => p.BindingCount)} mapped tag(s). Polling remains the safe fallback until native RCB activation is enabled.");
+        if (fastestPollMs <= 50)
+            Log("WARN", "Runtime", "Fast MMS polling mode is enabled. Effective speed still depends on relay response time, network latency, number of active tags, and MMS server limits; use reports/RCB for critical event capture when available.");
+        if (_fastAcquisitionEnabled)
+            Log("INFO", "Runtime", "Fast CB acquisition lane is active: CB position/status/Boolean/protection flags are scheduled before measurements and quality/timestamp points.");
         Log("INFO", "Runtime", $"IEC source mode: {EventMode}.");
-        Log("INFO", "Runtime", $"Modbus TCP slave/server ready on {modbusBindAddress}:{modbusPort}, Unit ID {safeUnitId}.");
+        if (_enableModbusTcp)
+            Log("INFO", "Runtime", $"Modbus TCP slave/server ready on {modbusBindAddress}:{modbusPort}, Unit ID {safeUnitId}.");
+        if (_mqttSettings.IsEnabled)
+            Log("INFO", "Runtime", $"MQTT publisher enabled for broker {_mqttSettings.BrokerHost}:{_mqttSettings.BrokerPort}, topic root '{_mqttSettings.TopicRoot}'.");
         _loopTask = Task.Run(RuntimeLoopAsync);
     }
 
     private string ResolveRuntimeMode()
     {
         var relayCount = _bindings.Select(b => string.IsNullOrWhiteSpace(b.RelayId) ? "__single__" : b.RelayId).Distinct(StringComparer.OrdinalIgnoreCase).Count();
-        if (_iecClient.ConnectionMode.Contains("Mock", StringComparison.OrdinalIgnoreCase))
-            return relayCount > 1 ? "Mock Multi-IED Polling" : "Mock Polling Simulation";
-        return relayCount > 1 ? "IEC61850 MMS Polling / Multi-IED" : "IEC61850 MMS Polling";
+        if (IsDemoClient(_iecClient))
+            return relayCount > 1 ? "Demo Multi-IED Polling" : "Demo Polling Simulation";
+        var mode = _iecClient is NativeIec61850Client native
+            ? native.IsMmsReady
+                ? (relayCount > 1 ? "Native IEC61850 ACSE/MMS Associated / Multi-IED" : "Native IEC61850 ACSE/MMS Associated")
+                : (relayCount > 1 ? "Native IEC61850 Transport / ACSE Probe / Multi-IED" : "Native IEC61850 Transport / ACSE Probe")
+            : relayCount > 1 ? "IEC61850 MMS Polling / Multi-IED" : "IEC61850 MMS Polling";
+        if (_reportPlans.Count > 0) mode += " + Report Planner";
+        return _fastAcquisitionEnabled ? $"{mode} + Fast CB Lane" : mode;
     }
 
     private async Task EnsureIecClientsAsync(CancellationToken token)
@@ -131,8 +190,8 @@ public sealed class BridgeRuntime : IAsyncDisposable
             if (!client.IsConnected)
             {
                 MarkGroupDisconnected(group, "IEC connect failed");
-                if (client is RealLibIec61850Client real && !string.IsNullOrWhiteSpace(real.LastErrorMessage))
-                    Log("ERROR", "IEC61850", $"{display} {ip}:{port}: {real.LastErrorMessage}");
+                if (client is NativeIec61850Client native && !string.IsNullOrWhiteSpace(native.LastErrorMessage))
+                    Log("ERROR", "Native IEC61850", $"{display} {ip}:{port}: {native.LastErrorMessage}");
                 else
                     Log("ERROR", "IEC61850", $"{display} {ip}:{port}: MMS client connection failed.");
 
@@ -142,7 +201,10 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
             _relayClients[relayId] = client;
             _ownedRelayClientIds.Add(relayId);
-            Log("INFO", "IEC61850", $"{display} {ip}:{port}: isolated MMS client connected.");
+            if (client is NativeIec61850Client nativeStarted)
+                Log("INFO", "Native IEC61850", $"{display} {ip}:{port}: native session state={nativeStarted.NativeState}. {nativeStarted.LastErrorMessage}");
+            else
+                Log("INFO", "IEC61850", $"{display} {ip}:{port}: isolated MMS client connected.");
         }
     }
 
@@ -164,6 +226,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
         {
             try { await _loopTask; } catch { }
         }
+        await _mqttPublisher.StopAsync();
         await _modbusServer.StopAsync();
 
         foreach (var relayId in _ownedRelayClientIds.ToList())
@@ -183,6 +246,9 @@ public sealed class BridgeRuntime : IAsyncDisposable
     private void PrepareBindingsForRuntimeStart()
     {
         _nextPollDueUtc.Clear();
+        _nextCompanionPollDueUtc.Clear();
+        _lastCompanionQualityByBindingKey.Clear();
+        _lastCompanionTimestampByBindingKey.Clear();
         _roundRobinCursorByRelay.Clear();
 
         foreach (var binding in _bindings.Where(b => b.IsEnabled))
@@ -198,6 +264,32 @@ public sealed class BridgeRuntime : IAsyncDisposable
             }
 
             binding.AgeMs = 0;
+        }
+    }
+
+    private void BuildReportPlansForRuntimeStart()
+    {
+        _reportPlans.Clear();
+        _reportPlanByBindingKey.Clear();
+
+        var planner = new ReportRuntimePlanner(_relayIndex);
+        _reportPlans.AddRange(planner.BuildPlans(_bindings));
+
+        if (_reportPlans.Count == 0)
+        {
+            Log("INFO", "Reports", "No report-capable SCL bindings were selected. Runtime will use MMS polling only.");
+            return;
+        }
+
+        foreach (var plan in _reportPlans)
+        {
+            Log("INFO", "Reports", $"Planned {plan.Summary}. Mode: {plan.Mode}. Status: polling fallback armed.");
+            foreach (var binding in plan.Bindings)
+            {
+                _reportPlanByBindingKey[GetBindingPollKey(binding)] = plan;
+                if (binding.Status.Equals("Queued", StringComparison.OrdinalIgnoreCase))
+                    binding.Status = "Report planned / polling fallback";
+            }
         }
     }
 
@@ -220,33 +312,56 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
             if (ordered.Count == 0) continue;
 
-            var start = _roundRobinCursorByRelay.TryGetValue(relayKey, out var cursor)
-                ? Math.Clamp(cursor, 0, ordered.Count - 1)
-                : 0;
-
-            var scanned = 0;
-            var index = start;
-            var added = 0;
-
-            while (scanned < ordered.Count && added < MaxReadsPerIedPerCycle)
+            if (!_fastAcquisitionEnabled)
             {
-                var candidate = ordered[index];
-                if (IsDueForPoll(candidate, nowUtc))
-                {
-                    selected.Add(candidate);
-                    added++;
-                }
-
-                index = (index + 1) % ordered.Count;
-                scanned++;
+                selected.AddRange(SelectDueFromOrderedPool(relayKey, ordered, nowUtc, MaxReadsPerIedPerCycle));
+                continue;
             }
 
-            // Important: advance the cursor even when many points are due.
-            // Otherwise the first N signals of every IED are polled forever and
-            // later SCL/IP points stay at Pending read / Mapped indefinitely.
-            if (added > 0)
-                _roundRobinCursorByRelay[relayKey] = index;
+            var fastOrdered = ordered.Where(IsFastAcquisitionCandidate).ToList();
+            var normalOrdered = ordered.Where(b => !IsFastAcquisitionCandidate(b)).ToList();
+
+            // Fast acquisition lane: CB position, switch status, trip/start and Boolean points
+            // are selected first so a breaker status change does not wait behind analog/quality tags.
+            selected.AddRange(SelectDueFromOrderedPool($"{relayKey}|fast", fastOrdered, nowUtc, MaxFastReadsPerIedPerCycle));
+
+            // Keep a small normal lane alive to prevent analog/quality starvation, but do not let it
+            // dominate the short scheduler cycles needed by fast status acquisition.
+            var normalBudget = fastOrdered.Count > 0 ? MaxNormalReadsPerIedPerCycleWhenFastLaneActive : MaxReadsPerIedPerCycle;
+            selected.AddRange(SelectDueFromOrderedPool($"{relayKey}|normal", normalOrdered, nowUtc, normalBudget));
         }
+
+        return selected;
+    }
+
+    private List<BindingItem> SelectDueFromOrderedPool(string cursorKey, IReadOnlyList<BindingItem> ordered, DateTime nowUtc, int budget)
+    {
+        var selected = new List<BindingItem>();
+        if (ordered.Count == 0 || budget <= 0)
+            return selected;
+
+        var start = _roundRobinCursorByRelay.TryGetValue(cursorKey, out var cursor)
+            ? Math.Clamp(cursor, 0, ordered.Count - 1)
+            : 0;
+
+        var scanned = 0;
+        var index = start;
+
+        while (scanned < ordered.Count && selected.Count < budget)
+        {
+            var candidate = ordered[index];
+            if (IsDueForPoll(candidate, nowUtc))
+                selected.Add(candidate);
+
+            index = (index + 1) % ordered.Count;
+            scanned++;
+        }
+
+        // Important: advance the cursor even when many points are due.
+        // Otherwise the first N signals of every IED are polled forever and
+        // later SCL/IP points stay at Pending read / Mapped indefinitely.
+        if (selected.Count > 0)
+            _roundRobinCursorByRelay[cursorKey] = index;
 
         return selected;
     }
@@ -272,6 +387,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
                     binding.Status = "IEC Disconnected";
                     if (ShouldLogReadWarning(binding))
                         Log("WARN", "IEC61850", $"{binding.IedName} {binding.RelayIpAddress}: MMS client not connected for {binding.SignalName}.");
+                    PublishBindingToMqtt(binding, null, binding.CurrentValue);
                     BindingUpdated?.Invoke(binding);
                     continue;
                 }
@@ -279,19 +395,39 @@ public sealed class BridgeRuntime : IAsyncDisposable
                 try
                 {
                     var old = binding.CurrentValue;
+                    var oldQuality = binding.Quality;
+                    var oldStatus = binding.Status;
                     var value = await client.ReadValueAsync(binding.IecReference, binding.FunctionalConstraint, binding.IecDataType, token);
 
                     if (value == null)
                     {
                         binding.CurrentValue = "-";
                         binding.Quality = "Bad";
+                        binding.DeviceTimestamp = "-";
                         binding.LastUpdate = DateTime.Now;
                         binding.AgeMs = 0;
-                        binding.Status = "Not readable";
+                        if (client is NativeIec61850Client nativeClient)
+                        {
+                            binding.Status = nativeClient.IsMmsReady
+                                ? "Native MMS associated / read pending"
+                                : nativeClient.IsMmsInitiateFailed
+                                    ? "Native MMS initiate failed"
+                                    : "Native MMS pending";
+                        }
+                        else
+                        {
+                            binding.Status = "Not readable";
+                        }
 
                         if (ShouldLogReadWarning(binding))
-                            Log("WARN", "IEC61850", $"{binding.IedName}: {binding.SignalName} not readable by MMS. IEC object: {binding.IecReference} [{binding.FunctionalConstraint}]");
+                        {
+                            if (client is NativeIec61850Client native && !string.IsNullOrWhiteSpace(native.LastErrorMessage))
+                                Log("WARN", "Native IEC61850", $"{binding.IedName}: {binding.SignalName}: {native.LastErrorMessage}");
+                            else
+                                Log("WARN", "IEC61850", $"{binding.IedName}: {binding.SignalName} not readable by MMS. IEC object: {binding.IecReference} [{binding.FunctionalConstraint}]");
+                        }
 
+                        PublishBindingToMqtt(binding, null, binding.CurrentValue);
                         BindingUpdated?.Invoke(binding);
                         continue;
                     }
@@ -303,11 +439,19 @@ public sealed class BridgeRuntime : IAsyncDisposable
                     binding.Quality = "Good";
                     binding.LastUpdate = DateTime.Now;
                     binding.AgeMs = 0;
-                    binding.Status = "MMS Polling/Live";
+                    binding.Status = GetLiveStatusForBinding(binding);
                     if (changed) binding.Sequence++;
 
-                    // Modbus is cache-based. A FUXA/SCADA read never triggers direct MMS reads.
+                    await TryRefreshCompanionQualityAndTimestampAsync(binding, client, nowUtc, token);
+
+                    // Outputs are cache-based. A FUXA/SCADA read never triggers direct MMS reads.
                     WriteBindingToModbus(binding, value);
+                    if (changed ||
+                        !string.Equals(oldQuality, binding.Quality, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(oldStatus, binding.Status, StringComparison.OrdinalIgnoreCase))
+                    {
+                        PublishBindingToMqtt(binding, value, display);
+                    }
 
                     if (changed && ShouldLogValueChange(binding))
                         Log("EVENT", "IEC61850", $"{binding.IedName}: {binding.SignalName}: {old} → {display} | {binding.ModbusArea} {binding.ModbusAddress}");
@@ -326,11 +470,13 @@ public sealed class BridgeRuntime : IAsyncDisposable
                             Log("WARN", "IEC61850", $"Runtime read paused for {binding.IedName}: IEC61850 client is disconnected.");
                             _iecDisconnectedLogged = true;
                         }
+                        PublishBindingToMqtt(binding, null, binding.CurrentValue);
                         continue;
                     }
 
                     if (ShouldLogReadWarning(binding))
                         Log("ERROR", "IEC61850", $"{binding.IedName}: {binding.SignalName}: {ex.Message}");
+                    PublishBindingToMqtt(binding, null, binding.CurrentValue);
                 }
             }
 
@@ -342,6 +488,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
                 {
                     binding.Status = "Stale";
                     Log("WARN", "Runtime", $"{binding.IedName}: {binding.SignalName} stale > {binding.StaleTimeoutMs} ms.");
+                    PublishBindingToMqtt(binding, null, binding.CurrentValue);
                 }
             }
 
@@ -359,8 +506,207 @@ public sealed class BridgeRuntime : IAsyncDisposable
             }
 
             RuntimeTick?.Invoke();
-            await Task.Delay(120, token);
+            await Task.Delay(GetSchedulerDelayMs(), token);
         }
+    }
+
+
+    private async Task TryRefreshCompanionQualityAndTimestampAsync(BindingItem binding, IIec61850Client client, DateTime nowUtc, CancellationToken token)
+    {
+        // Phase N9: value reads are no longer treated as "Good" blindly forever.
+        // IEC 61850 quality (q) and timestamp (t) are acquired as slow sidecar reads when the
+        // object shape is inferable from a selected SCADA tag. Polling remains value-first so
+        // Modbus/FUXA responsiveness is not held hostage by q/t support variations between IEDs.
+        if (client is not NativeIec61850Client) return;
+        if (IsDemoClient(client)) return;
+        if (IsCompanionAttribute(binding.IecReference)) return;
+        if (!IsCompanionEligible(binding)) return;
+
+        var key = GetBindingPollKey(binding);
+        if (_nextCompanionPollDueUtc.TryGetValue(key, out var due) && nowUtc < due)
+        {
+            ApplyCachedCompanionQuality(binding, key);
+            return;
+        }
+
+        _nextCompanionPollDueUtc[key] = nowUtc.AddMilliseconds(GetCompanionPollIntervalMs(binding));
+
+        var qualityUpdated = false;
+        if (TryBuildCompanionReference(binding.IecReference, "q", out var qRef))
+        {
+            try
+            {
+                var q = await client.ReadValueAsync(qRef, binding.FunctionalConstraint, "Quality", token);
+                if (q != null)
+                {
+                    var qText = q.ToString() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(qText))
+                    {
+                        _lastCompanionQualityByBindingKey[key] = qText;
+                        binding.Quality = qText;
+                        qualityUpdated = true;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                if (ShouldLogCompanionWarning(binding, "q"))
+                    Log("INFO", "Native IEC61850", $"{binding.IedName}: quality sidecar not readable for {binding.SignalName} ({qRef}). Value polling continues. {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        if (!qualityUpdated)
+            ApplyCachedCompanionQuality(binding, key);
+
+        if (TryBuildCompanionReference(binding.IecReference, "t", out var tRef))
+        {
+            try
+            {
+                var t = await client.ReadValueAsync(tRef, binding.FunctionalConstraint, "Timestamp", token);
+                if (t != null)
+                {
+                    var tText = t.ToString() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(tText))
+                    {
+                        _lastCompanionTimestampByBindingKey[key] = tText;
+                        binding.DeviceTimestamp = tText;
+                        if (binding.Status.EndsWith("/Live", StringComparison.OrdinalIgnoreCase))
+                            binding.Status += " + q/t";
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                if (ShouldLogCompanionWarning(binding, "t"))
+                    Log("INFO", "Native IEC61850", $"{binding.IedName}: timestamp sidecar not readable for {binding.SignalName} ({tRef}). Value polling continues. {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+
+    private void ApplyCachedCompanionQuality(BindingItem binding, string key)
+    {
+        if (_lastCompanionQualityByBindingKey.TryGetValue(key, out var cached) && !string.IsNullOrWhiteSpace(cached))
+            binding.Quality = cached;
+        if (_lastCompanionTimestampByBindingKey.TryGetValue(key, out var cachedTimestamp) && !string.IsNullOrWhiteSpace(cachedTimestamp))
+        {
+            binding.DeviceTimestamp = cachedTimestamp;
+            if (binding.Status.EndsWith("/Live", StringComparison.OrdinalIgnoreCase))
+                binding.Status += " + q/t";
+        }
+    }
+
+    private bool ShouldLogCompanionWarning(BindingItem binding, string suffix)
+    {
+        var key = $"companion-{suffix}|{binding.RelayId}|{binding.IecReference}";
+        var now = DateTime.Now;
+        if (_lastPerTagReadWarning.TryGetValue(key, out var last) && (now - last).TotalMinutes < 15)
+            return false;
+        _lastPerTagReadWarning[key] = now;
+        return true;
+    }
+
+    private static bool IsCompanionEligible(BindingItem binding)
+    {
+        var fc = binding.FunctionalConstraint ?? string.Empty;
+        if (!fc.Equals("ST", StringComparison.OrdinalIgnoreCase) && !fc.Equals("MX", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var dataType = binding.IecDataType ?? string.Empty;
+        if (dataType.Equals("Quality", StringComparison.OrdinalIgnoreCase) || dataType.Equals("Timestamp", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var reference = NormalizeIecReference(binding.IecReference);
+        if (reference.EndsWith(".q") || reference.EndsWith(".t")) return false;
+        return reference.EndsWith(".stval") ||
+               reference.EndsWith(".general") ||
+               reference.EndsWith(".mag.f") ||
+               reference.EndsWith(".cval.mag.f") ||
+               reference.EndsWith(".f") ||
+               dataType.Equals("Dbpos", StringComparison.OrdinalIgnoreCase) ||
+               dataType.Equals("Boolean", StringComparison.OrdinalIgnoreCase) ||
+               dataType.Equals("Float32", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int GetCompanionPollIntervalMs(BindingItem binding)
+    {
+        var valuePoll = GetPollIntervalMs(binding);
+        return Math.Clamp(valuePoll * 5, 3000, 30000);
+    }
+
+    private static bool IsCompanionAttribute(string reference)
+    {
+        var r = NormalizeIecReference(reference);
+        return r.EndsWith(".q") || r.EndsWith(".t");
+    }
+
+    private static bool TryBuildCompanionReference(string reference, string companion, out string companionReference)
+    {
+        companionReference = string.Empty;
+        if (!companion.Equals("q", StringComparison.OrdinalIgnoreCase) && !companion.Equals("t", StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.IsNullOrWhiteSpace(reference)) return false;
+
+        var normalized = reference.Replace('$', '.').Trim();
+        if (normalized.EndsWith(".q", StringComparison.OrdinalIgnoreCase) || normalized.EndsWith(".t", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var parent = normalized;
+        if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
+        else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
+        else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];
+        else if (parent.EndsWith(".mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
+        else
+        {
+            var dot = parent.LastIndexOf('.');
+            if (dot <= parent.IndexOf('/')) return false;
+            parent = parent[..dot];
+        }
+
+        if (string.IsNullOrWhiteSpace(parent)) return false;
+        companionReference = $"{parent}.{companion.ToLowerInvariant()}";
+        return true;
+    }
+
+    private static string NormalizeIecReference(string? reference)
+        => (reference ?? string.Empty).Replace('$', '.').Replace("..", ".").ToLowerInvariant();
+
+    private string GetLiveStatusForBinding(BindingItem binding)
+    {
+        return _reportPlanByBindingKey.ContainsKey(GetBindingPollKey(binding))
+            ? "Report fallback polling/Live"
+            : "MMS Polling/Live";
+    }
+
+    public static bool IsFastAcquisitionCandidate(BindingItem binding)
+    {
+        var category = binding.Category ?? string.Empty;
+        var dataType = binding.IecDataType ?? string.Empty;
+        var modbusType = binding.ModbusDataType ?? string.Empty;
+        var modbusArea = binding.ModbusArea ?? string.Empty;
+        var name = binding.SignalName ?? string.Empty;
+        var reference = (binding.IecReference ?? string.Empty).Replace('$', '.').ToLowerInvariant();
+        var search = $"{name} {reference} {category} {dataType} {modbusType}".ToLowerInvariant();
+
+        if (category.Equals("Position", StringComparison.OrdinalIgnoreCase)) return true;
+        if (category.Equals("Protection", StringComparison.OrdinalIgnoreCase) &&
+            (reference.EndsWith(".op.general") || reference.EndsWith(".str.general") || reference.EndsWith(".tr.general"))) return true;
+
+        if (dataType.Equals("Boolean", StringComparison.OrdinalIgnoreCase) ||
+            modbusType.Equals("Bool", StringComparison.OrdinalIgnoreCase) ||
+            modbusArea.Equals("Coil", StringComparison.OrdinalIgnoreCase) ||
+            modbusArea.Equals("DiscreteInput", StringComparison.OrdinalIgnoreCase)) return true;
+
+        if (reference.Contains(".pos.stval") || reference.EndsWith(".pos")) return true;
+        if (reference.Contains("xcbr") || reference.Contains("xswi") || reference.Contains("cswi")) return true;
+
+        return search.Contains("breaker") ||
+               search.Contains("circuit breaker") ||
+               search.Contains(" cb ") ||
+               search.Contains("52a") ||
+               search.Contains("52b") ||
+               search.Contains("open") ||
+               search.Contains("close") ||
+               search.Contains("closed") ||
+               search.Contains("trip") ||
+               search.Contains("start") ||
+               search.Contains("status") ||
+               search.Contains("position");
     }
 
     private bool IsDueForPoll(BindingItem binding, DateTime nowUtc)
@@ -376,9 +722,16 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
     private static string GetBindingPollKey(BindingItem binding) => $"{binding.RelayId}|{binding.IecReference}|{binding.ModbusArea}|{binding.ModbusAddress}";
 
+    public static int NormalizeMmsPollingIntervalMs(int requestedMs)
+    {
+        if (requestedMs <= 0) return DefaultMmsPollingIntervalMs;
+        return Math.Clamp(requestedMs, MinimumMmsPollingIntervalMs, MaximumMmsPollingIntervalMs);
+    }
+
     private static int GetPollIntervalMs(BindingItem binding)
     {
-        if (binding.PollingIntervalMs >= 250) return binding.PollingIntervalMs;
+        if (binding.PollingIntervalMs > 0) return NormalizeMmsPollingIntervalMs(binding.PollingIntervalMs);
+
         var category = binding.Category ?? string.Empty;
         var dataType = binding.IecDataType ?? string.Empty;
         if (category.Equals("Position", StringComparison.OrdinalIgnoreCase)) return 500;
@@ -386,6 +739,20 @@ public sealed class BridgeRuntime : IAsyncDisposable
         if (category.Equals("Measurement", StringComparison.OrdinalIgnoreCase) || dataType.Equals("Float32", StringComparison.OrdinalIgnoreCase)) return 1500;
         if (category.Equals("Quality", StringComparison.OrdinalIgnoreCase) || category.Equals("Timestamp", StringComparison.OrdinalIgnoreCase)) return 4000;
         return 2500;
+    }
+
+    private int GetSchedulerDelayMs()
+    {
+        if (_nextPollDueUtc.Count == 0) return SlowSchedulerDelayMs;
+
+        var nowUtc = DateTime.UtcNow;
+        var nextDue = _nextPollDueUtc.Values.Min();
+        var waitMs = (int)Math.Ceiling((nextDue - nowUtc).TotalMilliseconds);
+        if (waitMs <= 0) return 1;
+
+        var fastestActivePoll = _bindings.Count == 0 ? DefaultMmsPollingIntervalMs : _bindings.Min(GetPollIntervalMs);
+        var ceiling = fastestActivePoll <= 50 ? 25 : fastestActivePoll <= 100 ? 50 : SlowSchedulerDelayMs;
+        return Math.Clamp(waitMs, FastSchedulerDelayMs, ceiling);
     }
 
     private IIec61850Client? GetClientForBinding(BindingItem binding)
@@ -427,6 +794,9 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
     private void WriteBindingToModbus(BindingItem binding, object? value)
     {
+        if (!_enableModbusTcp || !binding.PublishToModbus)
+            return;
+
         var numeric = ToDouble(value, binding.IecDataType);
         var scaled = numeric * binding.Scale + binding.Offset;
 
@@ -448,6 +818,14 @@ public sealed class BridgeRuntime : IAsyncDisposable
                 _modbusServer.WriteDiscreteInput(binding.ModbusAddress, ToBool(value));
                 break;
         }
+    }
+
+    private void PublishBindingToMqtt(BindingItem binding, object? value, string displayValue)
+    {
+        if (!binding.PublishToMqtt)
+            return;
+
+        _mqttPublisher.EnqueueBinding(binding, value, displayValue);
     }
 
 
@@ -585,6 +963,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await StopAsync();
+        await _mqttPublisher.DisposeAsync();
         await _modbusServer.DisposeAsync();
         foreach (var relayId in _ownedRelayClientIds.ToList())
         {

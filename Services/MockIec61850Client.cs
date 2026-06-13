@@ -3,8 +3,8 @@ using Ari61850Bridge.Models;
 namespace Ari61850Bridge.Services;
 
 /// <summary>
-/// Mock IEC 61850 client for MVP testing without relay/CID.
-/// Replace this adapter with libiec61850.NET implementation in the next stage.
+/// Mock IEC 61850 client for testing without a relay or CID file.
+/// This adapter provides deterministic sample values for UI, mapping, Modbus, and MQTT workflows.
 /// </summary>
 public sealed class MockIec61850Client : IIec61850Client
 {

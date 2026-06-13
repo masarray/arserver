@@ -34,13 +34,14 @@ public static class BindingAutoMapper
                 Category = signal.Category,
                 Unit = signal.Unit,
                 Quality = signal.Quality,
+                DeviceTimestamp = signal.DeviceTimestamp,
                 DataSetReference = signal.DataSetReference,
                 ReportControlReference = signal.ReportControlReference,
                 CurrentValue = signal.Value,
                 LastUpdate = signal.Timestamp,
                 Status = "Mapped",
                 ReadMode = signal.IsReportCapable ? "RCB candidate / Polling fallback" : "MMS Polling",
-                RcbMode = signal.IsReportCapable ? "SCL RCB candidate" : "None",
+                RcbMode = signal.IsReportCapable ? "RCB candidate" : "None",
                 FuxaTagName = MakeTagName(signal.Name)
             };
 

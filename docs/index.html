@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ARServer - Native IEC 61850 to Modbus TCP + MQTT Gateway</title>
+  <meta name="description" content="ARServer is an Apache-2.0 native IEC 61850 MMS gateway for Modbus TCP and MQTT workflows." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Native IEC 61850 Gateway</p>
+      <h1>ARServer bridges IEC 61850 IED values to Modbus TCP and MQTT.</h1>
+      <p>Connect by IP or open an SCL/CID/SCD file, choose SCADA-ready tags, probe them, then publish a clean gateway map for HMI, dashboard, FAT, or lab use.</p>
+      <div class="hero-actions">
+        <a href="https://github.com/masarray/arserver">GitHub</a>
+        <a href="QUICK_START.md">Quick Start</a>
+      </div>
+    </section>
+    <section>
+      <h2>Workflow</h2>
+      <ol>
+        <li>Add IED by IP or open SCL.</li>
+        <li>Discover or import IEC 61850 signals.</li>
+        <li>Probe selected values.</li>
+        <li>Map to Modbus TCP and/or MQTT.</li>
+        <li>Start runtime and connect your HMI/SCADA client.</li>
+      </ol>
+    </section>
+    <section>
+      <h2>Runtime view</h2>
+      <p><strong>IEC Object | Value | Timestamp | Quality | Type</strong></p>
+      <p>Device timestamp and quality are read from IEC 61850 companion attributes when available. ARServer keeps local update time separate.</p>
+    </section>
+    <section>
+      <h2>FAQ</h2>
+      <h3>Is ARServer open source?</h3><p>Yes. It is Apache-2.0.</p>
+      <h3>Can I use IP-only setup?</h3><p>Yes. Enter the IED IP and MMS port, then run discovery.</p>
+      <h3>Can I use SCL/CID/SCD?</h3><p>Yes. SCL import gives a deterministic engineering model for tag selection and report planning.</p>
+      <h3>Can FUXA connect?</h3><p>Yes. Configure FUXA as a Modbus TCP client and point it to the ARServer PC.</p>
+    </section>
+  </main>
+</body>
+</html>
