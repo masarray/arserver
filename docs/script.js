@@ -33,6 +33,7 @@
     '.feature-grid article',
     '.shot-card',
     '.wiki-grid a',
+    '.wiki-grid article',
     '.scope-list article',
     '.safety > *',
     '.faq-list details',
@@ -107,6 +108,30 @@
       event.preventDefault();
       target.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' });
     });
+  });
+
+  const previewDocs = new Set([
+    'QUICK_START.md',
+    'TROUBLESHOOTING.md',
+    'VALIDATION_MATRIX.md',
+    'ROADMAP.md',
+    'DEPLOYMENT.md'
+  ]);
+
+  function toMarkdownPreviewUrl(href) {
+    if (!href || href.startsWith('#')) return null;
+    if (/^(https?:|mailto:|tel:)/i.test(href)) return null;
+    const clean = href.split('#')[0].split('?')[0];
+    const fileName = clean.split('/').pop();
+    if (!previewDocs.has(fileName)) return null;
+    return `wiki.html?doc=${encodeURIComponent(fileName)}`;
+  }
+
+  document.querySelectorAll('a[href$=".md"]').forEach((link) => {
+    const previewUrl = toMarkdownPreviewUrl(link.getAttribute('href'));
+    if (!previewUrl) return;
+    link.setAttribute('href', previewUrl);
+    link.setAttribute('data-preview-doc', 'true');
   });
 
   function addRipple(event) {
