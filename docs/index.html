@@ -8,6 +8,8 @@
   <meta name="robots" content="index, follow" />
   <link rel="canonical" href="https://masarray.github.io/arserver/" />
   <link rel="manifest" href="site.webmanifest" />
+  <link rel="icon" type="image/png" sizes="256x256" href="assets/arserver-icon.png" />
+  <link rel="apple-touch-icon" href="assets/arserver-icon.png" />
   <meta name="theme-color" content="#eff6ff" />
 
   <meta property="og:type" content="website" />
@@ -56,10 +58,26 @@
       },
       {
         "@type": "Question",
-        "name": "Does ARServer require a separate IEC 61850 driver?",
+        "name": "Who should use ARServer?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "No for the normal repository workflow. The project contains native IEC 61850 transport, ACSE/MMS association, discovery, selected read, SCL import, Modbus TCP, and MQTT publishing code."
+          "text": "ARServer is intended for SCADA engineers, substation automation engineers, commissioning teams, relay bench users, and developers who need readable IEC 61850 values exposed to Modbus TCP or MQTT clients."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does ARServer require SCL files?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "No. ARServer can start from a live IED IP address when discovery is supported, and it can also use CID, SCD, ICD, or IID files when engineering files are available."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What clients can connect to ARServer?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "HMI, SCADA, DCS, dashboard, historian, middleware, or test clients can consume ARServer through Modbus TCP and MQTT depending on the configured output route."
         }
       },
       {
@@ -79,11 +97,12 @@
 
   <header class="site-header" aria-label="ARServer site header">
     <a class="brand" href="#top" aria-label="ARServer home">
-      <span class="brand-mark" aria-hidden="true">AR</span>
+      <span class="brand-mark" aria-hidden="true"><img src="assets/arserver-icon.png" alt="" /></span>
       <span class="brand-copy"><strong>ARServer</strong><small>IEC 61850 Gateway</small></span>
     </a>
     <nav class="nav-links" aria-label="Primary navigation">
       <a href="#workflow">Workflow</a>
+      <a href="#architecture">Architecture</a>
       <a href="#outputs">Outputs</a>
       <a href="#screenshots">Screenshots</a>
       <a href="#wiki">Wiki</a>
@@ -156,24 +175,46 @@
       </div>
     </section>
 
-    <section class="section page-shell split" aria-labelledby="architecture-title">
+    <section id="architecture" class="section page-shell split architecture-section" aria-labelledby="architecture-title">
       <div>
         <p class="section-kicker">Architecture</p>
-        <h2 id="architecture-title">One read path, multiple clean outputs.</h2>
-        <p>Instead of letting every HMI screen poll the relay directly, ARServer reads selected IEC 61850 values, stores them in a runtime cache, and serves the enabled outputs from that controlled layer.</p>
+        <h2 id="architecture-title">Relay data enters once, then fans out to the systems that need it.</h2>
+        <p>ARServer sits between IEC 61850 IEDs and practical consuming systems. It keeps the relay read path controlled, then exposes selected values to classic control systems through Modbus TCP and modern data workflows through MQTT.</p>
         <ul class="check-list">
-          <li>Native TCP, TPKT, COTP, ACSE, and MMS association foundations.</li>
-          <li>SCL-aware planning for engineered object references and report candidates.</li>
-          <li>Runtime grid separates device timestamp, local update time, and quality status.</li>
-          <li>Diagnostics make communication failures visible instead of silently returning stale data.</li>
+          <li>Relay / IED remains the source of truth over IEC 61850 MMS.</li>
+          <li>ARServer validates selected values before publishing outputs.</li>
+          <li>DCS, HMI, and SCADA tools can poll the Modbus TCP server.</li>
+          <li>IoT dashboards, middleware, or historians can subscribe through MQTT.</li>
         </ul>
       </div>
-      <div class="architecture-map" role="img" aria-label="Gateway architecture diagram">
-        <div>IED / Relay</div>
-        <span>IEC 61850 MMS</span>
-        <div>ARServer Runtime Cache</div>
-        <span>Selected, validated values</span>
-        <div class="two-out"><b>Modbus TCP</b><b>MQTT</b></div>
+      <div class="connection-diagram" role="img" aria-label="Relay connects to ARServer through IEC 61850 MMS, then ARServer publishes data to Modbus TCP clients such as DCS HMI SCADA and MQTT clients such as IoT dashboard historian middleware.">
+        <div class="diagram-node source-node">
+          <span>Source</span>
+          <strong>Relay / IED</strong>
+          <small>IEC 61850 server</small>
+        </div>
+        <div class="diagram-link inbound"><span>IEC 61850 MMS · port 102</span></div>
+        <div class="diagram-node core-node">
+          <span>Gateway</span>
+          <strong>ARServer</strong>
+          <small>runtime cache · quality · timestamp · mapping</small>
+        </div>
+        <div class="diagram-branches">
+          <div class="diagram-link"><span>Modbus TCP</span></div>
+          <div class="diagram-link"><span>MQTT</span></div>
+        </div>
+        <div class="diagram-output-grid">
+          <div class="diagram-node output-node">
+            <span>Classic control layer</span>
+            <strong>DCS · HMI · SCADA</strong>
+            <small>poll registers / status points</small>
+          </div>
+          <div class="diagram-node output-node">
+            <span>Data platform layer</span>
+            <strong>IoT · Historian · Dashboard</strong>
+            <small>subscribe topics / JSON state</small>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -243,13 +284,19 @@
         <h2 id="wiki-title">The landing page is also the front door to the ARServer documentation.</h2>
         <p>Use these docs as a product wiki for setup, validation, troubleshooting, packaging, and roadmap decisions.</p>
       </div>
-      <div class="wiki-grid">
+      <div class="wiki-grid wiki-grid-extended">
         <a href="QUICK_START.md"><strong>Quick Start</strong><span>Relay IP or SCL file to running gateway.</span></a>
         <a href="TROUBLESHOOTING.md"><strong>Troubleshooting</strong><span>Connection, discovery, Modbus, MQTT, and stale value checks.</span></a>
         <a href="VALIDATION_MATRIX.md"><strong>Validation Matrix</strong><span>Bench checklist for FAT, lab, and simulated evaluation.</span></a>
         <a href="ROADMAP.md"><strong>Roadmap</strong><span>Native IEC 61850 milestones and report-ready direction.</span></a>
         <a href="DEPLOYMENT.md"><strong>Deployment</strong><span>GitHub Pages, SEO files, and documentation publishing notes.</span></a>
         <a href="https://github.com/masarray/arserver/security/policy"><strong>Security Policy</strong><span>Responsible handling for engineering gateway security concerns.</span></a>
+        <article class="wiki-note"><strong>Beginner concept</strong><span>ARServer is not the relay. It is the bridge that reads selected relay values and republishes them safely.</span></article>
+        <article class="wiki-note"><strong>Signal planning</strong><span>Start with breaker position, protection start/trip, alarms, mode/status, and measurements before adding low-value points.</span></article>
+        <article class="wiki-note"><strong>Modbus mapping</strong><span>Keep register ranges deterministic, documented, and stable before handing the map to DCS/HMI teams.</span></article>
+        <article class="wiki-note"><strong>MQTT topics</strong><span>Use a clean topic naming scheme and include quality/timestamp context so dashboards do not display blind values.</span></article>
+        <article class="wiki-note"><strong>Bench validation</strong><span>Validate with a simulator or test relay first. Confirm stale values, reconnect behavior, and HMI interpretation.</span></article>
+        <article class="wiki-note"><strong>Field boundary</strong><span>Do not expose engineering gateways directly to untrusted networks. Keep firewalling, VLAN, and access policy explicit.</span></article>
       </div>
     </section>
 
@@ -276,11 +323,19 @@
         <p class="section-kicker">FAQ</p>
         <h2 id="faq-title">Common questions before trying ARServer.</h2>
       </div>
-      <div class="faq-list">
-        <details open><summary>Is ARServer free and open source?</summary><p>Yes. The repository is released under Apache-2.0.</p></details>
-        <details><summary>Can it work without SCL files?</summary><p>Yes. Add by IP supports online discovery for supported IEDs. Use SCL/CID/SCD/ICD when engineering files are available and deterministic planning matters.</p></details>
-        <details><summary>Can FUXA or another HMI connect?</summary><p>Yes. Configure the HMI as a Modbus TCP client and point it to the PC running ARServer using the configured port and Unit ID.</p></details>
-        <details><summary>Does it send controls to the relay?</summary><p>The current focus is read-only gateway operation. Control/write support should only be added with strict safety checks and test evidence.</p></details>
+      <div class="faq-list faq-list-expanded">
+        <details open><summary>What is ARServer in simple terms?</summary><p>ARServer is a Windows gateway that reads selected IEC 61850 relay or IED values and republishes them as Modbus TCP registers and MQTT topics for HMI, SCADA, DCS, dashboard, or test tools.</p></details>
+        <details><summary>Is ARServer a relay test set?</summary><p>No. It is not an Omicron-style relay test set and it does not inject protection signals. It is a gateway and engineering workspace for selected data reading, mapping, publishing, and validation.</p></details>
+        <details><summary>Can it connect to a real relay or IED?</summary><p>Yes, the intended workflow is to connect to an IEC 61850 MMS endpoint over TCP port 102 when the network, relay settings, and supported services allow it. Always validate on a safe bench or FAT network first.</p></details>
+        <details><summary>Can it work without SCL files?</summary><p>Yes. Add by IP supports online discovery for supported IEDs. SCL/CID/SCD/ICD/IID files are useful when engineering files are available and deterministic planning matters.</p></details>
+        <details><summary>What is the difference between IEC 61850, Modbus TCP, and MQTT here?</summary><p>IEC 61850 is the source protocol from the relay or IED. Modbus TCP is a polling interface commonly understood by DCS, HMI, and SCADA tools. MQTT is a publish/subscribe route for dashboards, middleware, historians, and IoT-style workflows.</p></details>
+        <details><summary>Can FUXA, HMI, SCADA, or DCS connect to it?</summary><p>Yes. Configure the external tool as a Modbus TCP client and point it to the PC running ARServer using the configured port, unit ID, and register map.</p></details>
+        <details><summary>Do I need an MQTT broker?</summary><p>Yes for MQTT output. ARServer publishes to a broker such as Mosquitto, EMQX, HiveMQ, or another MQTT broker. Modbus TCP output does not require MQTT.</p></details>
+        <details><summary>Does ARServer send controls to the relay?</summary><p>The current focus is read-only gateway operation. Control/write support should only be added with strict safety checks, operator confirmation, role separation, and test evidence.</p></details>
+        <details><summary>What happens if relay communication is lost?</summary><p>The runtime should make communication state, stale value risk, quality, and diagnostic status visible so an HMI user does not mistake old data for fresh relay data.</p></details>
+        <details><summary>Why are quality and timestamp important?</summary><p>A Boolean value without quality and timestamp can mislead operators. ARServer keeps value context visible so users can see whether a point is fresh, stale, good, invalid, or only locally updated.</p></details>
+        <details><summary>Is it ready for production substations?</summary><p>Treat it as an engineering gateway that must be validated for each environment. Production use requires controlled network design, cybersecurity review, redundancy decisions, change control, and site acceptance evidence.</p></details>
+        <details><summary>What license does ARServer use?</summary><p>The repository is released under Apache-2.0, so users can inspect, build, fork, and adapt the source according to the license terms.</p></details>
       </div>
     </section>
 
