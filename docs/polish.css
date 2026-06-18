@@ -301,9 +301,213 @@ html.is-ready .hero-section {
   border-color: rgba(37, 99, 235, .18);
 }
 
+/* Restored ARServer product-brand details and cleaner diagram composition. */
+.brand-mark {
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 16px 34px rgba(37, 99, 235, .18);
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hero-console::before {
+  display: none !important;
+}
+
+.architecture-section {
+  align-items: center;
+}
+
+.connection-diagram {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  padding: 24px;
+  border: 1px solid rgba(37, 99, 235, .12);
+  border-radius: 30px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.84), rgba(239,246,255,.74)),
+    radial-gradient(circle at 48% 44%, rgba(37,99,235,.12), transparent 48%);
+  box-shadow: 0 24px 64px rgba(37, 99, 235, .10);
+  overflow: hidden;
+}
+
+.connection-diagram::before {
+  content: "";
+  position: absolute;
+  inset: 18px;
+  border-radius: 24px;
+  border: 1px dashed rgba(37, 99, 235, .14);
+  pointer-events: none;
+}
+
+.diagram-node,
+.diagram-output-grid,
+.diagram-branches,
+.diagram-link {
+  position: relative;
+  z-index: 1;
+}
+
+.diagram-node {
+  display: grid;
+  gap: 4px;
+  padding: 18px;
+  border: 1px solid rgba(15, 23, 42, .10);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, .82);
+  box-shadow: 0 16px 38px rgba(15, 23, 42, .06);
+  transition: transform var(--motion-mid) var(--spring), box-shadow var(--motion-mid) var(--smooth), border-color var(--motion-mid) var(--smooth);
+}
+
+.diagram-node:hover {
+  transform: translateY(-3px);
+  border-color: rgba(37, 99, 235, .24);
+  box-shadow: 0 24px 58px rgba(37, 99, 235, .12);
+}
+
+.diagram-node span {
+  color: #64748b;
+  font-size: .74rem;
+  font-weight: 560;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.diagram-node strong {
+  color: #0f172a;
+  font-size: 1.05rem;
+  font-weight: 590;
+}
+
+.diagram-node small {
+  color: #5d6b82;
+  font-size: .84rem;
+}
+
+.source-node {
+  border-color: rgba(22, 163, 74, .18);
+}
+
+.core-node {
+  border-color: rgba(37, 99, 235, .22);
+  background: linear-gradient(135deg, rgba(255,255,255,.92), rgba(219,234,254,.66));
+}
+
+.output-node {
+  min-height: 128px;
+}
+
+.diagram-link {
+  display: grid;
+  place-items: center;
+  min-height: 32px;
+  color: #1d4ed8;
+  font-size: .78rem;
+  font-weight: 560;
+  letter-spacing: .02em;
+}
+
+.diagram-link::before,
+.diagram-link::after {
+  content: "";
+  position: absolute;
+  background: linear-gradient(180deg, rgba(37,99,235,.15), rgba(249,115,22,.32));
+}
+
+.diagram-link::before {
+  width: 2px;
+  top: -10px;
+  bottom: -10px;
+}
+
+.diagram-link span {
+  position: relative;
+  z-index: 1;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(37, 99, 235, .14);
+  background: rgba(255, 255, 255, .82);
+  box-shadow: 0 8px 22px rgba(37, 99, 235, .08);
+}
+
+.diagram-branches {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.diagram-output-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.wiki-grid-extended {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.wiki-note {
+  display: grid;
+  gap: 8px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, .58);
+  box-shadow: 0 12px 34px rgba(15, 23, 42, .04);
+  transition: transform var(--motion-mid) var(--spring), box-shadow var(--motion-mid) var(--smooth), border-color var(--motion-mid) var(--smooth);
+}
+
+.wiki-note:hover {
+  transform: translateY(-4px);
+  border-color: rgba(37, 99, 235, .22);
+  box-shadow: 0 24px 58px rgba(37, 99, 235, .10);
+}
+
+.wiki-note strong {
+  font-weight: 560;
+}
+
+.wiki-note span {
+  color: var(--muted);
+  font-size: .92rem;
+}
+
+.faq-list-expanded {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.faq-list-expanded details:first-child {
+  grid-column: 1 / -1;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .hero-section:hover .hero-console {
     animation-play-state: paused;
+  }
+}
+
+@media (max-width: 980px) {
+  .connection-diagram,
+  .diagram-output-grid,
+  .diagram-branches,
+  .faq-list-expanded {
+    grid-template-columns: 1fr;
+  }
+
+  .wiki-grid-extended {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .wiki-grid-extended {
+    grid-template-columns: 1fr;
   }
 }
 
