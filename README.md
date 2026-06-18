@@ -1,71 +1,106 @@
 # ARServer
 
-**Native IEC 61850 to Modbus TCP + MQTT Gateway for Windows**
+**Native IEC 61850 MMS to Modbus TCP + MQTT Gateway for Windows**
 
-ARServer helps engineers connect IEC 61850 IEDs to practical SCADA, HMI, dashboard, and data collection tools through a clear gateway workflow:
+ARServer is an open-source Windows engineering gateway for turning selected IEC 61850 IED values into deterministic Modbus TCP registers and MQTT topics for HMI, SCADA, relay-bench, FAT/SAT, dashboard, and substation automation workflows.
 
 ```text
 IED / Relay → IEC 61850 MMS → ARServer runtime cache → Modbus TCP and/or MQTT
 ```
 
-The project is released under **Apache-2.0** and contains a native IEC 61850 MMS client implementation inside this repository. No separate IEC 61850 driver package is required for the normal IP discovery, SCL import, polling, Modbus TCP, or MQTT workflow.
+[Product Landing Page](https://masarray.github.io/arserver/) · [Quick Start](docs/QUICK_START.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Validation Matrix](docs/VALIDATION_MATRIX.md) · [Roadmap](docs/ROADMAP.md)
 
-## What ARServer is for
+---
 
-ARServer is designed for field engineers, FAT teams, panel builders, system integrators, HMI developers, and automation engineers who need a practical bridge between IEC 61850 IED data and tools that understand Modbus TCP or MQTT.
+## Why ARServer exists
 
-Typical use cases:
+Many HMI and dashboard tools are excellent at Modbus TCP or MQTT but do not provide a simple, transparent IEC 61850 engineering workflow. ARServer fills that gap by helping engineers:
 
-- Build a quick Modbus TCP map from IEC 61850 relay points.
-- Expose CB position, alarm, protection status, and measurements to open HMI tools.
-- Publish selected relay values to MQTT for dashboard or historian experiments.
-- Validate IEC 61850 object references from IP discovery or SCL/CID/SCD files.
-- Create a repeatable gateway configuration for bench test, FAT, demo, or troubleshooting.
+- connect to a live IEC 61850 IED by IP address;
+- import SCL/CID/SCD/ICD engineering files when available;
+- choose SCADA-ready points such as breaker position, protection start/trip, alarms, status, and measurements;
+- probe selected signals before committing them to runtime;
+- publish a clear Modbus TCP map and optional MQTT topics from the same runtime cache;
+- keep value, quality, device timestamp, local timestamp, and diagnostics visible.
 
-## Main features
+The project is released under **Apache-2.0** and contains a native IEC 61850 MMS client implementation inside this repository. No separate IEC 61850 driver package is required for the normal IP discovery, SCL import, selected-read, Modbus TCP, or MQTT workflow.
 
-- Native IEC 61850 MMS association over TCP port 102.
-- IP-only online discovery for supported IEDs.
-- SCL/CID/SCD/ICD import for engineered model workflows.
-- Smart signal recommendation for CB position, protection, alarms, status, and measurements.
-- Probe selected signals before saving them to runtime.
-- Runtime polling with value, IEC device timestamp, quality, and type.
-- Modbus TCP server output with user-controlled register mapping.
-- MQTT publisher output with value, quality, local timestamp, and device timestamp.
-- Report-aware planning from SCL DataSet/RCB information.
-- Diagnostics log for connection, discovery, validation, runtime, Modbus, and MQTT activity.
-- Local project save/load.
+---
+
+## Main capabilities
+
+| Area | Capability |
+|---|---|
+| IEC 61850 source | Native MMS association over TCP port `102` |
+| Online setup | Add IED by IP and discover supported model candidates |
+| Engineering setup | Import SCL, CID, SCD, ICD, IID, SED, or XML files |
+| Signal planning | Recommend SCADA-friendly points and report-aware candidates |
+| Validation | Probe selected signals before saving to runtime |
+| Runtime | Poll selected values with value, timestamp, quality, and inferred type |
+| Modbus TCP | Serve mapped values to HMI/SCADA clients through configurable registers |
+| MQTT | Publish value, quality, local timestamp, and device timestamp to broker topics |
+| Diagnostics | Show IEC activity, runtime status, Modbus polling, MQTT state, stale values, and communication issues |
+| Project workflow | Save and load local gateway projects |
+
+---
+
+## Product landing page and Wiki
+
+The public landing page lives in `docs/index.html` and is deployed through GitHub Pages.
+
+- Landing page: <https://masarray.github.io/arserver/>
+- GitHub Pages deployment notes: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- Documentation front door: [docs/QUICK_START.md](docs/QUICK_START.md)
+
+Useful documentation:
+
+| Document | Purpose |
+|---|---|
+| [Quick Start](docs/QUICK_START.md) | First workflow from relay IP or SCL file to running gateway |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Connection, discovery, Modbus, MQTT, stale value, and firewall checks |
+| [Validation Matrix](docs/VALIDATION_MATRIX.md) | Bench/FAT checklist for evaluating behavior safely |
+| [Roadmap](docs/ROADMAP.md) | Implemented milestones and native IEC 61850 direction |
+| [Deployment](docs/DEPLOYMENT.md) | GitHub Pages, SEO, and static site publishing notes |
+| [Security Policy](SECURITY.md) | Safe security reporting guidance |
+
+---
 
 ## Quick workflow
 
 ### Option A — Add IED by IP
+
+Use this when you only have a live relay endpoint.
 
 1. Open ARServer.
 2. Click **+ Add IED**.
 3. Choose **Add by IP**.
 4. Enter the relay IP address and MMS port. The usual MMS port is `102`.
 5. Click **Connect & Discover**.
-6. Wait until discovery returns IEC 61850 candidates.
+6. Review the discovered IEC 61850 candidates.
 7. Select the signals you want to publish.
 8. Use **Probe Selected** to verify that the IED accepts the selected object.
 9. Assign Modbus addresses and enable MQTT when needed.
 10. Click **Add to Runtime**.
-11. Start the runtime.
-12. Point your HMI or SCADA tool to the ARServer Modbus TCP endpoint.
+11. Start runtime.
+12. Point your HMI or SCADA Modbus TCP client to the ARServer PC.
 
 ### Option B — Open SCL / CID / SCD / ICD
+
+Use this when you have the engineering model.
 
 1. Click **+ Add IED**.
 2. Choose **Open SCL** or import the file from the wizard.
 3. Select a `.cid`, `.scd`, `.icd`, `.iid`, `.sed`, or `.xml` file.
 4. Confirm or override the runtime IP address.
-5. Review the recommended IEC 61850 signals.
+5. Review recommended IEC 61850 signals, DataSet information, and ReportControl candidates.
 6. Select the tags required by your HMI/SCADA.
 7. Probe selected tags when the IED is reachable.
 8. Assign Modbus and MQTT routing.
 9. Save to runtime and start.
 
-Use **Open SCL** when you have the engineering file. Use **Add by IP** when you only have a live relay endpoint.
+Use **Open SCL** when engineering files are available. Use **Add by IP** for fast online setup.
+
+---
 
 ## Runtime grid
 
@@ -75,17 +110,19 @@ The live IEC 61850 grid is arranged for operation, not only engineering browsing
 IEC Object | Value | Timestamp | Quality | Type
 ```
 
-- **IEC Object**: IEC 61850 object reference used by the gateway.
-- **Value**: decoded live value such as `Closed`, `Open`, `True`, `False`, or numeric values.
-- **Timestamp**: device timestamp from the IEC 61850 `t` attribute when readable.
-- **Quality**: decoded quality from the IEC 61850 `q` attribute when readable.
-- **Type**: inferred data type such as `Dbpos`, `Boolean`, `Float`, `Integer`, or `Quality`.
+- **IEC Object** — IEC 61850 object reference used by the gateway.
+- **Value** — decoded live value such as `Closed`, `Open`, `True`, `False`, or numeric values.
+- **Timestamp** — device timestamp from the IEC 61850 `t` attribute when readable.
+- **Quality** — decoded quality from the IEC 61850 `q` attribute when readable.
+- **Type** — inferred data type such as `Dbpos`, `Boolean`, `Float`, `Integer`, or `Quality`.
 
-If device timestamp or quality is not available for a point, ARServer leaves it blank or marks it clearly instead of inventing a value.
+If device timestamp or quality is not available for a point, ARServer leaves it blank or marks the condition clearly instead of inventing a value.
+
+---
 
 ## Modbus TCP output
 
-ARServer runs a local Modbus TCP server. HMI/SCADA software can connect to ARServer instead of connecting directly to the relay.
+ARServer runs a local Modbus TCP server. HMI/SCADA software connects to ARServer instead of polling the relay directly.
 
 Default endpoint:
 
@@ -95,41 +132,59 @@ Port: 502
 Unit ID: 1
 ```
 
-Recommended workflow:
+Recommended area policy:
 
-1. Select IEC 61850 signals.
-2. Assign register addresses.
-3. Start runtime.
-4. Open the HMI/SCADA tool.
-5. Connect the HMI/SCADA Modbus TCP client to the ARServer PC IP and configured port.
-6. Read the mapped registers.
+| Signal type | Suggested Modbus area |
+|---|---|
+| Protection and status booleans | Discrete Input / FC02 / `1xxxx` |
+| Position enums | Input Register / FC04 / `3xxxx` |
+| Analog Float32 values | Holding Register / FC03 / `4xxxx` |
+| Quality, age, and sequence metadata | Holding Register / FC03 / `4xxxx` |
+
+For multi-IED planning, keep address separation inside each Modbus area. Example:
+
+```text
+IED-01: DI 10001+, IR 30001+, HR 40001+
+IED-02: DI 11001+, IR 31001+, HR 41001+
+IED-03: DI 12001+, IR 32001+, HR 42001+
+```
+
+---
 
 ## MQTT output
 
-MQTT can be enabled per binding. Published payloads include operational context such as value, quality, local timestamp, and device timestamp.
+MQTT output is implemented as a publisher to an external MQTT broker. This keeps ARServer small and interoperable while allowing production deployments to use hardened brokers.
 
-Typical use:
+Default MQTT settings:
 
-- lightweight dashboard,
-- historian experiment,
-- integration with automation middleware,
-- lab telemetry,
-- proof-of-concept data export.
+```text
+Broker: 127.0.0.1
+Port: 1883
+Topic root: arserver
+QoS: 0
+Retain last value: enabled
+JSON state payload: enabled
+```
 
-## SCL vs IP discovery
+Topic layout:
 
-| Workflow | Best when | Strength |
-|---|---|---|
-| Add by IP | You only know the relay IP | Fast discovery from live IED |
-| Open SCL/CID/SCD | You have engineering files | More deterministic object, DataSet, FCDA, and RCB planning |
+```text
+arserver/{iedName}/{tagName}/value
+arserver/{iedName}/{tagName}/quality
+arserver/{iedName}/{tagName}/status
+arserver/{iedName}/{tagName}/state
+arserver/status
+```
 
-Both workflows end in the same runtime: selected IEC 61850 values are cached and published to Modbus TCP and/or MQTT.
+The `/value` topic is a simple scalar payload for HMI tags. The `/state` topic is JSON for richer dashboards and diagnostics.
+
+---
 
 ## Current protocol scope
 
 Implemented native scope:
 
-- TCP connection to port 102.
+- TCP connection to port `102`.
 - TPKT and COTP transport.
 - ACSE/MMS association.
 - MMS Confirmed-Read for selected object references.
@@ -140,82 +195,42 @@ Implemented native scope:
 
 Planned native scope:
 
-- wider data type coverage,
-- multi-variable read optimization,
-- online DataSet/RCB verification,
-- report activation with polling fallback,
-- richer quality/timestamp mapping to Modbus registers,
-- exportable mapping reports.
+- wider data type coverage;
+- multi-variable read optimization;
+- online DataSet/RCB verification;
+- report activation with polling fallback;
+- richer quality/timestamp mapping to Modbus registers;
+- exportable mapping and validation reports.
 
-## FAQ
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the milestone direction.
 
-### Is ARServer free and open source?
+---
 
-Yes. ARServer is distributed under the Apache-2.0 license.
+## Safety and validation
 
-### Does ARServer need a separate IEC 61850 driver?
+ARServer is read-only on the Modbus side by design. Write functions are rejected to reduce accidental relay or process-control risk from HMI clients.
 
-No for the normal workflow in this repository. IP discovery, SCL import, native MMS association, selected reads, Modbus TCP output, and MQTT output are handled by ARServer code.
+For field use, validate these points on a controlled bench or FAT environment first:
 
-### Which port does IEC 61850 MMS use?
+- IEC object references and functional constraints;
+- Modbus address ranges and data types;
+- Float32 word order and scaling;
+- stale/quality behavior during relay disconnects;
+- Windows firewall and network segmentation;
+- port exposure and client access control;
+- HMI address convention and Unit ID settings.
 
-IEC 61850 MMS usually uses TCP port `102`. Some lab networks or relay settings may use a different port, so the port is editable.
+Use the [Validation Matrix](docs/VALIDATION_MATRIX.md) before expanding point count or connecting operational environments.
 
-### Should I use Add by IP or Open SCL?
-
-Use **Add by IP** for fast live discovery. Use **Open SCL** when you have the project engineering file and want more deterministic signal planning.
-
-### Why does discovery return many signals?
-
-IEDs expose many logical nodes and data attributes. ARServer recommends SCADA-friendly points first, such as CB position, protection operation/start, alarms, status, and measurements.
-
-### Why should I probe selected signals?
-
-Discovery can show candidates, but a probe confirms that the relay accepts the final MMS object reference and returns a decodable value.
-
-### Why is the value good but timestamp blank?
-
-Some IEDs expose value but do not expose or allow reading the companion `t` attribute for that object. ARServer does not invent device timestamps.
-
-### Why is quality blank or bad?
-
-Quality comes from the companion `q` attribute when available. If it is unreadable or the IED returns an invalid status, ARServer shows the condition instead of hiding it.
-
-### Can ARServer connect to multiple IEDs?
-
-The runtime supports per-IED sessions and per-IED bindings. Use separate IED entries and assign register blocks clearly to avoid overlapping Modbus addresses.
-
-### Can FUXA connect to ARServer?
-
-Yes. Configure FUXA as a Modbus TCP client and point it to the PC running ARServer, using the configured port and Unit ID.
-
-### Can other SCADA/HMI tools connect?
-
-Yes, any tool that can read Modbus TCP registers can read ARServer's Modbus output. MQTT subscribers can also consume the enabled MQTT topics.
-
-### Does ARServer write commands to the relay?
-
-The current focus is read-only gateway operation. Control/write support should be added only after strict safety checks, confirmation workflow, and test evidence.
-
-### Does ARServer support reports now?
-
-ARServer keeps RCB and DataSet planning inside the Edit IED Wizard. This matches the real workflow: select signals, choose one reporting plan, build Modbus/MQTT mapping, then save the IED. IP discovery and polling do not auto-probe or enable RCBs. The wizard can run a read-only RCB attribute probe, but report activation is planned for a later phase after DataSet directory, receive loop, and safe enable/disable sequencing are implemented. Polling remains the safe baseline.
-
-### What should I check when connection fails?
-
-Check IP address, port 102, Windows firewall, network route, relay MMS service setting, VLAN, and whether another client session is limiting access.
-
-### What should I check when Modbus clients read zero values?
-
-Confirm runtime is running, the selected IEC value is live, the binding is enabled, the register address is correct, and the HMI uses the same Unit ID and address convention.
+---
 
 ## Build from source
 
 Requirements:
 
-- Windows 10/11
-- Visual Studio 2022
-- .NET 8 SDK
+- Windows 10/11;
+- Visual Studio 2022;
+- .NET 8 SDK.
 
 Build:
 
@@ -228,12 +243,30 @@ dotnet build -c Release
 
 Run from Visual Studio or from the generated output folder.
 
-## Repository notes
+---
+
+## Repository layout
+
+```text
+ARServer.sln
+ARServer.csproj
+MainWindow.xaml / MainWindow.xaml.cs
+Models/
+Services/
+Protocol/
+Assets/
+docs/
+.github/workflows/
+```
+
+Key areas:
 
 - `Services/` contains gateway services, runtime, Modbus, MQTT, SCL import, discovery mapping, and IEC client boundaries.
 - `Protocol/` contains native OSI, ASN.1 BER, ACSE, MMS, and IEC 61850 protocol building blocks.
 - `Models/` contains project, binding, signal, relay, report, and runtime snapshot models.
-- `docs/` contains user documentation, quick start, troubleshooting, validation, and roadmap files.
+- `docs/` contains the public landing page and product Wiki documentation.
+
+---
 
 ## License
 
