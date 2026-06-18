@@ -15,11 +15,15 @@
   <meta property="og:description" content="Bridge selected IEC 61850 IED values into deterministic Modbus TCP maps and MQTT topics with a clean Windows engineering workflow." />
   <meta property="og:url" content="https://masarray.github.io/arserver/" />
   <meta property="og:site_name" content="ARServer" />
+  <meta property="og:image" content="https://masarray.github.io/arserver/assets/screenshots/arserver-start.webp" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="ARServer — Native IEC 61850 Gateway" />
   <meta name="twitter:description" content="Native IEC 61850 MMS to Modbus TCP and MQTT gateway for Windows engineering labs, FAT/SAT, HMI integration, and relay bench workflows." />
+  <meta name="twitter:image" content="https://masarray.github.io/arserver/assets/screenshots/arserver-start.webp" />
 
+  <link rel="preload" as="image" href="assets/screenshots/arserver-start.webp" />
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="screenshots.css" />
 
   <script type="application/ld+json">
   {
@@ -80,6 +84,7 @@
     <nav class="nav-links" aria-label="Primary navigation">
       <a href="#workflow">Workflow</a>
       <a href="#outputs">Outputs</a>
+      <a href="#screenshots">Screenshots</a>
       <a href="#wiki">Wiki</a>
       <a href="#roadmap">Roadmap</a>
       <a href="#faq">FAQ</a>
@@ -195,6 +200,42 @@
       </div>
     </section>
 
+    <section id="screenshots" class="section page-shell screenshots-section" aria-labelledby="screenshots-title">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">Product screenshots</p>
+          <h2 id="screenshots-title">The original visual proof is back.</h2>
+        </div>
+        <p>The landing page now shows the actual ARServer interface again: start workspace, live IEC 61850 values, Modbus map, and MQTT topic routing.</p>
+      </div>
+      <div class="screenshot-grid">
+        <figure class="shot-card large">
+          <a href="assets/screenshots/arserver-start.webp" target="_blank" rel="noreferrer" aria-label="Open ARServer start workspace screenshot">
+            <img src="assets/screenshots/arserver-start.webp" alt="ARServer start workspace" loading="eager" />
+          </a>
+          <figcaption><strong>Start workspace</strong><span>Add the first IEC 61850 IED and begin the gateway workflow.</span></figcaption>
+        </figure>
+        <figure class="shot-card">
+          <a href="assets/screenshots/arserver-iec-values.webp" target="_blank" rel="noreferrer" aria-label="Open live IEC 61850 values screenshot">
+            <img src="assets/screenshots/arserver-iec-values.webp" alt="ARServer live IEC 61850 values table" loading="lazy" />
+          </a>
+          <figcaption><strong>Live IEC 61850 values</strong><span>Values, quality, object path, and inferred type stay visible.</span></figcaption>
+        </figure>
+        <figure class="shot-card">
+          <a href="assets/screenshots/arserver-modbus-server.webp" target="_blank" rel="noreferrer" aria-label="Open Modbus server map screenshot">
+            <img src="assets/screenshots/arserver-modbus-server.webp" alt="ARServer Modbus TCP mapping table" loading="lazy" />
+          </a>
+          <figcaption><strong>Modbus server map</strong><span>Selected IEC signals become clear Modbus points for HMI polling.</span></figcaption>
+        </figure>
+        <figure class="shot-card">
+          <a href="assets/screenshots/arserver-mqtt-topics.webp" target="_blank" rel="noreferrer" aria-label="Open MQTT topic routing screenshot">
+            <img src="assets/screenshots/arserver-mqtt-topics.webp" alt="ARServer MQTT topics screen" loading="lazy" />
+          </a>
+          <figcaption><strong>MQTT topic routing</strong><span>Publish value, quality, status, and state payloads to broker topics.</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
     <section id="wiki" class="section page-shell" aria-labelledby="wiki-title">
       <div class="section-heading">
         <p class="section-kicker">Product Wiki</p>
@@ -207,7 +248,7 @@
         <a href="VALIDATION_MATRIX.md"><strong>Validation Matrix</strong><span>Bench checklist for FAT, lab, and simulated evaluation.</span></a>
         <a href="ROADMAP.md"><strong>Roadmap</strong><span>Native IEC 61850 milestones and report-ready direction.</span></a>
         <a href="DEPLOYMENT.md"><strong>Deployment</strong><span>GitHub Pages, SEO files, and documentation publishing notes.</span></a>
-        <a href="../SECURITY.md"><strong>Security Policy</strong><span>Responsible handling for engineering gateway security concerns.</span></a>
+        <a href="https://github.com/masarray/arserver/security/policy"><strong>Security Policy</strong><span>Responsible handling for engineering gateway security concerns.</span></a>
       </div>
     </section>
 
