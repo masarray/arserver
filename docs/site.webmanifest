@@ -1,11 +1,13 @@
 {
-  "name": "ARServer",
+  "name": "ARServer — Native IEC 61850 Gateway",
   "short_name": "ARServer",
-  "description": "IEC 61850 MMS to Modbus TCP and MQTT gateway for Windows engineering labs.",
+  "description": "Apache-2.0 Windows engineering gateway for bridging IEC 61850 MMS IED values to Modbus TCP and MQTT.",
   "start_url": "/arserver/",
+  "scope": "/arserver/",
   "display": "standalone",
   "background_color": "#eff6ff",
   "theme_color": "#eff6ff",
+  "categories": ["engineering", "developer", "utilities"],
   "icons": [
     {
       "src": "assets/arserver-icon.png",
