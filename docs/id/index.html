@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ARServer — Gateway IEC 61850 ke Modbus TCP + MQTT</title>
+  <meta name="description" content="ARServer adalah gateway Windows dan pusat belajar untuk membaca data relay/IED IEC 61850 MMS lalu menerbitkannya ke Modbus TCP dan MQTT untuk HMI, SCADA, DCS, FAT, relay bench, dan otomasi gardu." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://masarray.github.io/arserver/id/" />
+  <link rel="alternate" hreflang="x-default" href="https://masarray.github.io/arserver/" />
+  <link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/" />
+  <link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/" />
+  <link rel="manifest" href="../site.webmanifest" />
+  <link rel="icon" type="image/png" sizes="256x256" href="../assets/arserver-icon.png" />
+  <link rel="apple-touch-icon" href="../assets/arserver-icon.png" />
+  <meta name="theme-color" content="#eff6ff" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="ARServer — Gateway IEC 61850 ke Modbus TCP + MQTT" />
+  <meta property="og:description" content="Belajar IEC 61850, Modbus TCP, dan MQTT sambil memakai ARServer untuk menjembatani data relay ke HMI, SCADA, dashboard, dan workflow pengujian." />
+  <meta property="og:url" content="https://masarray.github.io/arserver/id/" />
+  <meta property="og:site_name" content="ARServer" />
+  <meta property="og:image" content="https://masarray.github.io/arserver/assets/screenshots/arserver-start.webp" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <link rel="preload" as="image" href="../assets/screenshots/arserver-start.webp" />
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="../screenshots.css" />
+  <link rel="stylesheet" href="../polish.css" />
+  <link rel="stylesheet" href="../language.css" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "ARServer",
+    "applicationCategory": "EngineeringApplication",
+    "operatingSystem": "Windows 10, Windows 11",
+    "softwareVersion": "1.0.1",
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "codeRepository": "https://github.com/masarray/arserver",
+    "url": "https://masarray.github.io/arserver/id/",
+    "description": "Gateway desktop Windows dan pusat belajar untuk menjembatani data IEC 61850 MMS dari relay/IED ke Modbus TCP dan MQTT.",
+    "keywords": "IEC 61850, MMS, Modbus TCP, MQTT, SCADA, HMI, DCS, otomasi gardu, relay testing, FAT, SAT"
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Lewati ke konten</a>
+
+  <header class="site-header" aria-label="Header situs ARServer">
+    <a class="brand" href="./" aria-label="Beranda ARServer Bahasa Indonesia">
+      <span class="brand-mark brand-mark--image" aria-hidden="true"><img src="../assets/arserver-icon.png" alt="" /></span>
+      <span class="brand-copy"><strong>ARServer</strong><small>Gateway IEC 61850</small></span>
+    </a>
+    <nav class="nav-links" aria-label="Navigasi utama">
+      <a href="#learn">Belajar</a>
+      <a href="#journey">Mulai</a>
+      <a href="#architecture">Arsitektur</a>
+      <a href="#screenshots">Screenshot</a>
+      <a href="#wiki">Panduan</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <div class="language-switcher" aria-label="Pilihan bahasa">
+      <a href="../en/" hreflang="en">EN</a>
+      <a class="is-active" href="../id/" hreflang="id">ID</a>
+    </div>
+    <a class="nav-cta" href="https://github.com/masarray/arserver">GitHub</a>
+  </header>
+
+  <main id="content">
+    <section id="top" class="hero-section page-shell">
+      <div class="hero-content">
+        <p class="eyebrow"><span></span> IEC 61850 MMS · Modbus TCP · MQTT</p>
+        <h1>Belajar protokolnya. Baca data relay. Kirim ke HMI dengan rapi.</h1>
+        <p class="hero-lead">ARServer adalah gateway engineering Windows dan pusat informasi untuk mengubah nilai terpilih dari relay/IED IEC 61850 menjadi map Modbus TCP dan topic MQTT yang bisa dipakai HMI, SCADA, DCS, FAT, relay bench, dashboard, dan workflow otomasi gardu.</p>
+        <div class="hero-actions" aria-label="Aksi utama">
+          <a class="button primary" href="https://github.com/masarray/arserver">Buka repository</a>
+          <a class="button ghost" href="../wiki.html?doc=QUICK_START.md">Mulai dari nol</a>
+        </div>
+        <dl class="trust-row" aria-label="Ringkasan project">
+          <div><dt>Sumber</dt><dd>IEC 61850 MMS</dd></div>
+          <div><dt>Output</dt><dd>Modbus TCP + MQTT</dd></div>
+          <div><dt>Use case</dt><dd>HMI / SCADA / FAT</dd></div>
+          <div><dt>Lisensi</dt><dd>Apache-2.0</dd></div>
+        </dl>
+      </div>
+
+      <div class="hero-console" aria-label="Preview runtime ARServer">
+        <div class="console-topbar"><span></span><span></span><span></span><strong>Gateway Runtime</strong></div>
+        <div class="runtime-card active">
+          <small>Sumber IED</small>
+          <strong>OCR7SR12 / MMS :102</strong>
+          <p>Associated · runtime cache healthy</p>
+        </div>
+        <div class="signal-table" role="img" aria-label="Contoh grid runtime ARServer">
+          <div class="signal-row head"><span>IEC Object</span><span>Value</span><span>Q</span></div>
+          <div class="signal-row"><span>XCBR1.Pos.stVal</span><strong>Closed</strong><em>Good</em></div>
+          <div class="signal-row"><span>PTOC1.Op.general</span><strong>False</strong><em>Good</em></div>
+          <div class="signal-row"><span>MMXU1.A.phsA.cVal</span><strong>132.6</strong><em>Fresh</em></div>
+        </div>
+        <div class="route-grid" aria-label="Route output">
+          <div><small>Modbus TCP</small><strong>30001 → CB Position</strong></div>
+          <div><small>MQTT</small><strong>arserver/IED/tag/state</strong></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="learn" class="section page-shell" aria-labelledby="learn-title">
+      <div class="section-heading">
+        <p class="section-kicker">Pusat belajar</p>
+        <h2 id="learn-title">Tempat mulai yang praktis untuk memahami IEC 61850, Modbus TCP, dan MQTT.</h2>
+        <p>ARServer tidak hanya diposisikan sebagai aplikasi, tetapi juga sebagai peta belajar agar hubungan antarprotokol jelas sebelum user mulai mapping data relay sungguhan.</p>
+      </div>
+      <div class="learning-grid">
+        <article class="learning-card"><span>Protokol 01</span><h3>IEC 61850 dan MMS</h3><p>Pahami IED, logical node, data object, data attribute, function constraint, file SCL, dan kenapa MMS umumnya memakai TCP port 102.</p></article>
+        <article class="learning-card"><span>Protokol 02</span><h3>Modbus TCP untuk HMI/SCADA</h3><p>Pahami kenapa DCS, HMI, dan SCADA sering membutuhkan register map yang stabil, alamat jelas, dan status point yang mudah dipolling.</p></article>
+        <article class="learning-card"><span>Protokol 03</span><h3>MQTT untuk dashboard/data platform</h3><p>Pahami topic naming, payload JSON, quality, timestamp, broker, dan cara data relay dibawa ke dashboard atau middleware.</p></article>
+      </div>
+    </section>
+
+    <section id="journey" class="section page-shell" aria-labelledby="journey-title">
+      <div class="section-heading">
+        <p class="section-kicker">Dari nol sampai jalan</p>
+        <h2 id="journey-title">Dari IP relay atau file SCL sampai gateway Modbus/MQTT berjalan.</h2>
+        <p>Alur dokumentasi disusun untuk user pertama kali: install, tambah sumber data, pilih signal, validasi, mapping, publish, lalu troubleshooting.</p>
+      </div>
+      <div class="journey-grid">
+        <article class="journey-card"><span>01</span><h3>Install dan buka aplikasi</h3><p>Jalankan ARServer di Windows dan pahami tampilan workspace sebelum runtime dimulai.</p></article>
+        <article class="journey-card"><span>02</span><h3>Tambah sumber IED</h3><p>Mulai dari IP relay live melalui MMS port 102 atau dari file engineering SCL/CID/SCD/ICD/IID.</p></article>
+        <article class="journey-card"><span>03</span><h3>Validasi signal</h3><p>Pilih point yang berguna untuk SCADA, probe keterbacaan, dan jaga value, quality, timestamp, serta stale status tetap terlihat.</p></article>
+        <article class="journey-card"><span>04</span><h3>Publish output</h3><p>Expose point ke Modbus TCP dan optional MQTT topic untuk HMI, SCADA, dashboard, atau test tool.</p></article>
+      </div>
+    </section>
+
+    <section id="architecture" class="section page-shell split" aria-labelledby="architecture-title">
+      <div>
+        <p class="section-kicker">Arsitektur</p>
+        <h2 id="architecture-title">Data relay dibaca sekali, lalu dibagikan ke sistem yang membutuhkan.</h2>
+        <p>ARServer berada di antara relay/IED IEC 61850 dan sistem pemakai data. Jalur baca relay dijaga tetap terkendali, lalu nilai yang sudah dipilih diexpose ke sistem klasik melalui Modbus TCP dan workflow data modern melalui MQTT.</p>
+        <ul class="check-list">
+          <li>Relay / IED tetap menjadi sumber data utama melalui IEC 61850 MMS.</li>
+          <li>ARServer memvalidasi nilai terpilih sebelum output dipublish.</li>
+          <li>DCS, HMI, dan SCADA dapat polling Modbus TCP server.</li>
+          <li>Dashboard IoT, middleware, atau historian dapat subscribe melalui MQTT.</li>
+        </ul>
+      </div>
+      <div class="connection-diagram" role="img" aria-label="Relay terhubung ke ARServer melalui IEC 61850 MMS, lalu ARServer menerbitkan data ke Modbus TCP dan MQTT.">
+        <div class="diagram-node source-node"><span>Sumber</span><strong>Relay / IED</strong><small>IEC 61850 server</small></div>
+        <div class="diagram-link inbound"><span>IEC 61850 MMS · port 102</span></div>
+        <div class="diagram-node core-node"><span>Gateway</span><strong>ARServer</strong><small>runtime cache · quality · timestamp · mapping</small></div>
+        <div class="diagram-branches"><div class="diagram-link"><span>Modbus TCP</span></div><div class="diagram-link"><span>MQTT</span></div></div>
+        <div class="diagram-output-grid">
+          <div class="diagram-node output-node"><span>Layer kontrol klasik</span><strong>DCS · HMI · SCADA</strong><small>poll register / status point</small></div>
+          <div class="diagram-node output-node"><span>Layer data platform</span><strong>IoT · Historian · Dashboard</strong><small>subscribe topic / JSON state</small></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="screenshots" class="section page-shell screenshots-section" aria-labelledby="screenshots-title">
+      <div class="section-heading">
+        <div><p class="section-kicker">Screenshot produk</p><h2 id="screenshots-title">Tampilan workflow ARServer yang sebenarnya.</h2></div>
+        <p>Screenshot membantu user baru memahami start workspace, live IEC values, Modbus server map, dan MQTT topic routing sebelum mencoba aplikasi.</p>
+      </div>
+      <div class="screenshot-grid">
+        <figure class="shot-card large"><a href="../assets/screenshots/arserver-start.webp" target="_blank" rel="noreferrer"><img src="../assets/screenshots/arserver-start.webp" alt="ARServer start workspace" loading="eager" /></a><figcaption><strong>Start workspace</strong><span>Tambah IED IEC 61850 pertama dan mulai alur gateway.</span></figcaption></figure>
+        <figure class="shot-card"><a href="../assets/screenshots/arserver-iec-values.webp" target="_blank" rel="noreferrer"><img src="../assets/screenshots/arserver-iec-values.webp" alt="Tabel live value IEC 61850 ARServer" loading="lazy" /></a><figcaption><strong>Live IEC 61850 values</strong><span>Value, quality, object path, dan tipe tetap terlihat.</span></figcaption></figure>
+        <figure class="shot-card"><a href="../assets/screenshots/arserver-modbus-server.webp" target="_blank" rel="noreferrer"><img src="../assets/screenshots/arserver-modbus-server.webp" alt="Tabel mapping Modbus TCP ARServer" loading="lazy" /></a><figcaption><strong>Modbus server map</strong><span>Signal IEC terpilih menjadi point Modbus yang jelas untuk HMI.</span></figcaption></figure>
+        <figure class="shot-card"><a href="../assets/screenshots/arserver-mqtt-topics.webp" target="_blank" rel="noreferrer"><img src="../assets/screenshots/arserver-mqtt-topics.webp" alt="Tampilan MQTT topic ARServer" loading="lazy" /></a><figcaption><strong>MQTT topic routing</strong><span>Publish value, quality, status, dan state payload ke broker topic.</span></figcaption></figure>
+      </div>
+    </section>
+
+    <section id="wiki" class="section page-shell" aria-labelledby="wiki-title">
+      <div class="section-heading">
+        <p class="section-kicker">Panduan produk</p>
+        <h2 id="wiki-title">Dokumentasi untuk belajar dan memakai ARServer.</h2>
+        <p>Buka halaman preview Markdown agar panduan tampil bersih seperti dokumen, bukan raw Markdown.</p>
+      </div>
+      <div class="wiki-grid wiki-grid-extended">
+        <a href="../wiki.html?doc=QUICK_START.md"><strong>Quick Start</strong><span>Dari IP relay atau file SCL sampai gateway berjalan.</span></a>
+        <a href="../wiki.html?doc=TROUBLESHOOTING.md"><strong>Troubleshooting</strong><span>Cek koneksi, discovery, Modbus, MQTT, dan stale value.</span></a>
+        <a href="../wiki.html?doc=VALIDATION_MATRIX.md"><strong>Validation Matrix</strong><span>Checklist bench test untuk FAT, lab, dan evaluasi simulasi.</span></a>
+        <a href="../wiki.html?doc=ROADMAP.md"><strong>Roadmap</strong><span>Arah native IEC 61850 dan report-ready capability.</span></a>
+        <a href="../wiki.html?doc=DEPLOYMENT.md"><strong>Deployment</strong><span>GitHub Pages, SEO files, dan catatan publikasi docs.</span></a>
+        <a href="https://github.com/masarray/arserver/security/policy"><strong>Security Policy</strong><span>Penanganan isu security untuk engineering gateway.</span></a>
+      </div>
+    </section>
+
+    <section id="faq" class="section page-shell" aria-labelledby="faq-title">
+      <div class="section-heading narrow"><p class="section-kicker">FAQ</p><h2 id="faq-title">Pertanyaan umum sebelum mencoba ARServer.</h2></div>
+      <div class="faq-list faq-list-expanded">
+        <details open><summary>ARServer itu apa dalam bahasa sederhana?</summary><p>ARServer adalah gateway Windows yang membaca nilai terpilih dari relay/IED IEC 61850 lalu menerbitkannya sebagai register Modbus TCP dan topic MQTT untuk HMI, SCADA, DCS, dashboard, atau test tool.</p></details>
+        <details><summary>Apakah ARServer alat test relay?</summary><p>Bukan. ARServer bukan relay test set untuk injeksi. Fokusnya adalah membaca data, mapping, publishing, validasi, dan membantu integrasi engineering.</p></details>
+        <details><summary>Apakah bisa konek ke relay/IED sungguhan?</summary><p>Ya, jika relay, network, dan service IEC 61850 yang didukung memungkinkan komunikasi MMS melalui TCP port 102. Selalu uji dulu di bench atau jaringan FAT yang aman.</p></details>
+        <details><summary>Apakah perlu MQTT broker?</summary><p>Perlu jika output MQTT digunakan. Output Modbus TCP tidak membutuhkan MQTT broker.</p></details>
+        <details><summary>Kenapa quality dan timestamp penting?</summary><p>Nilai Boolean tanpa quality dan timestamp bisa menyesatkan operator. ARServer menjaga konteks value agar user tahu data masih fresh, stale, good, atau invalid.</p></details>
+      </div>
+    </section>
+
+    <section class="final-cta page-shell" aria-label="Ajakan akhir">
+      <div><p class="section-kicker">Mulai kecil, validasi jelas</p><h2>Buat satu mapping IEC 61850 ke Modbus/MQTT yang bersih, lalu kembangkan dengan percaya diri.</h2></div>
+      <div class="hero-actions"><a class="button primary" href="https://github.com/masarray/arserver">Buka GitHub</a><a class="button ghost" href="../wiki.html?doc=QUICK_START.md">Baca Quick Start</a></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>ARServer · Native IEC 61850 MMS to Modbus TCP + MQTT Gateway · Apache-2.0</p>
+    <p><a href="../en/" hreflang="en">English</a> · <a href="../wiki.html?doc=ROADMAP.md">Roadmap</a> · <a href="https://github.com/masarray/arserver">GitHub</a></p>
+  </footer>
+
+  <script src="../script.js" defer></script>
+</body>
+</html>
