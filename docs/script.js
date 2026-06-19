@@ -34,6 +34,8 @@
     '.shot-card',
     '.wiki-grid a',
     '.wiki-grid article',
+    '.learning-card',
+    '.journey-card',
     '.scope-list article',
     '.safety > *',
     '.faq-list details',
@@ -134,6 +136,31 @@
     link.setAttribute('data-preview-doc', 'true');
   });
 
+  function makeClickableCards(selector, urls) {
+    const cards = Array.from(document.querySelectorAll(selector));
+    cards.forEach((card, index) => {
+      const url = urls[index] || urls[0];
+      if (!url || card.querySelector('a')) return;
+      card.classList.add('is-clickable-card');
+      card.setAttribute('role', 'link');
+      card.setAttribute('tabindex', '0');
+      card.setAttribute('aria-label', `${card.querySelector('h3')?.textContent?.trim() || 'Open'} - open detailed page`);
+      card.addEventListener('click', () => { window.location.href = url; });
+      card.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          window.location.href = url;
+        }
+      });
+    });
+  }
+
+  const isIndonesian = location.pathname.includes('/id/');
+  makeClickableCards('.learning-card', isIndonesian
+    ? ['/arserver/id/belajar/iec-61850/', '/arserver/id/belajar/modbus-tcp/', '/arserver/id/belajar/mqtt/']
+    : ['/arserver/en/learn/iec-61850/', '/arserver/en/learn/modbus-tcp/', '/arserver/en/learn/mqtt/']);
+  makeClickableCards('.journey-card', [isIndonesian ? '/arserver/id/panduan/dari-nol-sampai-jalan/' : '/arserver/en/docs/zero-to-running/']);
+
   function addRipple(event) {
     const target = event.currentTarget;
     if (!(target instanceof HTMLElement) || prefersReducedMotion) return;
@@ -146,7 +173,7 @@
     window.setTimeout(() => ripple.remove(), 620);
   }
 
-  document.querySelectorAll('.button, .nav-cta').forEach((item) => {
+  document.querySelectorAll('.button, .nav-cta, .is-clickable-card').forEach((item) => {
     item.addEventListener('pointerdown', addRipple);
   });
 
