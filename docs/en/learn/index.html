@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Learn IEC 61850, Modbus TCP, and MQTT with ARServer</title>
+  <meta name="description" content="A practical learning center for IEC 61850 MMS, Modbus TCP, MQTT, and ARServer gateway workflows from relay data to HMI, SCADA, dashboard, and FAT/SAT usage." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://masarray.github.io/arserver/en/learn/" />
+  <link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/" />
+  <link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/" />
+  <link rel="icon" type="image/png" href="/arserver/assets/arserver-icon.png" />
+  <link rel="stylesheet" href="/arserver/styles.css" />
+  <link rel="stylesheet" href="/arserver/polish.css" />
+  <link rel="stylesheet" href="/arserver/language.css" />
+  <link rel="stylesheet" href="/arserver/learn.css" />
+</head>
+<body class="learn-body">
+  <header class="site-header">
+    <a class="brand" href="/arserver/en/"><span class="brand-mark brand-mark--image"><img src="/arserver/assets/arserver-icon.png" alt="" /></span><span class="brand-copy"><strong>ARServer</strong><small>Learning Center</small></span></a>
+    <nav class="nav-links"><a href="/arserver/en/">Product</a><a href="/arserver/en/learn/">Learn</a><a href="/arserver/wiki.html?doc=QUICK_START.md">Docs</a></nav>
+    <div class="language-switcher"><a class="is-active" href="/arserver/en/learn/">EN</a><a href="/arserver/id/belajar/">ID</a></div>
+  </header>
+
+  <main>
+    <section class="learn-hero page-shell">
+      <div class="learn-hero__inner">
+        <p class="eyebrow"><span></span> Protocol learning path</p>
+        <h1>Understand the protocols before mapping relay data.</h1>
+        <p>This learning center explains the relationship between IEC 61850, Modbus TCP, MQTT, and ARServer. It is written for engineers who need practical understanding before connecting a relay, building a register map, or publishing data to a broker.</p>
+      </div>
+    </section>
+
+    <section class="learn-layout page-shell">
+      <aside class="learn-sidebar">
+        <strong>Learning path</strong>
+        <a class="is-active" href="/arserver/en/learn/">Overview</a>
+        <a href="/arserver/en/learn/iec-61850/">IEC 61850 basics</a>
+        <a href="/arserver/en/learn/modbus-tcp/">Modbus TCP basics</a>
+        <a href="/arserver/en/learn/mqtt/">MQTT basics</a>
+        <a href="/arserver/en/learn/iec-61850-to-modbus/">IEC 61850 to Modbus</a>
+        <a href="/arserver/en/learn/iec-61850-to-mqtt/">IEC 61850 to MQTT</a>
+      </aside>
+
+      <article class="learn-article">
+        <div class="learn-article__header"><span>Information center</span><h2>Protocol learning for ARServer users</h2></div>
+        <div class="learn-content">
+          <p>ARServer sits between a relay or IED and the systems that need readable values. The source side is IEC 61850 MMS. The classic control output is Modbus TCP. The modern data output is MQTT.</p>
+          <div class="learn-callout"><strong>Simple mental model:</strong> IEC 61850 describes and reads the relay model. ARServer selects and validates useful points. Modbus TCP and MQTT expose those selected points to tools that are easier to integrate.</div>
+          <h3>Recommended path</h3>
+          <ol>
+            <li>Learn IEC 61850 terminology: IED, logical node, data object, data attribute, function constraint, quality, timestamp, and SCL.</li>
+            <li>Learn Modbus TCP register thinking: address ranges, polling clients, coils, discrete inputs, input registers, and holding registers.</li>
+            <li>Learn MQTT publishing: broker, topic, payload, retain behavior, quality context, and timestamp context.</li>
+            <li>Use ARServer Quick Start to add a relay or SCL file, select signals, validate readings, map outputs, and run the gateway.</li>
+          </ol>
+          <div class="learn-link-grid">
+            <a href="/arserver/en/learn/iec-61850/"><strong>IEC 61850 basics</strong><span>Start here if relay object names such as XCBR, PTOC, MMXU, stVal, and q are still unclear.</span></a>
+            <a href="/arserver/en/learn/modbus-tcp/"><strong>Modbus TCP basics</strong><span>Understand how HMI and SCADA clients poll registers and status points.</span></a>
+            <a href="/arserver/en/learn/mqtt/"><strong>MQTT basics</strong><span>Learn broker-based publishing for dashboards, middleware, and historian workflows.</span></a>
+            <a href="/arserver/wiki.html?doc=QUICK_START.md"><strong>ARServer Quick Start</strong><span>Move from learning to a working relay IP or SCL based gateway setup.</span></a>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
