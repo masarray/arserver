@@ -432,25 +432,32 @@ public sealed class BridgeRuntime : IAsyncDisposable
                         continue;
                     }
 
-                    var display = FormatBindingDisplay(value, binding);
+                    var richValue = value as Iec61850ReadValue;
+                    var rawValue = Iec61850ReadValue.Unwrap(value);
+                    var display = richValue?.Value is string || richValue?.Value == null && richValue != null
+                        ? richValue.ToString()
+                        : FormatBindingDisplay(rawValue, binding);
                     var changed = old != display;
 
                     binding.CurrentValue = display;
-                    binding.Quality = "Good";
+                    binding.Quality = richValue?.HasQuality == true ? richValue.Quality : "Good";
+                    if (richValue?.HasDeviceTimestamp == true)
+                        binding.DeviceTimestamp = richValue.DeviceTimestamp;
                     binding.LastUpdate = DateTime.Now;
                     binding.AgeMs = 0;
                     binding.Status = GetLiveStatusForBinding(binding);
                     if (changed) binding.Sequence++;
 
-                    await TryRefreshCompanionQualityAndTimestampAsync(binding, client, nowUtc, token);
+                    if (richValue?.HasQuality != true || richValue?.HasDeviceTimestamp != true)
+                        await TryRefreshCompanionQualityAndTimestampAsync(binding, client, nowUtc, token);
 
                     // Outputs are cache-based. A FUXA/SCADA read never triggers direct MMS reads.
-                    WriteBindingToModbus(binding, value);
+                    WriteBindingToModbus(binding, rawValue);
                     if (changed ||
                         !string.Equals(oldQuality, binding.Quality, StringComparison.OrdinalIgnoreCase) ||
                         !string.Equals(oldStatus, binding.Status, StringComparison.OrdinalIgnoreCase))
                     {
-                        PublishBindingToMqtt(binding, value, display);
+                        PublishBindingToMqtt(binding, rawValue, display);
                     }
 
                     if (changed && ShouldLogValueChange(binding))
@@ -616,11 +623,14 @@ public sealed class BridgeRuntime : IAsyncDisposable
         var reference = NormalizeIecReference(binding.IecReference);
         if (reference.EndsWith(".q") || reference.EndsWith(".t")) return false;
         return reference.EndsWith(".stval") ||
+               reference.EndsWith(".valwtr.posval") ||
+               reference.EndsWith(".posval") ||
                reference.EndsWith(".general") ||
                reference.EndsWith(".mag.f") ||
                reference.EndsWith(".cval.mag.f") ||
                reference.EndsWith(".f") ||
                dataType.Equals("Dbpos", StringComparison.OrdinalIgnoreCase) ||
+               dataType.Equals("Int32", StringComparison.OrdinalIgnoreCase) ||
                dataType.Equals("Boolean", StringComparison.OrdinalIgnoreCase) ||
                dataType.Equals("Float32", StringComparison.OrdinalIgnoreCase);
     }
@@ -647,7 +657,8 @@ public sealed class BridgeRuntime : IAsyncDisposable
         if (normalized.EndsWith(".q", StringComparison.OrdinalIgnoreCase) || normalized.EndsWith(".t", StringComparison.OrdinalIgnoreCase)) return false;
 
         var parent = normalized;
-        if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
+        if (parent.EndsWith(".ValWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
+        else if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
         else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
         else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];
         else if (parent.EndsWith(".mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];

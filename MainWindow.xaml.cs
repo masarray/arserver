@@ -584,7 +584,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             signal.IsSelected = signal.IsScadaCoreSignal;
         SignalsView.Refresh();
         Raise(nameof(VisibleSignalCountText));
-        AddLog("INFO", "Discovery", "Selected smart SCADA-core signals only: protection operate/trip, CSWI/XCBR/XSWI Pos, and MMXU/MMXN cVal current/voltage. Statistic/harmonic/mean/min/max signals are intentionally excluded.");
+        AddLog("INFO", "Discovery", "Selected smart SCADA-core signals only: protection operate/trip, CSWI/XCBR/XSWI Pos, AVR/ATCC/GGIO operational points, and MMXU/MMXN cVal current/voltage. Statistic/harmonic/mean/min/max signals are intentionally excluded.");
     }
 
     private void QuickFilter_Click(object sender, RoutedEventArgs e)
@@ -1334,9 +1334,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     continue;
                 }
 
-                signal.Value = MockIec61850Client.Format(value, signal.DataType, signal.Unit);
-                signal.Quality = "Good";
-                signal.DeviceTimestamp = signal.DeviceTimestamp == "-" ? "-" : signal.DeviceTimestamp;
+                ApplyReadValueToSignal(signal, value);
                 signal.Timestamp = DateTime.Now;
                 UpdateBindingFromSignal(signal);
                 ok++;
@@ -1367,11 +1365,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             binding.DeviceTimestamp = signal.DeviceTimestamp;
             binding.LastUpdate = signal.Timestamp;
             binding.AgeMs = 0;
-            binding.Status = signal.Quality == "Good" ? "Mapped/Live" : "Mapped/Bad";
+            binding.Status = signal.Quality.Equals("Good", StringComparison.OrdinalIgnoreCase) ? "Mapped/Live" : "Mapped/Bad";
         }
 
         if (SelectedRelay != null)
             SyncLiveWorkspaceToRelay(SelectedRelay);
+    }
+
+    private static void ApplyReadValueToSignal(SignalDefinition signal, object value)
+    {
+        if (value is Iec61850ReadValue rich)
+        {
+            signal.Value = rich.Value is string || rich.Value == null
+                ? rich.ToString()
+                : MockIec61850Client.Format(rich.Value, signal.DataType, signal.Unit);
+            signal.Quality = rich.HasQuality ? rich.Quality : "Good";
+            signal.DeviceTimestamp = rich.HasDeviceTimestamp ? rich.DeviceTimestamp : "-";
+            return;
+        }
+
+        signal.Value = MockIec61850Client.Format(value, signal.DataType, signal.Unit);
+        signal.Quality = "Good";
+        signal.DeviceTimestamp = signal.DeviceTimestamp == "-" ? "-" : signal.DeviceTimestamp;
     }
 
     private void UpdateSignalFromBinding(BindingItem binding)

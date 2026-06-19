@@ -612,11 +612,11 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
                         continue;
                     }
 
-                    signal.Value = MockIec61850Client.Format(value, signal.DataType, signal.Unit);
-                    signal.Quality = "Good";
+                    ApplyReadValueToSignal(signal, value);
                     signal.ProbeStatus = "Readable";
                     signal.Timestamp = DateTime.Now;
-                    await TryProbeCompanionQualityAndTimestampAsync(signal, _probeClient, _probeCts.Token).ConfigureAwait(true);
+                    if (value is not Iec61850ReadValue rich || !rich.HasQuality || !rich.HasDeviceTimestamp)
+                        await TryProbeCompanionQualityAndTimestampAsync(signal, _probeClient, _probeCts.Token).ConfigureAwait(true);
                     ok++;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -642,8 +642,27 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         }
     }
 
+    private static void ApplyReadValueToSignal(SignalDefinition signal, object value)
+    {
+        if (value is Iec61850ReadValue rich)
+        {
+            signal.Value = rich.Value is string || rich.Value == null
+                ? rich.ToString()
+                : MockIec61850Client.Format(rich.Value, signal.DataType, signal.Unit);
+            signal.Quality = rich.HasQuality ? rich.Quality : "Good";
+            signal.DeviceTimestamp = rich.HasDeviceTimestamp ? rich.DeviceTimestamp : "-";
+            return;
+        }
+
+        signal.Value = MockIec61850Client.Format(value, signal.DataType, signal.Unit);
+        signal.Quality = "Good";
+    }
+
     private static async Task TryProbeCompanionQualityAndTimestampAsync(SignalDefinition signal, IIec61850Client client, CancellationToken token)
     {
+        if (signal.FunctionalConstraint is not ("ST" or "MX"))
+            return;
+
         if (signal.ObjectReference.EndsWith(".q", StringComparison.OrdinalIgnoreCase) ||
             signal.ObjectReference.EndsWith(".t", StringComparison.OrdinalIgnoreCase))
             return;
@@ -689,7 +708,8 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         if (normalized.EndsWith(".q", StringComparison.OrdinalIgnoreCase) || normalized.EndsWith(".t", StringComparison.OrdinalIgnoreCase)) return false;
 
         var parent = normalized;
-        if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
+        if (parent.EndsWith(".ValWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
+        else if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
         else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
         else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];
         else if (parent.EndsWith(".mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];

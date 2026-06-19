@@ -15,6 +15,7 @@ public class SignalDefinition : ObservableObject
     private static readonly string[] KnownLogicalNodeClasses =
     {
         "CSWI", "XCBR", "XSWI",
+        "ATCC", "AVCO", "AVC", "YPTR",
         "MMXU", "MMXN", "MSQI",
         "PTOC", "PTRC", "PDIF", "PDIS", "PIOC", "PTOV", "PTUV", "PTEF", "PDEF", "PSCH", "RREC", "RBRF",
         "GGIO", "GAPC", "LLN0", "LPHD", "CILO", "CPOW"
@@ -115,8 +116,12 @@ public class SignalDefinition : ObservableObject
             "PTUV" => 112,
             "PTEF" => 114,
             "PDEF" => 116,
+            "ATCC" => 180,
+            "AVC" or "AVCO" => 185,
             "MMXU" => 220,
             "MMXN" => 225,
+            "GGIO" => 260,
+            "YPTR" => 270,
             _ when string.Equals(category, "Position", StringComparison.OrdinalIgnoreCase) => 20,
             _ when string.Equals(category, "Protection", StringComparison.OrdinalIgnoreCase) => 120,
             _ when string.Equals(category, "Measurement", StringComparison.OrdinalIgnoreCase) => 240,
@@ -156,6 +161,56 @@ public class SignalDefinition : ObservableObject
         if (cls == "PTOC" && (r.EndsWith(".op.general") || r.EndsWith(".str.general"))) return true;
         if (cls == "PTRC" && r.EndsWith(".tr.general")) return true;
         if ((cls is "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF") && r.EndsWith(".op.general")) return true;
+
+        if (cls is "ATCC" or "AVC" or "AVCO")
+            return IsAvrOperationalSignal(r, dataType, category);
+
+        if (cls == "GGIO" && (dataType is "Boolean" or "Enum" or "Int32" || string.Equals(category, "Status", StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        if (cls == "YPTR" && (r.Contains(".tappos.") || string.Equals(category, "Status", StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        return false;
+    }
+
+    private static bool IsAvrOperationalSignal(string normalizedReference, string dataType, string category)
+    {
+        var r = NormalizeRef(normalizedReference);
+        if (r.EndsWith(".q") ||
+            r.EndsWith(".t") ||
+            r.EndsWith(".ctlmodel") ||
+            r.EndsWith(".persistent") ||
+            r.EndsWith(".d") ||
+            r.Contains(".oper.") ||
+            r.EndsWith(".oper"))
+        {
+            return false;
+        }
+
+        if (string.Equals(category, "Measurement", StringComparison.OrdinalIgnoreCase) && dataType == "Float32")
+            return true;
+
+        if (dataType is "Boolean" or "Enum" or "Int32")
+        {
+            return r.Contains(".loc.") ||
+                   r.Contains(".tapchg.valwtr.posval") ||
+                   r.EndsWith(".tapchg.stval") ||
+                   r.Contains(".parop.") ||
+                   r.Contains(".ltcblk") ||
+                   r.Contains(".mastersel.") ||
+                   r.Contains(".followsel.") ||
+                   r.Contains(".circasel.") ||
+                   r.Contains(".circapfsel.") ||
+                   r.Contains(".funcmon.") ||
+                   r.Contains(".auto.") ||
+                   r.Contains(".ldc.") ||
+                   r.Contains(".errpar.") ||
+                   r.Contains(".opcntrs.") ||
+                   r.EndsWith(".mod.stval") ||
+                   r.EndsWith(".beh.stval") ||
+                   r.EndsWith(".health.stval");
+        }
 
         return false;
     }

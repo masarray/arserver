@@ -28,4 +28,7 @@
   <ItemGroup>
     <PackageReference Include="MQTTnet" Version="5.1.0.1559" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ARIEC61850\src\AR.Iec61850\AR.Iec61850.csproj" Properties="Configuration=$(Configuration)" />
+  </ItemGroup>
 </Project>
