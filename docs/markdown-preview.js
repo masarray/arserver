@@ -1,20 +1,89 @@
 (() => {
   const docs = {
-    'QUICK_START.md': 'Quick Start',
-    'TROUBLESHOOTING.md': 'Troubleshooting',
-    'VALIDATION_MATRIX.md': 'Validation Matrix',
-    'ROADMAP.md': 'Roadmap',
-    'DEPLOYMENT.md': 'Deployment'
+    'QUICK_START.md': { en: 'Quick Start', id: 'Quick Start' },
+    'TROUBLESHOOTING.md': { en: 'Troubleshooting', id: 'Troubleshooting' },
+    'VALIDATION_MATRIX.md': { en: 'Validation Matrix', id: 'Validation Matrix' },
+    'ROADMAP.md': { en: 'Roadmap', id: 'Roadmap' },
+    'DEPLOYMENT.md': { en: 'Deployment', id: 'Deployment' }
+  };
+
+  const ui = {
+    en: {
+      lang: 'en',
+      skip: 'Skip to document',
+      productWiki: 'Product Wiki',
+      landing: 'Landing',
+      docsKicker: 'Documentation',
+      markdownPreview: 'Markdown preview',
+      loadingTitle: 'Loading documentation…',
+      loadingText: 'Rendering Markdown preview…',
+      raw: 'Open raw',
+      folder: 'Docs folder',
+      errorTitle: 'Document could not be rendered',
+      errorBody: 'The Markdown file could not be loaded from this GitHub Pages site.',
+      otherLang: 'ID',
+      otherLangCode: 'id',
+      landingHref: './',
+      folderHref: 'https://github.com/masarray/arserver/tree/main/docs'
+    },
+    id: {
+      lang: 'id',
+      skip: 'Lewati ke dokumen',
+      productWiki: 'Panduan Produk',
+      landing: 'Landing ID',
+      docsKicker: 'Dokumentasi',
+      markdownPreview: 'Preview Markdown',
+      loadingTitle: 'Memuat dokumentasi…',
+      loadingText: 'Merender preview Markdown…',
+      raw: 'Buka raw',
+      folder: 'Folder docs ID',
+      errorTitle: 'Dokumen tidak dapat dirender',
+      errorBody: 'File Markdown tidak dapat dimuat dari GitHub Pages site ini.',
+      otherLang: 'EN',
+      otherLangCode: 'en',
+      landingHref: 'id/',
+      folderHref: 'https://github.com/masarray/arserver/tree/main/docs/id/wiki'
+    }
   };
 
   const article = document.getElementById('article');
   const title = document.getElementById('doc-title');
   const rawLink = document.getElementById('raw-link');
+  const repoLink = document.getElementById('repo-link');
   const sidebarLinks = Array.from(document.querySelectorAll('[data-doc]'));
-
   const params = new URLSearchParams(window.location.search);
   const requestedDoc = params.get('doc') || 'QUICK_START.md';
   const doc = Object.prototype.hasOwnProperty.call(docs, requestedDoc) ? requestedDoc : 'QUICK_START.md';
+
+  function inferLanguage() {
+    const requested = params.get('lang');
+    if (requested === 'id' || requested === 'en') return requested;
+
+    const referrer = document.referrer || '';
+    if (/\/arserver\/id\//.test(referrer) || /\/id\//.test(referrer)) return 'id';
+
+    const stored = sessionStorage.getItem('arserverWikiLang');
+    if (stored === 'id' || stored === 'en') return stored;
+
+    return 'en';
+  }
+
+  const lang = inferLanguage();
+  const copy = ui[lang] || ui.en;
+  sessionStorage.setItem('arserverWikiLang', lang);
+  document.documentElement.lang = copy.lang;
+
+  function docTitle(fileName = doc) {
+    return docs[fileName]?.[lang] || docs[fileName]?.en || fileName;
+  }
+
+  function docPath(fileName = doc) {
+    return lang === 'id' ? `id/wiki/${fileName}` : fileName;
+  }
+
+  function wikiUrl(fileName = doc, targetLang = lang) {
+    return `wiki.html?lang=${encodeURIComponent(targetLang)}&doc=${encodeURIComponent(fileName)}`;
+  }
 
   function escapeHtml(value = '') {
     return value
@@ -36,8 +105,10 @@
 
   function normalizeHref(href = '') {
     if (/^(https?:|mailto:|tel:|#)/i.test(href)) return href;
-    if (href.endsWith('.md') && Object.prototype.hasOwnProperty.call(docs, href)) {
-      return `wiki.html?doc=${encodeURIComponent(href)}`;
+    const clean = href.split('#')[0].split('?')[0];
+    const fileName = clean.split('/').pop();
+    if (fileName?.endsWith('.md') && Object.prototype.hasOwnProperty.call(docs, fileName)) {
+      return wikiUrl(fileName);
     }
     return href;
   }
@@ -203,6 +274,48 @@
     return html.join('\n');
   }
 
+  function applyUiLanguage() {
+    const skip = document.querySelector('.skip-link');
+    const brandSmall = document.querySelector('.wiki-brand small');
+    const sidebarKicker = document.querySelector('.sidebar-kicker');
+    const navLinks = Array.from(document.querySelectorAll('.wiki-header nav a'));
+    const eyebrow = document.querySelector('.doc-eyebrow');
+
+    if (skip) skip.textContent = copy.skip;
+    if (brandSmall) brandSmall.textContent = copy.productWiki;
+    if (sidebarKicker) sidebarKicker.textContent = copy.docsKicker;
+    if (eyebrow) eyebrow.textContent = copy.markdownPreview;
+    if (title) title.textContent = copy.loadingTitle;
+
+    if (navLinks[0]) {
+      navLinks[0].textContent = copy.landing;
+      navLinks[0].href = copy.landingHref;
+    }
+    if (rawLink) rawLink.textContent = copy.raw;
+    if (repoLink) {
+      repoLink.textContent = copy.folder;
+      repoLink.href = copy.folderHref;
+    }
+
+    sidebarLinks.forEach((link) => {
+      const fileName = link.dataset.doc;
+      link.textContent = docTitle(fileName);
+      link.href = wikiUrl(fileName);
+    });
+
+    const nav = document.querySelector('.wiki-header nav');
+    if (nav && !nav.querySelector('[data-lang-switch]')) {
+      const switcher = document.createElement('a');
+      switcher.dataset.langSwitch = 'true';
+      switcher.href = wikiUrl(doc, copy.otherLangCode);
+      switcher.textContent = copy.otherLang;
+      nav.appendChild(switcher);
+    }
+
+    const loadingText = document.querySelector('.loading-card p');
+    if (loadingText) loadingText.textContent = copy.loadingText;
+  }
+
   function setActiveDoc() {
     sidebarLinks.forEach((link) => {
       link.classList.toggle('is-active', link.dataset.doc === doc);
@@ -210,22 +323,23 @@
   }
 
   async function loadDoc() {
+    applyUiLanguage();
     setActiveDoc();
-    if (title) title.textContent = docs[doc];
-    if (rawLink) rawLink.href = doc;
+    if (title) title.textContent = docTitle(doc);
+    if (rawLink) rawLink.href = docPath(doc);
 
     try {
-      const response = await fetch(doc, { cache: 'no-cache' });
+      const response = await fetch(docPath(doc), { cache: 'no-cache' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const markdown = await response.text();
       article.innerHTML = renderMarkdown(markdown);
-      document.title = `${docs[doc]} — ARServer Wiki`;
+      document.title = `${docTitle(doc)} — ARServer Wiki`;
     } catch (error) {
       article.innerHTML = `
         <div class="error-card">
-          <h2>Document could not be rendered</h2>
-          <p>The Markdown file <code>${escapeHtml(doc)}</code> could not be loaded from this GitHub Pages site.</p>
-          <p><a href="${escapeHtml(doc)}">Open raw Markdown</a></p>
+          <h2>${escapeHtml(copy.errorTitle)}</h2>
+          <p>${escapeHtml(copy.errorBody)}</p>
+          <p><a href="${escapeHtml(docPath(doc))}">${escapeHtml(copy.raw)}</a></p>
         </div>
       `;
     }
@@ -236,7 +350,7 @@
       const nextDoc = link.dataset.doc;
       if (!nextDoc || nextDoc === doc) return;
       event.preventDefault();
-      window.location.href = `wiki.html?doc=${encodeURIComponent(nextDoc)}`;
+      window.location.href = wikiUrl(nextDoc);
     });
   });
 
