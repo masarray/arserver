@@ -5,32 +5,94 @@
     <xhtml:link rel="alternate" hreflang="x-default" href="https://masarray.github.io/arserver/" />
     <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/" />
     <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/" />
-    <lastmod>2026-06-19</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>1.0</priority>
+    <lastmod>2026-06-19</lastmod><changefreq>weekly</changefreq><priority>1.0</priority>
   </url>
   <url>
     <loc>https://masarray.github.io/arserver/en/</loc>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://masarray.github.io/arserver/" />
     <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/" />
     <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/" />
-    <lastmod>2026-06-19</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.95</priority>
+    <lastmod>2026-06-19</lastmod><changefreq>weekly</changefreq><priority>0.95</priority>
   </url>
   <url>
     <loc>https://masarray.github.io/arserver/id/</loc>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://masarray.github.io/arserver/" />
     <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/" />
     <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/" />
-    <lastmod>2026-06-19</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.95</priority>
+    <lastmod>2026-06-19</lastmod><changefreq>weekly</changefreq><priority>0.95</priority>
+  </url>
+  <url>
+    <loc>https://masarray.github.io/arserver/en/learn/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/" />
+    <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/" />
+    <lastmod>2026-06-19</lastmod><changefreq>weekly</changefreq><priority>0.90</priority>
+  </url>
+  <url>
+    <loc>https://masarray.github.io/arserver/id/belajar/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/" />
+    <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/" />
+    <lastmod>2026-06-19</lastmod><changefreq>weekly</changefreq><priority>0.90</priority>
+  </url>
+  <url>
+    <loc>https://masarray.github.io/arserver/en/learn/iec-61850/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/iec-61850/" />
+    <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/iec-61850/" />
+    <lastmod>2026-06-19</lastmod><changefreq>monthly</changefreq><priority>0.84</priority>
+  </url>
+  <url>
+    <loc>https://masarray.github.io/arserver/id/belajar/iec-61850/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/iec-61850/" />
+    <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/iec-61850/" />
+    <lastmod>2026-06-19</lastmod><changefreq>monthly</changefreq><priority>0.84</priority>
+  </url>
+  <url>
+    <loc>https://masarray.github.io/arserver/en/learn/modbus-tcp/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/modbus-tcp/" />
+    <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/modbus-tcp/" />
+    <lastmod>2026-06-19</lastmod><changefreq>monthly</changefreq><priority>0.84</priority>
+  </url>
+  <url>
+    <loc>https://masarray.github.io/arserver/id/belajar/modbus-tcp/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/modbus-tcp/" />
+    <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/modbus-tcp/" />
+    <lastmod>2026-06-19</lastmod><changefreq>monthly</changefreq><priority>0.84</priority>
+  </url>
+  <url>
+    <loc>https://masarray.github.io/arserver/en/learn/mqtt/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/mqtt/" />
+    <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/mqtt/" />
+    <lastmod>2026-06-19</lastmod><changefreq>monthly</changefreq><priority>0.84</priority>
+  </url>
+  <url>
+    <loc>https://masarray.github.io/arserver/id/belajar/mqtt/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/mqtt/" />
+    <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/mqtt/" />
+    <lastmod>2026-06-19</lastmod><changefreq>monthly</changefreq><priority>0.84</priority>
+  </url>
+  <url>
+    <loc>https://masarray.github.io/arserver/en/learn/iec-61850-to-modbus/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/iec-61850-to-modbus/" />
+    <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/iec-61850-ke-modbus/" />
+    <lastmod>2026-06-19</lastmod><changefreq>monthly</changefreq><priority>0.86</priority>
+  </url>
+  <url>
+    <loc>https://masarray.github.io/arserver/id/belajar/iec-61850-ke-modbus/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/iec-61850-to-modbus/" />
+    <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/iec-61850-ke-modbus/" />
+    <lastmod>2026-06-19</lastmod><changefreq>monthly</changefreq><priority>0.86</priority>
+  </url>
+  <url>
+    <loc>https://masarray.github.io/arserver/en/learn/iec-61850-to-mqtt/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/iec-61850-to-mqtt/" />
+    <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/iec-61850-ke-mqtt/" />
+    <lastmod>2026-06-19</lastmod><changefreq>monthly</changefreq><priority>0.86</priority>
+  </url>
+  <url>
+    <loc>https://masarray.github.io/arserver/id/belajar/iec-61850-ke-mqtt/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://masarray.github.io/arserver/en/learn/iec-61850-to-mqtt/" />
+    <xhtml:link rel="alternate" hreflang="id" href="https://masarray.github.io/arserver/id/belajar/iec-61850-ke-mqtt/" />
+    <lastmod>2026-06-19</lastmod><changefreq>monthly</changefreq><priority>0.86</priority>
   </url>
   <url>
     <loc>https://masarray.github.io/arserver/wiki.html</loc>
-    <lastmod>2026-06-19</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.70</priority>
+    <lastmod>2026-06-19</lastmod><changefreq>weekly</changefreq><priority>0.70</priority>
   </url>
 </urlset>
