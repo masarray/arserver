@@ -19,6 +19,7 @@ public sealed class NativeIec61850Client : IIec61850Client
     private readonly ArMms.MmsClientSession _session = new();
     private ArMms.MmsDiscoveryResult? _lastDiscovery;
     private LiveIedModelDiscoveryDocument? _liveModel;
+    private readonly Dictionary<string, ArMms.MmsPersistentReportMonitorSession> _reportMonitorSessions = new(StringComparer.OrdinalIgnoreCase);
     private string _host = string.Empty;
     private int _port = 102;
 
@@ -44,6 +45,7 @@ public sealed class NativeIec61850Client : IIec61850Client
         LastErrorMessage = string.Empty;
         _lastDiscovery = null;
         _liveModel = null;
+        _reportMonitorSessions.Clear();
         _host = ipAddress?.Trim() ?? string.Empty;
         _port = port <= 0 ? 102 : port;
 
@@ -144,6 +146,209 @@ public sealed class NativeIec61850Client : IIec61850Client
         LastErrorMessage = rcb.Status;
     }
 
+    public async Task<NativeReportMonitorStartResult> StartReportMonitorAsync(ReportControlPlan plan, CancellationToken cancellationToken)
+    {
+        if (plan == null) throw new ArgumentNullException(nameof(plan));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!_session.IsMmsInitiated)
+        {
+            LastErrorMessage = $"ARIEC61850 report monitor requires ACSE/MMS association. Current state: {_session.State}.";
+            return new NativeReportMonitorStartResult
+            {
+                IsSuccess = false,
+                PlanId = plan.PlanId,
+                Message = LastErrorMessage
+            };
+        }
+
+        if (_reportMonitorSessions.ContainsKey(plan.PlanId))
+        {
+            return new NativeReportMonitorStartResult
+            {
+                IsSuccess = true,
+                PlanId = plan.PlanId,
+                Message = $"Report monitor already active for {plan.DisplayReference}."
+            };
+        }
+
+        var discovery = await EnsureDiscoveryForReportingAsync(cancellationToken).ConfigureAwait(false);
+        if (discovery == null)
+        {
+            return new NativeReportMonitorStartResult
+            {
+                IsSuccess = false,
+                PlanId = plan.PlanId,
+                Message = LastErrorMessage
+            };
+        }
+
+        var inventory = BuildEngineReportInventory(discovery.ReportInventory, plan);
+        var directory = discovery.IedDirectory;
+        var dataSetDirectories = await ReadPlannedDataSetDirectoriesAsync(plan, directory, cancellationToken).ConfigureAwait(false);
+
+        var subscription = ArMms.MmsReportSubscriptionPlanner.BuildStaticPlan(
+            inventory,
+            dataSetDirectories,
+            preferredRcbReference: plan.ReportControlReference,
+            preferredDataSetReference: plan.DataSetReference,
+            strictRcb: !string.IsNullOrWhiteSpace(plan.ReportControlReference),
+            allowUrCbFallback: true,
+            allowPollingFallback: true);
+
+        if (!subscription.IsReady)
+        {
+            var dynamicPlan = ArMms.MmsReportSubscriptionPlanner.BuildDynamicPlan(
+                inventory,
+                directory,
+                plan.Bindings.Select(b => b.IecReference),
+                preferredLogicalDevice: ResolvePreferredLogicalDevice(plan),
+                preferredRcbReference: plan.ReportControlReference,
+                dataSetName: BuildDynamicDataSetName(plan),
+                strictRcb: false,
+                allowUrCbFallback: true,
+                allowPollingFallback: true);
+
+            if (dynamicPlan.IsReady)
+                subscription = dynamicPlan;
+        }
+
+        if (!subscription.IsReady)
+        {
+            var blockers = subscription.Blockers.Count == 0 ? "no detailed blocker returned" : string.Join("; ", subscription.Blockers.Take(4));
+            LastErrorMessage = $"ARIEC61850 report subscription plan blocked for {plan.DisplayReference}: {blockers}";
+            return new NativeReportMonitorStartResult
+            {
+                IsSuccess = false,
+                PlanId = plan.PlanId,
+                Message = LastErrorMessage,
+                SubscriptionSummary = subscription.Summary,
+                MemberCount = subscription.Members.Count,
+                Warnings = subscription.Warnings.Concat(subscription.Blockers).ToArray()
+            };
+        }
+
+        var start = await _session.StartPersistentReportMonitorAsync(
+            subscription,
+            triggerGeneralInterrogation: true,
+            deleteDynamicDataSetOnStop: true,
+            directory,
+            cancellationToken).ConfigureAwait(false);
+
+        if (!start.IsSuccess || start.Session == null)
+        {
+            LastErrorMessage = $"ARIEC61850 persistent report monitor failed for {plan.DisplayReference}: {start.Message}";
+            return new NativeReportMonitorStartResult
+            {
+                IsSuccess = false,
+                PlanId = plan.PlanId,
+                Message = LastErrorMessage,
+                SubscriptionSummary = subscription.Summary,
+                MemberCount = subscription.Members.Count,
+                WriteStepCount = start.WriteSteps.Count,
+                Warnings = start.Warnings.Concat(subscription.Warnings).ToArray()
+            };
+        }
+
+        _reportMonitorSessions[plan.PlanId] = start.Session;
+        LastErrorMessage = $"ARIEC61850 persistent report monitor active: {subscription.Summary}. {start.Message}";
+        return new NativeReportMonitorStartResult
+        {
+            IsSuccess = true,
+            PlanId = plan.PlanId,
+            Message = LastErrorMessage,
+            SubscriptionSummary = subscription.Summary,
+            MemberCount = subscription.Members.Count,
+            WriteStepCount = start.WriteSteps.Count,
+            Warnings = start.Warnings.Concat(subscription.Warnings).ToArray()
+        };
+    }
+
+    public async Task<NativeReportMonitorSliceResult> ReceiveReportMonitorSliceAsync(string planId, TimeSpan duration, CancellationToken cancellationToken)
+    {
+        if (!_reportMonitorSessions.TryGetValue(planId, out var session))
+        {
+            return new NativeReportMonitorSliceResult
+            {
+                PlanId = planId,
+                Message = $"Report monitor session not found for plan {planId}."
+            };
+        }
+
+        var discovery = await EnsureDiscoveryForReportingAsync(cancellationToken).ConfigureAwait(false);
+        var slice = await _session.ReceivePersistentReportMonitorSliceAsync(
+            session,
+            duration,
+            discovery?.IedDirectory,
+            pollReferences: null,
+            pollInterval: null,
+            triggerGeneralInterrogation: false,
+            cancellationToken).ConfigureAwait(false);
+
+        var updates = new List<NativeReportValueUpdate>();
+        var warnings = new List<string>();
+        foreach (var report in slice.Reports)
+        {
+            var projection = ArMms.MmsReportValueProjector.Project(report);
+            warnings.AddRange(projection.Warnings);
+            updates.AddRange(projection.Updates.Select(update => new NativeReportValueUpdate
+            {
+                Reference = update.Reference,
+                FunctionalConstraint = update.FunctionalConstraint,
+                Value = update.Value,
+                Quality = update.Quality,
+                Timestamp = update.Timestamp,
+                Reason = update.Reason,
+                Source = update.Source,
+                ProjectionStatus = update.ProjectionStatus,
+                UpdatedAt = update.UpdatedAt
+            }));
+        }
+
+        return new NativeReportMonitorSliceResult
+        {
+            PlanId = planId,
+            ReportCount = slice.Reports.Count,
+            PollReadCount = slice.PollReads.Count,
+            Message = slice.Message,
+            Updates = updates,
+            Warnings = warnings.Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+        };
+    }
+
+    public async Task<IReadOnlyList<NativeReportMonitorStopResult>> StopReportMonitorsAsync()
+    {
+        var results = new List<NativeReportMonitorStopResult>();
+        foreach (var item in _reportMonitorSessions.ToArray())
+        {
+            try
+            {
+                var stop = await _session.StopPersistentReportMonitorAsync(item.Value, CancellationToken.None).ConfigureAwait(false);
+                results.Add(new NativeReportMonitorStopResult
+                {
+                    IsSuccess = stop.IsSuccess,
+                    PlanId = item.Key,
+                    Message = stop.Message
+                });
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                results.Add(new NativeReportMonitorStopResult
+                {
+                    IsSuccess = false,
+                    PlanId = item.Key,
+                    Message = $"Report monitor cleanup failed: {ex.GetType().Name}: {ex.Message}"
+                });
+            }
+            finally
+            {
+                _reportMonitorSessions.Remove(item.Key);
+            }
+        }
+
+        return results;
+    }
+
     private async Task TryReadReportAttributeAsync(NativeReportControlCandidate rcb, string attribute, Action<object?> apply, CancellationToken cancellationToken)
     {
         try
@@ -184,6 +389,208 @@ public sealed class NativeIec61850Client : IIec61850Client
         return text.Contains('.') ? $"{domain}/{text}" : $"{domain}/LLN0.{text}";
     }
 
+    private async Task<ArMms.MmsDiscoveryResult?> EnsureDiscoveryForReportingAsync(CancellationToken cancellationToken)
+    {
+        if (_lastDiscovery != null)
+            return _lastDiscovery;
+
+        try
+        {
+            var discovery = await _session.DiscoverAsync(
+                probeReportAttributes: true,
+                maxReportAttributeProbes: 96,
+                cancellationToken).ConfigureAwait(false);
+
+            _lastDiscovery = discovery;
+            _liveModel = LiveIedModelDiscoveryBuilder.Build(discovery, new LiveIedModelDiscoveryBuildOptions
+            {
+                Host = _host,
+                Port = _port,
+                IncludeLowConfidenceTemplates = true
+            });
+            LastReportInventory = ToNativeInventory(discovery.ReportInventory);
+            LastDiscoverySummary = $"{discovery.Summary} {_liveModel.Summary} Engine=ARIEC61850 live-model/schema/reporting.";
+            return discovery;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LastErrorMessage = $"ARIEC61850 reporting discovery failed: {ex.GetType().Name}: {ex.Message}. Last discovery: {_session.LastDiscoveryAttemptSummary}";
+            return null;
+        }
+    }
+
+    private async Task<IReadOnlyList<ArMms.MmsDataSetDirectoryResult>> ReadPlannedDataSetDirectoriesAsync(
+        ReportControlPlan plan,
+        ArMms.MmsIedModelDirectory directory,
+        CancellationToken cancellationToken)
+    {
+        var dataSets = new[]
+            {
+                plan.DataSetReference
+            }
+            .Concat(_lastDiscovery?.ReportInventory.ReportControls
+                .Where(rcb => ReferencesEqual(rcb.Reference, plan.ReportControlReference))
+                .Select(rcb => rcb.DataSetReference) ?? Array.Empty<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (dataSets.Length == 0)
+            return Array.Empty<ArMms.MmsDataSetDirectoryResult>();
+
+        return await _session.GetDataSetDirectoriesAsync(dataSets, directory, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static ArMms.MmsReportInventory BuildEngineReportInventory(ArMms.MmsReportInventory source, ReportControlPlan plan)
+    {
+        var inventory = new ArMms.MmsReportInventory();
+        foreach (var dataSet in source.DataSets)
+        {
+            inventory.DataSets.Add(new ArMms.MmsDataSetCandidate
+            {
+                Domain = dataSet.Domain,
+                LogicalNode = dataSet.LogicalNode,
+                Name = dataSet.Name,
+                Reference = dataSet.Reference,
+                RawMmsName = dataSet.RawMmsName
+            });
+        }
+
+        foreach (var rcb in source.ReportControls)
+            inventory.ReportControls.Add(CloneReportControl(rcb));
+
+        if (!string.IsNullOrWhiteSpace(plan.DataSetReference) &&
+            !inventory.DataSets.Any(ds => ReferencesEqual(ds.Reference, plan.DataSetReference)))
+        {
+            var parsedDataSet = ParseDataSetReference(plan.DataSetReference);
+            inventory.DataSets.Add(new ArMms.MmsDataSetCandidate
+            {
+                Domain = parsedDataSet.Domain,
+                LogicalNode = parsedDataSet.LogicalNode,
+                Name = parsedDataSet.Name,
+                Reference = plan.DataSetReference,
+                RawMmsName = string.IsNullOrWhiteSpace(parsedDataSet.LogicalNode)
+                    ? parsedDataSet.Name
+                    : $"{parsedDataSet.LogicalNode}${parsedDataSet.Name}"
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(plan.ReportControlReference))
+        {
+            var existing = inventory.ReportControls.FirstOrDefault(rcb => ReferencesEqual(rcb.Reference, plan.ReportControlReference));
+            if (existing == null)
+                inventory.ReportControls.Add(CreateReportControlFromPlan(plan));
+            else
+                ApplyPlanHints(existing, plan);
+        }
+
+        return inventory;
+    }
+
+    private static ArMms.MmsReportControlCandidate CloneReportControl(ArMms.MmsReportControlCandidate source)
+        => new()
+        {
+            Domain = source.Domain,
+            LogicalNode = source.LogicalNode,
+            FunctionalConstraint = source.FunctionalConstraint,
+            Name = source.Name,
+            Reference = source.Reference,
+            Buffered = source.Buffered,
+            DataSetReference = source.DataSetReference,
+            ReportId = source.ReportId,
+            ConfRev = source.ConfRev,
+            IntegrityPeriodMs = source.IntegrityPeriodMs,
+            EnabledState = source.EnabledState,
+            ReservationState = source.ReservationState,
+            ReservationTimeSeconds = source.ReservationTimeSeconds,
+            BufferTimeMs = source.BufferTimeMs,
+            TriggerOptions = source.TriggerOptions,
+            OptionalFields = source.OptionalFields,
+            Status = source.Status,
+            Attributes = source.Attributes.ToList()
+        };
+
+    private static ArMms.MmsReportControlCandidate CreateReportControlFromPlan(ReportControlPlan plan)
+    {
+        var parsed = ParseReportControlReference(plan.ReportControlReference, plan.Buffered);
+        var rcb = new ArMms.MmsReportControlCandidate
+        {
+            Domain = parsed.Domain,
+            LogicalNode = parsed.LogicalNode,
+            FunctionalConstraint = parsed.FunctionalConstraint,
+            Name = parsed.Name,
+            Reference = plan.ReportControlReference,
+            Buffered = plan.Buffered,
+            DataSetReference = plan.DataSetReference,
+            ReportId = plan.ReportId,
+            IntegrityPeriodMs = plan.IntegrityPeriodMs > 0 ? plan.IntegrityPeriodMs.ToString(CultureInfo.InvariantCulture) : string.Empty,
+            TriggerOptions = plan.TriggerOptions,
+            OptionalFields = plan.OptionalFields,
+            Status = "ARServer report plan"
+        };
+        rcb.Attributes.AddRange(parsed.Buffered
+            ? ["RptID", "RptEna", "DatSet", "ConfRev", "OptFlds", "BufTm", "SqNum", "TrgOps", "IntgPd", "GI", "PurgeBuf", "EntryID", "TimeOfEntry", "ResvTms"]
+            : ["RptID", "RptEna", "Resv", "DatSet", "ConfRev", "OptFlds", "BufTm", "SqNum", "TrgOps", "IntgPd", "GI"]);
+        return rcb;
+    }
+
+    private static void ApplyPlanHints(ArMms.MmsReportControlCandidate target, ReportControlPlan plan)
+    {
+        if (string.IsNullOrWhiteSpace(target.DataSetReference) && !string.IsNullOrWhiteSpace(plan.DataSetReference))
+            target.DataSetReference = plan.DataSetReference;
+        if (string.IsNullOrWhiteSpace(target.ReportId) && !string.IsNullOrWhiteSpace(plan.ReportId))
+            target.ReportId = plan.ReportId;
+        if (string.IsNullOrWhiteSpace(target.IntegrityPeriodMs) && plan.IntegrityPeriodMs > 0)
+            target.IntegrityPeriodMs = plan.IntegrityPeriodMs.ToString(CultureInfo.InvariantCulture);
+        if (string.IsNullOrWhiteSpace(target.TriggerOptions) && !string.IsNullOrWhiteSpace(plan.TriggerOptions))
+            target.TriggerOptions = plan.TriggerOptions;
+        if (string.IsNullOrWhiteSpace(target.OptionalFields) && !string.IsNullOrWhiteSpace(plan.OptionalFields))
+            target.OptionalFields = plan.OptionalFields;
+    }
+
+    private static (string Domain, string LogicalNode, string Name) ParseDataSetReference(string reference)
+    {
+        var text = reference.Trim().Replace('$', '.');
+        var slash = text.IndexOf('/');
+        var domain = slash > 0 ? text[..slash] : string.Empty;
+        var item = slash > 0 && slash < text.Length - 1 ? text[(slash + 1)..] : text;
+        var dot = item.LastIndexOf('.');
+        if (dot <= 0 || dot >= item.Length - 1)
+            return (domain, string.Empty, item);
+        return (domain, item[..dot], item[(dot + 1)..]);
+    }
+
+    private static (string Domain, string LogicalNode, string FunctionalConstraint, string Name, bool Buffered) ParseReportControlReference(string reference, bool buffered)
+    {
+        var text = reference.Trim().Replace('$', '.');
+        var slash = text.IndexOf('/');
+        var domain = slash > 0 ? text[..slash] : string.Empty;
+        var item = slash > 0 && slash < text.Length - 1 ? text[(slash + 1)..] : text;
+        var segments = item.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var logicalNode = segments.Length > 0 ? segments[0] : string.Empty;
+        var functionalConstraint = segments.FirstOrDefault(s => s.Equals("BR", StringComparison.OrdinalIgnoreCase) || s.Equals("RP", StringComparison.OrdinalIgnoreCase))
+            ?? (buffered ? "BR" : "RP");
+        var name = segments.Length > 0 ? segments[^1] : (buffered ? "BRCB" : "URCB");
+        return (domain, logicalNode, functionalConstraint, name, buffered || functionalConstraint.Equals("BR", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ResolvePreferredLogicalDevice(ReportControlPlan plan)
+    {
+        if (!string.IsNullOrWhiteSpace(plan.ReportControlReference))
+        {
+            var slash = plan.ReportControlReference.IndexOf('/');
+            if (slash > 0)
+                return plan.ReportControlReference[..slash];
+        }
+
+        var reference = plan.Bindings.FirstOrDefault(b => !string.IsNullOrWhiteSpace(b.IecReference))?.IecReference ?? string.Empty;
+        var refSlash = reference.IndexOf('/');
+        return refSlash > 0 ? reference[..refSlash] : string.Empty;
+    }
+
+    private static string BuildDynamicDataSetName(ReportControlPlan plan)
+        => "ARSRV_" + (string.IsNullOrWhiteSpace(plan.PlanId) ? Guid.NewGuid().ToString("N")[..8] : plan.PlanId[..Math.Min(8, plan.PlanId.Length)]).ToUpperInvariant();
+
     public Task<object?> ReadValueAsync(string objectReference, CancellationToken cancellationToken)
     {
         return ReadValueAsync(objectReference, string.Empty, string.Empty, cancellationToken);
@@ -216,8 +623,14 @@ public sealed class NativeIec61850Client : IIec61850Client
                     attempts.Add($"{candidate.Label}/smart: {smart.ReadResult.Message}");
                     if (smart.ReadResult.IsSuccess)
                     {
-                        LastErrorMessage = $"ARIEC61850 read OK via {candidate.Label}/smart. {smart.ResolveResult.Message}";
-                        return ProjectReadValue(smart.ReadResult.Value, dataType, candidate.Reference, objectReference);
+                        var projected = ProjectReadValue(smart.ReadResult.Value, dataType, candidate.Reference, objectReference);
+                        if (projected != null)
+                        {
+                            LastErrorMessage = $"ARIEC61850 read OK via {candidate.Label}/smart. {smart.ResolveResult.Message}";
+                            return projected;
+                        }
+
+                        attempts.Add($"{candidate.Label}/smart projection blocked: {LastErrorMessage}");
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -233,8 +646,14 @@ public sealed class NativeIec61850Client : IIec61850Client
                 attempts.Add($"{candidate.Label}/direct {normalized}: {(result.IsSuccess ? "OK" : result.Message)}");
                 if (result.IsSuccess)
                 {
-                    LastErrorMessage = $"ARIEC61850 read OK via {candidate.Label}/direct: {normalized}. {result.Message}";
-                    return ProjectReadValue(result.Value, dataType, candidate.Reference, objectReference);
+                    var projected = ProjectReadValue(result.Value, dataType, candidate.Reference, objectReference);
+                    if (projected != null)
+                    {
+                        LastErrorMessage = $"ARIEC61850 read OK via {candidate.Label}/direct: {normalized}. {result.Message}";
+                        return projected;
+                    }
+
+                    attempts.Add($"{candidate.Label}/direct projection blocked: {LastErrorMessage}");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -249,7 +668,11 @@ public sealed class NativeIec61850Client : IIec61850Client
         return null;
     }
 
-    public ValueTask DisposeAsync() => _session.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await StopReportMonitorsAsync().ConfigureAwait(false);
+        await _session.DisposeAsync().ConfigureAwait(false);
+    }
 
     private static IReadOnlyList<SignalDefinition> BuildSignalsFromArIecModel(
         LiveIedModelDiscoveryDocument model,
@@ -510,6 +933,8 @@ public sealed class NativeIec61850Client : IIec61850Client
         }
 
         var reference = objectReference.Trim().Replace('$', '.');
+        Add(reference, "requested");
+
         if (TryGetDataObjectReference(reference, out var rootDataObjectReference) &&
             !ReferencesEqual(rootDataObjectReference, reference))
         {
@@ -547,8 +972,6 @@ public sealed class NativeIec61850Client : IIec61850Client
         }
         if (TryRemoveSuffix(reference, ".f", out var fParent))
             Add(fParent, "parent-for-f", useSmartDirectory: false);
-
-        Add(reference, "requested");
 
         return candidates;
     }
@@ -606,10 +1029,27 @@ public sealed class NativeIec61850Client : IIec61850Client
         return "ST";
     }
 
-    private Iec61850ReadValue ProjectReadValue(ArMms.MmsDataValue? value, string dataType, string readReference, string requestedReference)
+    private Iec61850ReadValue? ProjectReadValue(ArMms.MmsDataValue? value, string dataType, string readReference, string requestedReference)
     {
-        if (TryProjectWithArIecBinding(value, dataType, readReference, requestedReference, out var boundProjection))
+        if (TryProjectStructuredLeafBySemantic(value, dataType, readReference, requestedReference, out var semanticProjection, out var semanticStatus))
+            return semanticProjection;
+
+        if (TryProjectWithArIecBinding(value, dataType, readReference, requestedReference, out var boundProjection, out var bindingStatus))
             return boundProjection;
+
+        if (value == null)
+        {
+            LastErrorMessage = string.IsNullOrWhiteSpace(bindingStatus)
+                ? $"ARIEC61850 read returned no MMS value for {requestedReference} via {readReference}."
+                : bindingStatus;
+            return null;
+        }
+
+        if (RequiresSchemaProjection(value, dataType, readReference, requestedReference))
+        {
+            LastErrorMessage = BuildSchemaProjectionBlockedMessage(value, readReference, requestedReference, FirstUsefulText(semanticStatus, bindingStatus));
+            return null;
+        }
 
         var projection = SelectProjectedValue(value, dataType, requestedReference);
         var rawValue = ConvertProjectedValue(projection.Value, dataType, requestedReference);
@@ -632,14 +1072,28 @@ public sealed class NativeIec61850Client : IIec61850Client
         string dataType,
         string readReference,
         string requestedReference,
-        out Iec61850ReadValue projected)
+        out Iec61850ReadValue projected,
+        out string bindingStatus)
     {
         projected = new Iec61850ReadValue();
-        if (value == null || _liveModel == null)
+        bindingStatus = string.Empty;
+        if (value == null)
+        {
+            bindingStatus = "MMS value is null.";
             return false;
+        }
+
+        if (_liveModel == null)
+        {
+            bindingStatus = "live IEC 61850 model is not available; run discovery before projecting parent DA/FCD structures.";
+            return false;
+        }
 
         if (!TryFindLiveDataObject(requestedReference, out var dataObject))
+        {
+            bindingStatus = $"data object schema not found for {requestedReference}.";
             return false;
+        }
 
         var rootSchema = Iec61850DataObjectSchemaBuilder.FromLiveDataObject(dataObject).ToRootNode();
         var readSchema = TryFindSchemaNode(rootSchema, readReference, out var schemaNode)
@@ -648,9 +1102,19 @@ public sealed class NativeIec61850Client : IIec61850Client
                 ? rootSchema
                 : null;
         if (readSchema == null)
+        {
+            bindingStatus = $"read reference {readReference} is outside discovered schema {rootSchema.Reference}.";
             return false;
+        }
 
         var binding = Iec61850ValueBindingEngine.Bind(readSchema, value);
+        var diagnostics = FormatBindingDiagnostics(binding.Diagnostics);
+        if (binding.HasMismatch && RequiresSchemaProjection(value, dataType, readReference, requestedReference))
+        {
+            bindingStatus = $"schema/value mismatch from ARIEC61850 binding engine: {diagnostics}";
+            return false;
+        }
+
         if (!TryFindBoundRow(binding.Root, requestedReference, out var targetRow, out var ancestors))
         {
             if (ReferencesEqual(binding.Root.Reference, requestedReference))
@@ -660,12 +1124,16 @@ public sealed class NativeIec61850Client : IIec61850Client
             }
             else
             {
+                bindingStatus = $"target leaf {requestedReference} was not found under bound schema {readSchema.Reference}. {diagnostics}";
                 return false;
             }
         }
 
         if (IsStructuralDisplay(targetRow.Value))
+        {
+            bindingStatus = $"target {targetRow.Reference} resolved to structural value '{targetRow.Value}', not a scalar leaf. {diagnostics}";
             return false;
+        }
 
         var rawValue = ConvertBoundDisplayValue(targetRow.Value, dataType, requestedReference);
         var display = rawValue is string text && !string.IsNullOrWhiteSpace(text)
@@ -686,8 +1154,9 @@ public sealed class NativeIec61850Client : IIec61850Client
                 binding.Root.Timestamp),
             SourceReference = requestedReference,
             ReadReference = readReference,
-            Projection = $"ARIEC61850 schema bind: {readSchema.Reference} -> {targetRow.Reference}"
+            Projection = $"ARIEC61850 schema bind: {readSchema.Reference} -> {targetRow.Reference}; confidence={targetRow.Confidence}; {diagnostics}"
         };
+        bindingStatus = $"schema-bound {readSchema.Reference} -> {targetRow.Reference}; confidence={targetRow.Confidence}; {diagnostics}";
         return true;
     }
 
@@ -811,6 +1280,83 @@ public sealed class NativeIec61850Client : IIec61850Client
         => value.StartsWith("Struct(", StringComparison.OrdinalIgnoreCase) ||
            value.StartsWith("Array(", StringComparison.OrdinalIgnoreCase);
 
+    private static bool RequiresSchemaProjection(ArMms.MmsDataValue? value, string dataType, string readReference, string requestedReference)
+    {
+        if (value == null || value.Kind is not (ArMms.MmsDataKind.Structure or ArMms.MmsDataKind.Array))
+            return false;
+
+        if (!ReferencesEqual(readReference, requestedReference))
+            return true;
+
+        return IsScalarLeafReference(requestedReference) || IsScalarDataTypeHint(dataType);
+    }
+
+    private static bool IsScalarLeafReference(string reference)
+    {
+        var r = NormalizeReference(reference);
+        return r.EndsWith(".stval") ||
+               r.EndsWith(".general") ||
+               r.EndsWith(".valwtr.posval") ||
+               r.EndsWith(".posval") ||
+               r.EndsWith(".ctlval") ||
+               r.EndsWith(".actval") ||
+               r.EndsWith(".setval") ||
+               r.EndsWith(".ctlmodel") ||
+               r.EndsWith(".q") ||
+               r.EndsWith(".t") ||
+               r.EndsWith(".f") ||
+               r.EndsWith(".i");
+    }
+
+    private static bool IsScalarDataTypeHint(string dataType)
+    {
+        var hint = (dataType ?? string.Empty).Trim();
+        return hint.Equals("Boolean", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Bool", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Dbpos", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Enum", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Int32", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("UInt32", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Integer", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Float32", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Double", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Quality", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Timestamp", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("UtcTime", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatBindingDiagnostics(IReadOnlyList<string> diagnostics)
+    {
+        if (diagnostics.Count == 0)
+            return "no binding diagnostics";
+
+        var text = string.Join("; ", diagnostics.Take(4));
+        if (diagnostics.Count > 4)
+            text += $"; +{diagnostics.Count - 4} more";
+        return text;
+    }
+
+    private static string BuildSchemaProjectionBlockedMessage(
+        ArMms.MmsDataValue? value,
+        string readReference,
+        string requestedReference,
+        string bindingStatus)
+    {
+        var status = string.IsNullOrWhiteSpace(bindingStatus) ? "ARIEC61850 binding engine did not return a usable scalar projection." : bindingStatus;
+        var shape = value == null ? "null" : $"{value.Kind} child-count={value.Children.Count.ToString(CultureInfo.InvariantCulture)}";
+        var raw = value == null ? "-" : ArMms.MmsDataValueRenderer.ToCompactString(value, readReference);
+        return $"ARIEC61850 schema binding required for structured MMS value {readReference} -> {requestedReference}, but binding was not usable: {status}. Raw shape={shape}, raw={Truncate(raw, 240)}. Value was not published to avoid wrong DA/leaf mapping.";
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+            return value;
+        if (maxLength <= 3)
+            return value[..maxLength];
+        return value[..(maxLength - 3)] + "...";
+    }
+
     private static string FirstUseful(string primary, IReadOnlyList<string> inherited, string fallback)
     {
         if (IsUsefulColumn(primary))
@@ -825,6 +1371,251 @@ public sealed class NativeIec61850Client : IIec61850Client
 
     private static bool IsUsefulColumn(string value)
         => !string.IsNullOrWhiteSpace(value) && value != "-";
+
+    private static string FirstUsefulText(params string[] values)
+        => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v) && v != "-") ?? string.Empty;
+
+    private static bool TryProjectStructuredLeafBySemantic(
+        ArMms.MmsDataValue? value,
+        string dataType,
+        string readReference,
+        string requestedReference,
+        out Iec61850ReadValue projected,
+        out string status)
+    {
+        projected = new Iec61850ReadValue();
+        status = string.Empty;
+
+        if (value == null || value.Kind is not (ArMms.MmsDataKind.Structure or ArMms.MmsDataKind.Array))
+            return false;
+
+        if (!IsScalarLeafReference(requestedReference))
+            return false;
+
+        if (!TryGetRelativeLeafSegments(readReference, requestedReference, out var segments))
+            return false;
+
+        var leaf = segments[^1];
+        if (!IsSemanticLeafProjectionCandidate(leaf, requestedReference))
+            return false;
+
+        var branch = value;
+        if (segments.Length == 2 && IsKnownSingleStructBranch(segments[0]) && TryGetOnlyMeaningfulStructChild(value, out var childBranch))
+            branch = childBranch;
+        else if (segments.Length > 1)
+            return false;
+
+        if (!TrySelectSemanticLeaf(branch, leaf, dataType, requestedReference, out var selected, out var reason) || selected == null)
+        {
+            status = $"semantic structured projection did not find a trustworthy {leaf} child for {requestedReference}; raw structure was not published.";
+            return false;
+        }
+
+        var rawValue = ConvertProjectedValue(selected, dataType, requestedReference);
+        var display = FormatProjectedDisplay(rawValue, dataType);
+        var quality = DecodeQuality(FindQualityChild(branch) ?? branch);
+        var timestamp = DecodeTimestamp(FindTimestampChild(branch) ?? branch);
+
+        if (IsQualityHint(dataType, requestedReference))
+            quality = FirstUsefulText(DecodeQuality(selected), quality);
+        if (IsTimestampHint(dataType, requestedReference))
+            timestamp = FirstUsefulText(DecodeTimestamp(selected), timestamp);
+
+        projected = new Iec61850ReadValue
+        {
+            Value = rawValue,
+            DisplayValue = display,
+            Quality = quality,
+            DeviceTimestamp = timestamp,
+            SourceReference = requestedReference,
+            ReadReference = readReference,
+            Projection = $"semantic MMS structure projection: {reason}; read={readReference}; source={requestedReference}"
+        };
+        status = projected.Projection;
+        return true;
+    }
+
+    private static bool TryGetRelativeLeafSegments(string readReference, string requestedReference, out string[] segments)
+    {
+        segments = Array.Empty<string>();
+        var read = NormalizeReference(readReference);
+        var requested = NormalizeReference(requestedReference);
+        if (string.IsNullOrWhiteSpace(requested))
+            return false;
+
+        if (ReferencesEqual(readReference, requestedReference))
+        {
+            var leaf = LastSegment(requestedReference);
+            if (string.IsNullOrWhiteSpace(leaf))
+                return false;
+            segments = new[] { leaf };
+            return true;
+        }
+
+        var prefix = read.EndsWith('.') ? read : read + ".";
+        if (!requested.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var suffix = requested[prefix.Length..];
+        segments = suffix.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return segments.Length > 0;
+    }
+
+    private static bool IsSemanticLeafProjectionCandidate(string leaf, string requestedReference)
+    {
+        if (leaf.Equals("q", StringComparison.OrdinalIgnoreCase) ||
+            leaf.Equals("t", StringComparison.OrdinalIgnoreCase) ||
+            leaf.Equals("stVal", StringComparison.OrdinalIgnoreCase) ||
+            leaf.Equals("general", StringComparison.OrdinalIgnoreCase) ||
+            leaf.Equals("posVal", StringComparison.OrdinalIgnoreCase) ||
+            leaf.Equals("ctlVal", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return requestedReference.EndsWith(".ValWTr.posVal", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsKnownSingleStructBranch(string segment)
+        => segment.Equals("ValWTr", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryGetOnlyMeaningfulStructChild(ArMms.MmsDataValue value, out ArMms.MmsDataValue child)
+    {
+        child = value;
+        if (value.Kind is not (ArMms.MmsDataKind.Structure or ArMms.MmsDataKind.Array))
+            return false;
+
+        var candidates = value.Children
+            .Where(x => x.Kind is ArMms.MmsDataKind.Structure or ArMms.MmsDataKind.Array)
+            .Where(x => FindQualityChild(x) == null || x.Children.Any(c => c.Kind is not ArMms.MmsDataKind.BitString))
+            .ToArray();
+        if (candidates.Length != 1)
+            return false;
+
+        child = candidates[0];
+        return true;
+    }
+
+    private static bool TrySelectSemanticLeaf(
+        ArMms.MmsDataValue value,
+        string leaf,
+        string dataType,
+        string requestedReference,
+        out ArMms.MmsDataValue? selected,
+        out string reason)
+    {
+        selected = null;
+        reason = string.Empty;
+        if (value.Kind is not (ArMms.MmsDataKind.Structure or ArMms.MmsDataKind.Array))
+            return false;
+
+        var children = value.Children.ToArray();
+        if (children.Length == 0)
+            return false;
+
+        if (leaf.Equals("q", StringComparison.OrdinalIgnoreCase))
+        {
+            selected = FindQualityChild(value);
+            reason = "quality child selected by IEC 61850 quality bit-string shape";
+            return selected != null;
+        }
+
+        if (leaf.Equals("t", StringComparison.OrdinalIgnoreCase))
+        {
+            selected = FindTimestampChild(value);
+            reason = "timestamp child selected by MMS UTC/BinaryTime kind";
+            return selected != null;
+        }
+
+        var payloadChildren = children
+            .Where(x => !IsTimestampValue(x))
+            .Where(x => !LooksLikeQualityBitString(x))
+            .ToArray();
+        if (payloadChildren.Length == 0)
+            return false;
+
+        if (leaf.Equals("general", StringComparison.OrdinalIgnoreCase) || dataType.Equals("Boolean", StringComparison.OrdinalIgnoreCase))
+        {
+            selected = payloadChildren.FirstOrDefault(x => x.Kind == ArMms.MmsDataKind.Boolean)
+                ?? payloadChildren.FirstOrDefault(x => x.Kind is ArMms.MmsDataKind.Integer or ArMms.MmsDataKind.Unsigned);
+            reason = "Boolean/status child selected after excluding q/t siblings";
+            return selected != null;
+        }
+
+        if (IsDbposHint(dataType, requestedReference))
+        {
+            selected = payloadChildren.FirstOrDefault(IsShortStatusBitString)
+                ?? payloadChildren.FirstOrDefault(x => x.Kind is ArMms.MmsDataKind.Integer or ArMms.MmsDataKind.Unsigned)
+                ?? payloadChildren.FirstOrDefault(x => x.Kind == ArMms.MmsDataKind.Boolean)
+                ?? payloadChildren.FirstOrDefault(x => x.Kind == ArMms.MmsDataKind.BitString);
+            reason = "Dbpos/status child selected after excluding quality/timestamp siblings";
+            return selected != null;
+        }
+
+        if (leaf.Equals("posVal", StringComparison.OrdinalIgnoreCase) ||
+            leaf.Equals("ctlVal", StringComparison.OrdinalIgnoreCase) ||
+            dataType.Equals("Int32", StringComparison.OrdinalIgnoreCase) ||
+            dataType.Equals("UInt32", StringComparison.OrdinalIgnoreCase) ||
+            dataType.Equals("Integer", StringComparison.OrdinalIgnoreCase) ||
+            dataType.Equals("Enum", StringComparison.OrdinalIgnoreCase))
+        {
+            selected = payloadChildren.FirstOrDefault(x => x.Kind is ArMms.MmsDataKind.Integer or ArMms.MmsDataKind.Unsigned)
+                ?? payloadChildren.FirstOrDefault(x => x.Kind == ArMms.MmsDataKind.Boolean)
+                ?? payloadChildren.FirstOrDefault(IsShortStatusBitString)
+                ?? payloadChildren.FirstOrDefault(x => x.Kind == ArMms.MmsDataKind.BitString);
+            reason = "integer/enum status child selected after excluding q/t siblings";
+            return selected != null;
+        }
+
+        selected = payloadChildren.FirstOrDefault(x => x.Kind is not (ArMms.MmsDataKind.Structure or ArMms.MmsDataKind.Array));
+        reason = "first scalar payload child selected after excluding q/t siblings";
+        return selected != null;
+    }
+
+    private static ArMms.MmsDataValue? FindQualityChild(ArMms.MmsDataValue value)
+    {
+        if (LooksLikeQualityBitString(value))
+            return value;
+        if (value.Kind is not (ArMms.MmsDataKind.Structure or ArMms.MmsDataKind.Array))
+            return null;
+
+        return value.Children.FirstOrDefault(LooksLikeQualityBitString)
+            ?? value.Children.Select(FindQualityChild).FirstOrDefault(x => x != null);
+    }
+
+    private static ArMms.MmsDataValue? FindTimestampChild(ArMms.MmsDataValue value)
+    {
+        if (IsTimestampValue(value))
+            return value;
+        if (value.Kind is not (ArMms.MmsDataKind.Structure or ArMms.MmsDataKind.Array))
+            return null;
+
+        return value.Children.FirstOrDefault(IsTimestampValue)
+            ?? value.Children.Select(FindTimestampChild).FirstOrDefault(x => x != null);
+    }
+
+    private static bool IsTimestampValue(ArMms.MmsDataValue value)
+        => value.Kind is ArMms.MmsDataKind.UtcTime or ArMms.MmsDataKind.BinaryTime ||
+           (value.Kind == ArMms.MmsDataKind.Unknown && value.UnknownTagNumber == 12);
+
+    private static bool LooksLikeQualityBitString(ArMms.MmsDataValue value)
+        => value.Kind == ArMms.MmsDataKind.BitString &&
+           BitStringBitLength(value) >= 12 &&
+           Iec61850QualityDecoder.Decode(value).IsDecoded;
+
+    private static bool IsShortStatusBitString(ArMms.MmsDataValue value)
+        => value.Kind == ArMms.MmsDataKind.BitString &&
+           BitStringBitLength(value) > 0 &&
+           BitStringBitLength(value) < 12;
+
+    private static int BitStringBitLength(ArMms.MmsDataValue value)
+    {
+        if (value.Kind != ArMms.MmsDataKind.BitString || value.RawValue.Count == 0)
+            return 0;
+        var unusedBits = value.RawValue[0];
+        var dataBytes = Math.Max(0, value.RawValue.Count - 1);
+        return Math.Max(0, dataBytes * 8 - unusedBits);
+    }
 
     private sealed record MmsValueProjection(
         ArMms.MmsDataValue? Value,

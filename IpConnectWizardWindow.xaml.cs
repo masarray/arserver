@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Windows;
 
 namespace Ari61850Bridge;
@@ -11,6 +12,7 @@ public partial class IpConnectWizardWindow : Window
     public string RelayIpAddress { get => (string)GetValue(RelayIpAddressProperty); set => SetValue(RelayIpAddressProperty, value); }
     public int MmsPort { get => (int)GetValue(MmsPortProperty); set => SetValue(MmsPortProperty, value); }
     public bool UseNativeIecEngine { get => (bool)GetValue(UseNativeIecEngineProperty); set => SetValue(UseNativeIecEngineProperty, value); }
+    public ObservableCollection<string> RecentRelayIps { get; } = new();
 
     public IpConnectWizardWindow()
     {

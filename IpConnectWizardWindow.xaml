@@ -29,7 +29,11 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Row="0" Grid.Column="0">
                     <TextBlock Text="IED Runtime IP Address" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,0,0,6"/>
-                    <TextBox x:Name="RelayIpBox" Text="{Binding RelayIpAddress, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"/>
+                    <ComboBox x:Name="RelayIpBox"
+                              IsEditable="True"
+                              IsTextSearchEnabled="True"
+                              ItemsSource="{Binding RecentRelayIps, RelativeSource={RelativeSource AncestorType=Window}}"
+                              Text="{Binding RelayIpAddress, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"/>
                 </StackPanel>
                 <StackPanel Grid.Row="0" Grid.Column="2">
                     <TextBlock Text="MMS Port" FontSize="12.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Margin="0,0,0,6"/>

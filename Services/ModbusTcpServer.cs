@@ -41,7 +41,21 @@ public sealed class ModbusTcpServer : IAsyncDisposable
         UnitId = unitId == 0 ? (byte)1 : unitId;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _listener = new TcpListener(ipAddress, port);
-        _listener.Start();
+        try
+        {
+            _listener.Start();
+        }
+        catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+        {
+            try { _listener.Stop(); } catch { }
+            try { _cts.Cancel(); } catch { }
+            _listener = null;
+            _cts?.Dispose();
+            _cts = null;
+            throw new InvalidOperationException(
+                $"Modbus TCP cannot start on {bindAddress}:{port} because that socket is already in use. Close the other Modbus/server process, stop the previous ARServer instance, change the Modbus port, or disable Modbus TCP output before pressing Start again.",
+                ex);
+        }
         IsRunning = true;
 
         Log?.Invoke("INFO", $"Modbus TCP slave/server started on {ipAddress}:{port}, Unit ID {UnitId}.");

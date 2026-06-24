@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Reflection;
 using System.Text;
 using System.IO;
+using System.Net.Sockets;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -442,6 +443,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             IedConnectionStatus = "Connecting...";
             EventStrategyStatus = "Scanning...";
             AddLog("INFO", "IEC61850", $"Connecting to {relayIp}:{MmsPort} using native IEC 61850 MMS engine.");
+
+            var tcpProbe = await ProbeTcpEndpointAsync(relayIp, MmsPort, TimeSpan.FromSeconds(3), CancellationToken.None).ConfigureAwait(true);
+            if (!tcpProbe.IsOpen)
+            {
+                IedConnectionStatus = "TCP Failed";
+                EventStrategyStatus = "TCP 102 unreachable";
+                UpsertRelayChip(relayIp, "Failed", 0, "TCP");
+                AddLog("ERROR", "IEC61850", $"TCP preflight failed for {relayIp}:{MmsPort}: {tcpProbe.Message}");
+
+                var reachableRecent = await FindReachableRecentRelayEndpointAsync(relayIp, MmsPort, CancellationToken.None).ConfigureAwait(true);
+                if (!string.IsNullOrWhiteSpace(reachableRecent))
+                    AddLog("WARN", "IEC61850", $"Selected endpoint is not reachable, but recent successful endpoint {reachableRecent} is reachable from this PC. Check that the IP typed in ArServer matches the relay IP shown in IEDScout.");
+
+                AddLog("INFO", "Operator Hint", "Connect/Discover stopped before MMS because TCP 102 is not reachable for the selected endpoint. Correct the IED IP/port, then run Add IED again.");
+                NavigateToTab(3);
+                return;
+            }
 
             // The Modbus gateway lifecycle is independent from per-IED connection lifecycle.
             // When runtime is running, keep the Modbus server alive and refresh only the active IEC session.
@@ -1202,6 +1220,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             RuntimeStatusText = "Failed";
             MoveRuntimeToggle(false, true);
+            if (_runtime != null)
+            {
+                try { await _runtime.DisposeAsync(); } catch { }
+                _runtime = null;
+            }
             AddExceptionLog("Runtime", ex, "Runtime start failed");
             AddLog("INFO", "Operator Hint", "Runtime tidak dihentikan diam-diam. Detail error masuk ke Diagnostics Panel dan status bar, tanpa pop-up modal yang mengganggu flow kerja.");
         }
@@ -1633,10 +1656,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var wizard = new IpConnectWizardWindow
         {
             Owner = this,
-            RelayIpAddress = string.IsNullOrWhiteSpace(RelayIpAddress) ? (RecentRelayIps.FirstOrDefault() ?? string.Empty) : RelayIpAddress,
+            RelayIpAddress = string.Empty,
             MmsPort = MmsPort,
             UseNativeIecEngine = true
         };
+        foreach (var recentIp in RecentRelayIps)
+            wizard.RecentRelayIps.Add(recentIp);
 
         TrackActiveWizard(wizard);
         if (wizard.ShowDialog() != true)
@@ -2236,7 +2261,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         AddLog("INFO", "Relay", $"IED paused/disconnected: {relay.DisplayName} {relay.EndpointText}. Configuration remains available for reconnect/edit.");
     }
 
-    private async void DeleteRelay_Click(object sender, RoutedEventArgs e)
+    private void DeleteRelay_Click(object sender, RoutedEventArgs e)
     {
         var relay = GetRelayFromSender(sender);
         if (relay == null) return;
@@ -2941,6 +2966,47 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _iecClient = CreateConfiguredIecClient();
         await _iecClient.ConnectAsync(ipAddress, port, cancellationToken);
         _iecClientEndpointKey = _iecClient.IsConnected ? BuildIecEndpointKey(ipAddress, port) : "";
+    }
+
+    private sealed record TcpEndpointProbeResult(bool IsOpen, string Message);
+
+    private static async Task<TcpEndpointProbeResult> ProbeTcpEndpointAsync(string ipAddress, int port, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var client = new TcpClient();
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(timeout);
+            await client.ConnectAsync(ipAddress, port <= 0 ? 102 : port, timeoutCts.Token).ConfigureAwait(false);
+            return new TcpEndpointProbeResult(true, "TCP port is reachable.");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new TcpEndpointProbeResult(false, $"Timed out after {timeout.TotalSeconds:0.#}s while opening TCP socket.");
+        }
+        catch (SocketException ex)
+        {
+            return new TcpEndpointProbeResult(false, $"{ex.SocketErrorCode}: {ex.Message}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new TcpEndpointProbeResult(false, $"{ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private async Task<string> FindReachableRecentRelayEndpointAsync(string failedIpAddress, int port, CancellationToken cancellationToken)
+    {
+        foreach (var recentIp in RecentRelayIps
+                     .Where(ip => !string.IsNullOrWhiteSpace(ip))
+                     .Where(ip => !string.Equals(NormalizeRelayIp(ip), NormalizeRelayIp(failedIpAddress), StringComparison.OrdinalIgnoreCase))
+                     .Take(6))
+        {
+            var probe = await ProbeTcpEndpointAsync(recentIp, port, TimeSpan.FromMilliseconds(800), cancellationToken).ConfigureAwait(true);
+            if (probe.IsOpen)
+                return $"{recentIp}:{(port <= 0 ? 102 : port)}";
+        }
+
+        return string.Empty;
     }
 
     private async Task DisposeActiveIecClientAsync()

@@ -19,6 +19,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Checkout ARIEC61850 engine
+        uses: actions/checkout@v4
+        with:
+          repository: masarray/ARIEC61850
+          path: .deps/ARIEC61850
+
+      - name: Link ARIEC61850 project reference
+        shell: pwsh
+        run: |
+          $target = (Resolve-Path ".deps/ARIEC61850").Path
+          $link = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) "ARIEC61850"
+          if (Test-Path $link) {
+            Remove-Item $link -Recurse -Force
+          }
+          New-Item -ItemType Junction -Path $link -Target $target | Out-Null
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:

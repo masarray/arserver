@@ -35,6 +35,8 @@ public sealed class BridgeRuntime : IAsyncDisposable
     private readonly Dictionary<string, int> _roundRobinCursorByRelay = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ReportControlPlan> _reportPlans = new();
     private readonly Dictionary<string, ReportControlPlan> _reportPlanByBindingKey = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ReportControlPlan> _activeReportPlanByPlanId = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<Task> _reportMonitorTasks = new();
     private const int MaxReadsPerIedPerCycle = 8;
     private const int MaxFastReadsPerIedPerCycle = 16;
     private const int MaxNormalReadsPerIedPerCycleWhenFastLaneActive = 4;
@@ -116,12 +118,13 @@ public sealed class BridgeRuntime : IAsyncDisposable
         await _mqttPublisher.StartAsync(_mqttSettings, _cts.Token);
         IsRunning = true;
         EventMode = ResolveRuntimeMode();
+        await StartReportMonitorsForRuntimeAsync(_cts.Token);
 
         var fastestPollMs = _bindings.Count == 0 ? DefaultMmsPollingIntervalMs : _bindings.Min(GetPollIntervalMs);
         var fastCandidateCount = _fastAcquisitionEnabled ? _bindings.Count(IsFastAcquisitionCandidate) : 0;
         Log("INFO", "Runtime", $"Runtime started. Active bindings: {_bindings.Count}. Scheduler: target fastest MMS poll {fastestPollMs} ms, fast CB lane {(_fastAcquisitionEnabled ? "ON" : "OFF")} ({fastCandidateCount} candidate point(s)), UI grid uses buffered snapshots.");
         if (_reportPlans.Count > 0)
-            Log("INFO", "Reports", $"Report-aware runtime planner active: {_reportPlans.Count} RCB/DataSet plan(s), {_reportPlans.Sum(p => p.BindingCount)} mapped tag(s). Polling remains the safe fallback until native RCB activation is enabled.");
+            Log("INFO", "Reports", $"Report-aware runtime planner active: {_reportPlans.Count} RCB/DataSet plan(s), {_reportPlans.Sum(p => p.BindingCount)} mapped tag(s), active monitors={_activeReportPlanByPlanId.Count}. Polling remains fallback for tags outside an active report monitor.");
         if (fastestPollMs <= 50)
             Log("WARN", "Runtime", "Fast MMS polling mode is enabled. Effective speed still depends on relay response time, network latency, number of active tags, and MMS server limits; use reports/RCB for critical event capture when available.");
         if (_fastAcquisitionEnabled)
@@ -226,6 +229,12 @@ public sealed class BridgeRuntime : IAsyncDisposable
         {
             try { await _loopTask; } catch { }
         }
+        if (_reportMonitorTasks.Count > 0)
+        {
+            try { await Task.WhenAll(_reportMonitorTasks); } catch { }
+            _reportMonitorTasks.Clear();
+        }
+        await StopActiveReportMonitorsAsync();
         await _mqttPublisher.StopAsync();
         await _modbusServer.StopAsync();
 
@@ -238,6 +247,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
         }
         _relayClients.Clear();
         _ownedRelayClientIds.Clear();
+        _activeReportPlanByPlanId.Clear();
 
         IsRunning = false;
         Log("INFO", "Runtime", "Runtime stopped.");
@@ -271,6 +281,8 @@ public sealed class BridgeRuntime : IAsyncDisposable
     {
         _reportPlans.Clear();
         _reportPlanByBindingKey.Clear();
+        _activeReportPlanByPlanId.Clear();
+        _reportMonitorTasks.Clear();
 
         var planner = new ReportRuntimePlanner(_relayIndex);
         _reportPlans.AddRange(planner.BuildPlans(_bindings));
@@ -292,6 +304,163 @@ public sealed class BridgeRuntime : IAsyncDisposable
             }
         }
     }
+
+    private async Task StartReportMonitorsForRuntimeAsync(CancellationToken token)
+    {
+        if (_reportPlans.Count == 0)
+            return;
+
+        var activeRelays = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var plan in _reportPlans
+                     .OrderByDescending(p => p.Buffered)
+                     .ThenByDescending(p => p.FastStatusCount)
+                     .ThenByDescending(p => p.BindingCount))
+        {
+            token.ThrowIfCancellationRequested();
+            var relayKey = NormalizeRelayKey(plan.RelayId);
+            if (!activeRelays.Add(relayKey))
+            {
+                plan.Status = "Polling fallback / another RCB monitor active for relay";
+                continue;
+            }
+
+            if (!_relayClients.TryGetValue(relayKey, out var client) && !relayKey.Equals("__single__", StringComparison.OrdinalIgnoreCase))
+                _relayClients.TryGetValue("__single__", out client);
+
+            if (client is not NativeIec61850Client native || !native.IsMmsReady)
+            {
+                plan.Status = "Report monitor blocked / native MMS not ready";
+                Log("WARN", "Reports", $"{plan.Summary}: native MMS client is not ready; keeping polling fallback.");
+                continue;
+            }
+
+            try
+            {
+                var start = await native.StartReportMonitorAsync(plan, token).ConfigureAwait(false);
+                if (!start.IsSuccess)
+                {
+                    plan.Status = "Report monitor blocked / polling fallback";
+                    Log("WARN", "Reports", $"{plan.Summary}: {start.Message}");
+                    foreach (var warning in start.Warnings.Take(4))
+                        Log("WARN", "Reports", warning);
+                    continue;
+                }
+
+                plan.Status = "RCB report monitor active";
+                _activeReportPlanByPlanId[plan.PlanId] = plan;
+                foreach (var binding in plan.Bindings.Where(b => b.Status.Contains("fallback", StringComparison.OrdinalIgnoreCase) || b.Status.Equals("Queued", StringComparison.OrdinalIgnoreCase)))
+                    binding.Status = "RCB report armed / polling fallback";
+
+                Log("INFO", "Reports", $"{plan.Summary}: {start.Message} members={start.MemberCount}, writes={start.WriteStepCount}.");
+                foreach (var warning in start.Warnings.Take(4))
+                    Log("WARN", "Reports", warning);
+
+                _reportMonitorTasks.Add(Task.Run(() => RunReportMonitorLoopAsync(native, plan, token), CancellationToken.None));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                plan.Status = "Report monitor error / polling fallback";
+                Log("ERROR", "Reports", $"{plan.Summary}: report monitor start failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task RunReportMonitorLoopAsync(NativeIec61850Client native, ReportControlPlan plan, CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            try
+            {
+                var slice = await native.ReceiveReportMonitorSliceAsync(plan.PlanId, TimeSpan.FromMilliseconds(250), token).ConfigureAwait(false);
+                if (slice.ReportCount > 0 || slice.Updates.Count > 0)
+                {
+                    foreach (var update in slice.Updates)
+                        ApplyReportUpdate(plan, update);
+
+                    Log("INFO", "Reports", $"{plan.Summary}: report slice received {slice.ReportCount} report(s), {slice.Updates.Count} mapped update(s).");
+                }
+
+                foreach (var warning in slice.Warnings.Take(3))
+                    Log("WARN", "Reports", warning);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                Log("WARN", "Reports", $"{plan.Summary}: report receive loop fault, polling fallback remains active. {ex.GetType().Name}: {ex.Message}");
+                try { await Task.Delay(1000, token).ConfigureAwait(false); } catch { break; }
+            }
+        }
+    }
+
+    private void ApplyReportUpdate(ReportControlPlan plan, NativeReportValueUpdate update)
+    {
+        var matches = plan.Bindings
+            .Where(binding => ReportReferenceMatches(update.Reference, binding.IecReference))
+            .ToList();
+
+        if (matches.Count == 0)
+            return;
+
+        foreach (var binding in matches)
+        {
+            var old = binding.CurrentValue;
+            var oldQuality = binding.Quality;
+            var oldStatus = binding.Status;
+            var display = string.IsNullOrWhiteSpace(update.Value) ? "-" : update.Value;
+            var changed = !string.Equals(old, display, StringComparison.Ordinal);
+
+            binding.CurrentValue = display;
+            binding.Quality = IsUseful(update.Quality) ? update.Quality : "Good";
+            if (IsUseful(update.Timestamp))
+                binding.DeviceTimestamp = update.Timestamp;
+            binding.Status = string.IsNullOrWhiteSpace(update.ProjectionStatus)
+                ? "RCB Report/Live"
+                : $"RCB Report/Live ({update.ProjectionStatus})";
+            binding.LastUpdate = update.UpdatedAt == default ? DateTime.Now : update.UpdatedAt.LocalDateTime;
+            binding.AgeMs = 0;
+            if (changed) binding.Sequence++;
+
+            WriteBindingToModbus(binding, display);
+            if (changed ||
+                !string.Equals(oldQuality, binding.Quality, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(oldStatus, binding.Status, StringComparison.OrdinalIgnoreCase))
+            {
+                PublishBindingToMqtt(binding, display, display);
+            }
+
+            if (changed && ShouldLogValueChange(binding))
+                Log("EVENT", "IEC61850 Report", $"{binding.IedName}: {binding.SignalName}: {old} -> {display} | {update.Reference} reason={update.Reason}");
+
+            BindingUpdated?.Invoke(binding);
+        }
+    }
+
+    private async Task StopActiveReportMonitorsAsync()
+    {
+        foreach (var client in _relayClients.Values.OfType<NativeIec61850Client>().Distinct())
+        {
+            var results = await client.StopReportMonitorsAsync().ConfigureAwait(false);
+            foreach (var result in results)
+                Log(result.IsSuccess ? "INFO" : "WARN", "Reports", result.Message);
+        }
+    }
+
+    private static bool ReportReferenceMatches(string reportReference, string bindingReference)
+    {
+        var report = NormalizeIecReference(reportReference);
+        var binding = NormalizeIecReference(bindingReference);
+        return binding.Equals(report, StringComparison.OrdinalIgnoreCase) ||
+               binding.StartsWith(report + ".", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUseful(string value)
+        => !string.IsNullOrWhiteSpace(value) && value != "-";
+
+    private static string NormalizeRelayKey(string relayId)
+        => string.IsNullOrWhiteSpace(relayId) ? "__single__" : relayId.Trim();
 
     private List<BindingItem> SelectDueBindings(DateTime nowUtc)
     {
