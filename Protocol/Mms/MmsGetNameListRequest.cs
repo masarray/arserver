@@ -17,6 +17,7 @@ public sealed class MmsNameListResult
     public bool IsSuccess { get; init; }
     public IReadOnlyList<string> Names { get; init; } = Array.Empty<string>();
     public bool MoreFollows { get; init; }
+    public bool MoreFollowsWasPresent { get; init; }
     public string Message { get; init; } = string.Empty;
     public string ResponseHexPreview { get; init; } = string.Empty;
 }

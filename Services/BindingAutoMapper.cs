@@ -39,9 +39,9 @@ public static class BindingAutoMapper
                 ReportControlReference = signal.ReportControlReference,
                 CurrentValue = signal.Value,
                 LastUpdate = signal.Timestamp,
-                Status = "Mapped",
-                ReadMode = signal.IsReportCapable ? "RCB candidate / Polling fallback" : "MMS Polling",
-                RcbMode = signal.IsReportCapable ? "RCB candidate" : "None",
+                Status = string.IsNullOrWhiteSpace(signal.ReportCoverage) ? "Mapped" : signal.ReportCoverage,
+                ReadMode = signal.IsReportCapable ? signal.ReportCoverage : "MMS Polling",
+                RcbMode = signal.IsReportCapable ? "Auto report planner" : "None",
                 FuxaTagName = MakeTagName(signal.Name)
             };
 

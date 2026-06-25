@@ -89,6 +89,11 @@ public static class NativeMmsDiscoveryMapper
                 AddCandidates(signals, domain, item, now);
         }
 
+        // Gateway IEDs may publish a separate MMXU DataSet/RCB even when NamedVariable
+        // browsing is shallow.  Do not let discovery depend on the first GGIO lane only; use
+        // DataSet and report-control names as additional LN hints and create safe read targets.
+        AddLogicalNodeFallbacksFromDataSetAndReportHints(signals, snapshot, now);
+
         if (signals.Count == 0)
         {
             foreach (var domain in snapshot.DomainVariables.Keys.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
@@ -131,14 +136,90 @@ public static class NativeMmsDiscoveryMapper
         return result;
     }
 
+    private static void AddLogicalNodeFallbacksFromDataSetAndReportHints(List<SignalDefinition> signals, NativeMmsDiscoverySnapshot snapshot, DateTime now)
+    {
+        var added = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var domainPair in snapshot.DomainVariableLists.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var domain = domainPair.Key?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(domain)) continue;
+
+            foreach (var raw in domainPair.Value.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var ln = ExtractLogicalNodeFromDataSetListName(raw);
+                if (string.IsNullOrWhiteSpace(ln) || ln.Equals("LLN0", StringComparison.OrdinalIgnoreCase))
+                    ln = InferLogicalNodeFromName(raw);
+
+                AddHintedLogicalNodeFallback(signals, added, domain, ln, now, "Native MMS DataSet LN profile fallback");
+            }
+        }
+
+        foreach (var domainPair in snapshot.DomainVariables.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var domain = domainPair.Key?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(domain)) continue;
+
+            foreach (var raw in domainPair.Value.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var parts = raw.Split('$', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                var fcIndex = Array.FindIndex(parts, p => p.Equals("RP", StringComparison.OrdinalIgnoreCase) || p.Equals("BR", StringComparison.OrdinalIgnoreCase));
+                if (fcIndex < 1) continue;
+
+                AddHintedLogicalNodeFallback(signals, added, domain, parts[0], now, "Native MMS RCB LN profile fallback");
+            }
+        }
+    }
+
+    private static void AddHintedLogicalNodeFallback(List<SignalDefinition> signals, HashSet<string> added, string domain, string logicalNode, DateTime now, string source)
+    {
+        if (string.IsNullOrWhiteSpace(domain) || string.IsNullOrWhiteSpace(logicalNode)) return;
+        var cls = SignalDefinition.DetectLogicalNodeClass(logicalNode);
+
+        // Only synthesize high-value SCADA LNs from hints.  Common LLN0/LPHD health/status is not a gateway signal.
+        if (!IsHintedScadaLogicalNodeClass(cls)) return;
+
+        var key = $"{domain}/{logicalNode}";
+        if (!added.Add(key)) return;
+        AddLogicalNodeFallbackSignals(signals, domain, logicalNode, now, source);
+    }
+
+    private static bool IsHintedScadaLogicalNodeClass(string logicalNodeClass)
+    {
+        var cls = (logicalNodeClass ?? string.Empty).ToUpperInvariant();
+        return cls is "GGIO" or "MMXU" or "MMXN" or "CSWI" or "XCBR" or "XSWI" or
+               "PTOC" or "PTRC" or "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF" or
+               "ATCC" or "AVC" or "AVCO" or "YPTR";
+    }
+
+    private static string ExtractLogicalNodeFromDataSetListName(string raw)
+    {
+        var cleaned = (raw ?? string.Empty).Trim().Replace('$', '.');
+        if (string.IsNullOrWhiteSpace(cleaned)) return string.Empty;
+
+        var slash = cleaned.IndexOf('/');
+        var item = slash >= 0 && slash < cleaned.Length - 1 ? cleaned[(slash + 1)..] : cleaned;
+        var parts = item.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Length >= 2 ? parts[0] : string.Empty;
+    }
+
+    private static string InferLogicalNodeFromName(string raw)
+    {
+        var text = (raw ?? string.Empty).Replace('$', '.');
+        var match = Regex.Match(text, @"(?<ln>[A-Za-z0-9_]*(?:GGIO|MMXU|MMXN|CSWI|XCBR|XSWI|PTOC|PTRC|PDIF|PDIS|PIOC|PTOV|PTUV|PTEF|PDEF|ATCC|AVCO|AVC|YPTR)\d*)", RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups["ln"].Value : string.Empty;
+    }
+
     private static void AddCandidates(List<SignalDefinition> signals, string domain, string rawItem, DateTime now)
     {
         if (string.IsNullOrWhiteSpace(rawItem)) return;
-        var item = rawItem.Trim();
+        var resolvedDomain = (domain ?? string.Empty).Trim();
+        var item = NormalizeMmsItemForCandidateParsing(rawItem, ref resolvedDomain);
+        if (string.IsNullOrWhiteSpace(resolvedDomain) || string.IsNullOrWhiteSpace(item)) return;
         var parts = item.Split('$', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length == 1)
         {
-            AddLogicalNodeFallbackSignals(signals, domain, parts[0], now, "Native MMS shallow LN fallback");
+            AddLogicalNodeFallbackSignals(signals, resolvedDomain, parts[0], now, "Native MMS shallow LN fallback");
             return;
         }
 
@@ -146,24 +227,53 @@ public static class NativeMmsDiscoveryMapper
         var fcIndex = Array.FindIndex(parts, p => IsFunctionalConstraint(p));
         if (fcIndex < 1)
         {
-            AddShallowDataObjectCandidates(signals, domain, logicalNode, parts.Skip(1).ToArray(), now);
+            AddShallowDataObjectCandidates(signals, resolvedDomain, logicalNode, parts.Skip(1).ToArray(), now);
             return;
         }
 
         var fc = parts[fcIndex].ToUpperInvariant();
+        if (fc is "BR" or "RP")
+        {
+            AddLogicalNodeFallbackSignals(signals, resolvedDomain, logicalNode, now, "Native MMS RCB LN profile fallback");
+            return;
+        }
+
         var pathParts = parts.Skip(fcIndex + 1).ToArray();
         if (pathParts.Length == 0)
         {
-            AddLogicalNodeFallbackSignals(signals, domain, logicalNode, now, $"Native MMS {fc} shallow fallback");
+            AddLogicalNodeFallbackSignals(signals, resolvedDomain, logicalNode, now, $"Native MMS {fc} shallow fallback");
             return;
         }
 
         foreach (var path in ExpandLikelyLeafPaths(logicalNode, fc, pathParts))
         {
             if (path.Length == 0) continue;
-            var reference = $"{domain}/{logicalNode}.{string.Join('.', path)}";
+            var reference = $"{resolvedDomain}/{logicalNode}.{string.Join('.', path)}";
             signals.Add(CreateSignal(reference, fc, now));
         }
+    }
+
+    private static string NormalizeMmsItemForCandidateParsing(string rawItem, ref string domain)
+    {
+        var item = (rawItem ?? string.Empty).Trim().Replace('\\', '/');
+        if (string.IsNullOrWhiteSpace(item)) return string.Empty;
+
+        var slash = item.IndexOf('/');
+        if (slash > 0 && slash < item.Length - 1)
+        {
+            var candidateDomain = item[..slash].Trim();
+            if (!string.IsNullOrWhiteSpace(candidateDomain))
+                domain = candidateDomain;
+            item = item[(slash + 1)..];
+        }
+
+        // Discovery artifacts are not consistent: ARIEC61850 and the clean-room MMS type-tree
+        // can return either MMXU3$MX$PhV$phsA$cVal$mag$f or
+        // MMXU3.MX.PhV.phsA.cVal.mag.f.  Parse both as the same MMS item path.
+        item = item.Replace('.', '$').Trim('$');
+        while (item.Contains("$$", StringComparison.Ordinal))
+            item = item.Replace("$$", "$", StringComparison.Ordinal);
+        return item;
     }
 
     private static IEnumerable<string[]> ExpandLikelyLeafPaths(string logicalNode, string fc, string[] pathParts)
@@ -445,6 +555,9 @@ public static class NativeMmsDiscoveryMapper
         var isCore = SignalDefinition.IsCoreScadaSignal(reference, SignalDefinition.DetectLogicalNodeClass(ln), dataType, category);
         var confidence = InferConfidence(reference, dataType, category, isCore);
 
+        TryBuildCompanionReference(reference, "q", out var qRef);
+        TryBuildCompanionReference(reference, "t", out var tRef);
+
         return new SignalDefinition
         {
             Name = MakeFriendlyName(reference, category),
@@ -455,7 +568,11 @@ public static class NativeMmsDiscoveryMapper
             Unit = unit,
             Confidence = confidence,
             IsSelected = isCore,
-            IsReportCapable = isCore && (fc is "ST" or "MX"),
+            IsReportCapable = false,
+            ReportCoverage = "Polling fallback",
+            ReportCoverageReason = "Signal is readable by MMS; report DataSet coverage has not been proven yet.",
+            QualityReference = qRef,
+            TimestampReference = tRef,
             Source = source,
             Value = "Pending read",
             Quality = "Pending",
@@ -469,11 +586,12 @@ public static class NativeMmsDiscoveryMapper
         if (signal.IsScadaCoreSignal) return true;
 
         var normalized = Normalize(signal.ObjectReference);
+        if (signal.IsRawAttribute) return false;
         if (SignalDefinition.IsStatisticsOrHarmonicNoise(normalized)) return false;
-        if (normalized.EndsWith(".q") || normalized.EndsWith(".t")) return false;
+        if (normalized.EndsWith(".q") || normalized.EndsWith(".t") || normalized.EndsWith(".tm")) return false;
         if (normalized.Contains(".origin") || normalized.Contains(".ctlmodel") || normalized.Contains(".ctlval")) return false;
         if (normalized.Contains(".numpts") || normalized.Contains(".olddata") || normalized.Contains(".configrev")) return false;
-        if (normalized.Contains(".mod.") || normalized.Contains(".beh.")) return false;
+        if (normalized.Contains(".mod.") || normalized.Contains(".beh.") || normalized.Contains(".health") || normalized.Contains(".eehealth")) return false;
 
         return (signal.FunctionalConstraint is "ST" or "MX") &&
                (signal.DataType is "Boolean" or "Enum" or "Float32" or "Int32" or "UInt16" or "Dbpos") &&
@@ -537,12 +655,12 @@ public static class NativeMmsDiscoveryMapper
     {
         var r = Normalize(reference);
         var cls = SignalDefinition.DetectLogicalNodeClass(ln).ToUpperInvariant();
+        if (r.EndsWith(".q")) return "Quality";
+        if (r.EndsWith(".t") || r.EndsWith(".tm")) return "Timestamp";
         if (r.EndsWith(".pos.stval")) return "Position";
         if (r.EndsWith(".mag.f") || r.Contains(".cval.mag.f")) return "Measurement";
-        if (cls is "ATCC" or "AVC" or "AVCO" or "GGIO" or "YPTR") return "Status";
         if (IsProtectionClass(cls) || r.EndsWith(".op.general") || r.EndsWith(".str.general") || r.EndsWith(".tr.general")) return "Protection";
-        if (r.EndsWith(".q")) return "Quality";
-        if (r.EndsWith(".t")) return "Timestamp";
+        if (cls is "ATCC" or "AVC" or "AVCO" or "GGIO" or "YPTR") return "Status";
         return "Status";
     }
 
@@ -552,7 +670,7 @@ public static class NativeMmsDiscoveryMapper
         if (r.EndsWith(".pos.stval")) return "Dbpos";
         if (r.EndsWith(".posval")) return "Int32";
         if (r.EndsWith(".q")) return "Quality";
-        if (r.EndsWith(".t")) return "Timestamp";
+        if (r.EndsWith(".t") || r.EndsWith(".tm")) return "Timestamp";
         if (r.EndsWith(".mag.f") || r.EndsWith(".ang.f")) return "Float32";
         if (r.EndsWith(".general")) return "Boolean";
         if (r.Contains("cnt") || r.Contains("tapchg") || r.Contains("tappos")) return "Int32";
@@ -589,6 +707,34 @@ public static class NativeMmsDiscoveryMapper
         var path = dot >= 0 ? afterSlash[(dot + 1)..] : afterSlash;
         path = Regex.Replace(path, @"\.", " ");
         return string.IsNullOrWhiteSpace(ln) ? $"{category} {path}" : $"{ln} {path}";
+    }
+
+    private static bool TryBuildCompanionReference(string reference, string companion, out string companionReference)
+    {
+        companionReference = string.Empty;
+        if (!companion.Equals("q", StringComparison.OrdinalIgnoreCase) && !companion.Equals("t", StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.IsNullOrWhiteSpace(reference)) return false;
+
+        var normalized = reference.Replace('$', '.').Trim();
+        if (normalized.EndsWith(".q", StringComparison.OrdinalIgnoreCase) || normalized.EndsWith(".t", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var parent = normalized;
+        if (parent.EndsWith(".ValWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
+        else if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
+        else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
+        else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];
+        else if (parent.EndsWith(".mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
+        else
+        {
+            var slash = parent.IndexOf('/');
+            var dot = parent.LastIndexOf('.');
+            if (dot <= slash) return false;
+            parent = parent[..dot];
+        }
+
+        if (string.IsNullOrWhiteSpace(parent)) return false;
+        companionReference = $"{parent}.{companion.ToLowerInvariant()}";
+        return true;
     }
 
     private static int ConfidenceScore(string confidence) => confidence switch

@@ -28,20 +28,54 @@ public static class NativeReportDiscoveryMapper
         foreach (var signal in signals)
         {
             if (!IsReportCandidateSignal(signal))
+            {
+                if (!signal.CanPublishAsSignal)
+                {
+                    signal.ReportCoverage = "Hidden attribute";
+                    signal.ReportCoverageReason = "q/t/Health/Beh/Mod/report-control attributes are sidecar or diagnostic attributes, not SCADA publish points.";
+                }
                 continue;
+            }
 
             var best = PickBestReportControl(signal, inventory);
             if (best == null)
+            {
+                signal.IsReportCapable = false;
+                signal.ReportCoverage = "Polling fallback";
+                signal.ReportCoverageReason = "No RCB/DataSet candidate was found for this signal. Runtime will use safe MMS polling.";
                 continue;
+            }
 
-            signal.IsReportCapable = true;
+            var score = ScoreReportControlForSignal(signal, best, ShouldPreferBuffered(signal, signal.Category ?? string.Empty, signal.ObjectReference.Replace('$', '.').ToLowerInvariant()));
+            var exactLn = IsExactLogicalNodeDataSetMatch(signal, best);
+            var sameClass = IsSameLogicalNodeClassMatch(signal, best);
+
             signal.ReportControlReference = best.Reference;
             signal.DataSetReference = best.DataSetReference;
+            signal.IsReportCapable = true;
+            signal.ReportCoverage = exactLn
+                ? "Report covered + polling fallback"
+                : sameClass
+                    ? "Report candidate / verify DataSet"
+                    : "Polling fallback";
+            signal.ReportCoverageReason = exactLn
+                ? "The signal logical node matches the discovered DataSet/RCB lane. Runtime will enable this RCB and keep MMS polling as fallback."
+                : sameClass
+                    ? "The signal matches the discovered DataSet/RCB logical-node class, but static DataSet membership must be confirmed from the IED directory at runtime. If the static DataSet does not contain this signal, ARServer will automatically use polling fallback."
+                    : "The signal is readable, but this RCB/DataSet is only a weak hint. Runtime will not rely on reporting for this point unless the DataSet directory proves coverage.";
+
+            if (!sameClass && !exactLn)
+            {
+                signal.ReportControlReference = string.Empty;
+                signal.DataSetReference = string.Empty;
+                signal.IsReportCapable = false;
+            }
+
             signal.Source = string.IsNullOrWhiteSpace(signal.Source)
-                ? "Native MMS GetNameList + RCB inventory"
-                : signal.Source.Contains("RCB", StringComparison.OrdinalIgnoreCase)
+                ? "ARIEC61850 smart report planner"
+                : signal.Source.Contains("RCB", StringComparison.OrdinalIgnoreCase) || signal.Source.Contains("report", StringComparison.OrdinalIgnoreCase)
                     ? signal.Source
-                    : signal.Source + " + RCB inventory";
+                    : signal.Source + " + smart report planner";
         }
     }
 
@@ -177,17 +211,51 @@ public static class NativeReportDiscoveryMapper
             .ToList();
         if (candidates.Count == 0) return null;
 
-        var fc = signal.FunctionalConstraint ?? string.Empty;
         var category = signal.Category ?? string.Empty;
         var reference = signal.ObjectReference.Replace('$', '.').ToLowerInvariant();
+        var preferBuffered = ShouldPreferBuffered(signal, category, reference);
 
+        // Important for gateway-style IED models:
+        // GGIO and MMXU can be exposed as different native DataSets and different RCBs
+        // inside the same logical device.  The old planner selected the first suitable
+        // RCB in the domain and accidentally routed MMXU measurements through the GGIO
+        // DataSet/RCB.  Score by DataSet LN and RCB LN first, then use buffered/URCB
+        // preference only as a tie-breaker.
         return candidates
-            .OrderByDescending(rcb => ShouldPreferBuffered(signal, category, reference) ? rcb.Buffered : !rcb.Buffered)
-            .ThenByDescending(rcb => !string.IsNullOrWhiteSpace(rcb.DataSetReference))
-            .ThenByDescending(rcb => rcb.LogicalNode.Equals("LLN0", StringComparison.OrdinalIgnoreCase))
-            .ThenByDescending(rcb => HasUsefulRuntimeAttributes(rcb))
-            .ThenBy(rcb => rcb.Name, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault();
+            .Select(rcb => new { Rcb = rcb, Score = ScoreReportControlForSignal(signal, rcb, preferBuffered) })
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => preferBuffered ? x.Rcb.Buffered : !x.Rcb.Buffered)
+            .ThenByDescending(x => !string.IsNullOrWhiteSpace(x.Rcb.DataSetReference))
+            .ThenByDescending(x => HasUsefulRuntimeAttributes(x.Rcb))
+            .ThenBy(x => x.Rcb.LogicalNode, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.Rcb.Name, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault()?.Rcb;
+    }
+
+    private static bool IsExactLogicalNodeDataSetMatch(SignalDefinition signal, NativeReportControlCandidate rcb)
+    {
+        var signalLn = signal.LogicalNode ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(signalLn)) return false;
+        var dataSetLn = ExtractLogicalNodeFromDataSetReference(rcb.DataSetReference);
+        if (!string.IsNullOrWhiteSpace(dataSetLn) && dataSetLn.Equals(signalLn, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(rcb.LogicalNode) && rcb.LogicalNode.Equals(signalLn, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(rcb.DataSetReference) && rcb.DataSetReference.Contains($"/{signalLn}.", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(rcb.DataSetReference) && rcb.DataSetReference.Contains(signalLn, StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
+    }
+
+    private static bool IsSameLogicalNodeClassMatch(SignalDefinition signal, NativeReportControlCandidate rcb)
+    {
+        var signalClass = signal.LogicalNodeClass ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(signalClass)) return false;
+        var dataSetLn = ExtractLogicalNodeFromDataSetReference(rcb.DataSetReference);
+        if (MatchesLogicalNodeClass(dataSetLn, signalClass)) return true;
+        if (MatchesLogicalNodeClass(rcb.LogicalNode, signalClass)) return true;
+        return false;
     }
 
     private static bool ShouldPreferBuffered(SignalDefinition signal, string category, string reference)
@@ -199,6 +267,78 @@ public static class NativeReportDiscoveryMapper
         return false;
     }
 
+    private static int ScoreReportControlForSignal(SignalDefinition signal, NativeReportControlCandidate rcb, bool preferBuffered)
+    {
+        var score = 0;
+        var signalLn = signal.LogicalNode ?? string.Empty;
+        var signalLnClass = signal.LogicalNodeClass ?? string.Empty;
+        var signalReference = (signal.ObjectReference ?? string.Empty).Replace('$', '.');
+
+        var dataSetLn = ExtractLogicalNodeFromDataSetReference(rcb.DataSetReference);
+        if (!string.IsNullOrWhiteSpace(dataSetLn))
+            score += ScoreLogicalNodeAffinity(signalLn, signalLnClass, dataSetLn, signalReference, strongPenalty: true);
+
+        if (!string.IsNullOrWhiteSpace(rcb.LogicalNode))
+            score += ScoreLogicalNodeAffinity(signalLn, signalLnClass, rcb.LogicalNode, signalReference, strongPenalty: false);
+
+        if (!string.IsNullOrWhiteSpace(signalLn) &&
+            !string.IsNullOrWhiteSpace(rcb.DataSetReference) &&
+            rcb.DataSetReference.Contains(signalLn, StringComparison.OrdinalIgnoreCase))
+            score += 20;
+
+        if (preferBuffered == rcb.Buffered)
+            score += 8;
+        if (HasUsefulRuntimeAttributes(rcb))
+            score += 6;
+        if (!string.IsNullOrWhiteSpace(rcb.DataSetReference))
+            score += 4;
+
+        var fc = signal.FunctionalConstraint ?? string.Empty;
+        if (fc.Equals("MX", StringComparison.OrdinalIgnoreCase) &&
+            (signalLnClass.Equals("MMXU", StringComparison.OrdinalIgnoreCase) || signalLnClass.Equals("MMXN", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (MatchesLogicalNodeClass(dataSetLn, "MMXU") || MatchesLogicalNodeClass(dataSetLn, "MMXN") ||
+                MatchesLogicalNodeClass(rcb.LogicalNode, "MMXU") || MatchesLogicalNodeClass(rcb.LogicalNode, "MMXN"))
+                score += 18;
+        }
+
+        return score;
+    }
+
+    private static int ScoreLogicalNodeAffinity(string signalLn, string signalLnClass, string candidateLn, string signalReference, bool strongPenalty)
+    {
+        if (string.IsNullOrWhiteSpace(candidateLn)) return 0;
+        if (candidateLn.Equals("LLN0", StringComparison.OrdinalIgnoreCase)) return 2;
+
+        var candidateClass = SignalDefinition.DetectLogicalNodeClass(candidateLn);
+        if (!string.IsNullOrWhiteSpace(signalLn) && candidateLn.Equals(signalLn, StringComparison.OrdinalIgnoreCase))
+            return 80;
+        if (!string.IsNullOrWhiteSpace(signalLn) && signalReference.Contains($"/{candidateLn}.", StringComparison.OrdinalIgnoreCase))
+            return 70;
+        if (!string.IsNullOrWhiteSpace(signalLnClass) && candidateClass.Equals(signalLnClass, StringComparison.OrdinalIgnoreCase))
+            return 45;
+
+        // Separate native DataSets must not bleed into each other.  A GGIO DataSet should not
+        // own MMXU measurements just because both are in the same MMS domain.
+        return strongPenalty ? -60 : -25;
+    }
+
+    private static bool MatchesLogicalNodeClass(string logicalNode, string logicalNodeClass)
+    {
+        if (string.IsNullOrWhiteSpace(logicalNode) || string.IsNullOrWhiteSpace(logicalNodeClass)) return false;
+        return SignalDefinition.DetectLogicalNodeClass(logicalNode).Equals(logicalNodeClass, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ExtractLogicalNodeFromDataSetReference(string reference)
+    {
+        var text = (reference ?? string.Empty).Trim().Replace('$', '.');
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        var slash = text.IndexOf('/');
+        var item = slash >= 0 && slash < text.Length - 1 ? text[(slash + 1)..] : text;
+        var dot = item.IndexOf('.');
+        return dot > 0 ? item[..dot] : string.Empty;
+    }
+
     private static bool HasUsefulRuntimeAttributes(NativeReportControlCandidate rcb)
         => rcb.Attributes.Contains("RptEna", StringComparer.OrdinalIgnoreCase) ||
            rcb.Attributes.Contains("DatSet", StringComparer.OrdinalIgnoreCase) ||
@@ -206,7 +346,7 @@ public static class NativeReportDiscoveryMapper
 
     private static bool IsReportCandidateSignal(SignalDefinition signal)
     {
-        if (!signal.IsScadaCoreSignal) return false;
+        if (!signal.IsScadaCoreSignal || !signal.CanPublishAsSignal) return false;
         var fc = signal.FunctionalConstraint ?? string.Empty;
         return fc.Equals("ST", StringComparison.OrdinalIgnoreCase) || fc.Equals("MX", StringComparison.OrdinalIgnoreCase);
     }

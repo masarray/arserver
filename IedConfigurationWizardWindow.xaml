@@ -23,7 +23,7 @@
             </Border>
             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                 <TextBlock Text="Configure IED" FontSize="25" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
-                <TextBlock Text="Guided workflow: select IEC 61850 tags → choose report plan → build Modbus/MQTT gateway runtime" FontSize="12.8" Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
+                <TextBlock Text="Guided workflow: discover full IED model → select SCADA signals → auto-plan report/polling → build Modbus/MQTT runtime" FontSize="12.8" Foreground="{StaticResource Muted}" Margin="0,4,0,0"/>
             </StackPanel>
             <Button Grid.Column="2" Content="×" Width="42" Height="42" Style="{StaticResource SoftButton}" Click="Cancel_Click"/>
         </Grid>
@@ -52,8 +52,8 @@
                     </Button>
                     <Button Tag="2" Click="StepNav_Click" Style="{StaticResource SoftButton}" Margin="0,0,0,10" Padding="14,12">
                         <StackPanel HorizontalAlignment="Left">
-                            <TextBlock Text="3  Report Plan" FontSize="13.4" FontWeight="SemiBold"/>
-                            <TextBlock Text="Choose BRCB/URCB and DataSet once during engineering. Runtime keeps the plan." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="11.6" Margin="0,5,0,0"/>
+                            <TextBlock Text="3  Auto Report Plan" FontSize="13.4" FontWeight="SemiBold"/>
+                            <TextBlock Text="Engine maps signals to RCB/DataSet automatically; no report selection required." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="11.6" Margin="0,5,0,0"/>
                         </StackPanel>
                     </Button>
                     <Button Tag="3" Click="StepNav_Click" Style="{StaticResource SoftButton}" Padding="14,12">
@@ -95,7 +95,19 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" MinWidth="350" Margin="0,0,12,0" ToolTip="Search by LN, signal name, IEC object reference, type, or category"/>
+                            <Border MinWidth="390" MaxWidth="500" MinHeight="38" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="16" Padding="12,0" Margin="0,0,12,0" VerticalAlignment="Center" ToolTip="Search by LN, signal name, IEC object reference, type, quality, report plan, or category.">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="🔍" FontSize="14" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock Grid.Column="1" Text="Search signal, e.g. MMXU2 PhV, GGIO Ind15..." Foreground="{StaticResource Muted}" Opacity="0.72" FontSize="12.4" VerticalAlignment="Center" IsHitTestVisible="False" Visibility="{Binding SearchPlaceholderVisibility}"/>
+                                    <TextBox Grid.Column="1" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" BorderThickness="0" Background="Transparent" Padding="0,5" MinHeight="30" FontSize="12.6" ToolTip="Example: MMXU2 PhV, GGIO Ind15, good, Report, Polling"/>
+                                    <Button Grid.Column="2" Content="×" Style="{StaticResource MiniChipButton}" Padding="6,2" MinHeight="24" Margin="8,0,0,0" Click="ClearFilter_Click" ToolTip="Clear search" Visibility="{Binding SearchClearVisibility}"/>
+                                </Grid>
+                            </Border>
                             <WrapPanel Grid.Column="1" VerticalAlignment="Center">
                                 <Button Content="⛓ Position" Tag="Pos stVal CSWI XCBR XSWI" Style="{StaticResource MiniChipButton}" Click="QuickFilter_Click" Margin="0,0,6,0"/>
                                 <Button Content="🛡 Protection" Tag="PTOC PTRC PDIF PDIS Op general Tr general Str general" Style="{StaticResource MiniChipButton}" Click="QuickFilter_Click" Margin="0,0,6,0"/>
@@ -108,13 +120,32 @@
                             </WrapPanel>
                         </Grid>
 
-                        <DataGrid Grid.Row="1" ItemsSource="{Binding SignalsView}" Style="{StaticResource ModernDataGrid}" ToolTip="Select a row and press Ctrl+C to copy it for debugging.">
+                        <DataGrid x:Name="SignalsGrid" Grid.Row="1" ItemsSource="{Binding SignalsView}" SelectedItem="{Binding SelectedSignal, Mode=TwoWay}" SelectionMode="Extended" SelectionUnit="FullRow" Style="{StaticResource ModernDataGrid}" ToolTip="Right-click a signal for IEC 61850 properties. Use Ctrl/Shift row selection, Ctrl+A, Space, header checkbox, or checkbox block-select to change many signals." PreviewMouseRightButtonDown="SignalsGrid_PreviewMouseRightButtonDown" KeyDown="SignalsGrid_KeyDown">
+                            <DataGrid.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Signal Properties" Click="ShowSignalProperties_Click"/>
+                                </ContextMenu>
+                            </DataGrid.ContextMenu>
                             <DataGrid.Columns>
-                                <DataGridCheckBoxColumn Header="Use" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="54"/>
-                                <DataGridTextColumn Header="IEC Reference" Binding="{Binding ObjectReference}" Width="360" MinWidth="280" IsReadOnly="True"/>
+                                <DataGridTemplateColumn Width="54">
+                                    <DataGridTemplateColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <CheckBox ToolTip="Select/deselect all visible publishable signals" HorizontalAlignment="Center" Click="SignalUseHeaderCheckBox_Click"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.HeaderTemplate>
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      IsEnabled="{Binding CanPublishAsSignal}"
+                                                      HorizontalAlignment="Center"
+                                                      Click="SignalUseCheckBox_Click"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="IEC Signal" Binding="{Binding ObjectReference}" Width="360" MinWidth="280" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="120" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="Timestamp" Binding="{Binding DeviceTimestamp}" Width="140" IsReadOnly="True"/>
-                                <DataGridTextColumn Header="Quality" Binding="{Binding Quality}" Width="120" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="t Attribute" Binding="{Binding DeviceTimestamp}" Width="140" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="q Attribute" Binding="{Binding Quality}" Width="120" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Probe" Binding="{Binding ProbeStatus}" Width="130" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="Type" Binding="{Binding DataType}" Width="85" IsReadOnly="True"/>
                                 <DataGridTextColumn Header="RCB Plan" Binding="{Binding ReportPlan}" Width="150" IsReadOnly="True"/>
@@ -155,92 +186,39 @@
                         </DataGrid>
                     </Grid>
 
-                    <!-- STEP 3: REPORT PLAN SELECTION -->
+                    <!-- STEP 3: AUTO REPORT PLAN REVIEW -->
                     <Grid Grid.Row="1" Visibility="{Binding StepReportVisibility}">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <Grid Grid.Row="0" Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="Pick the reporting plan during configuration. Runtime will only monitor/use the saved plan." Foreground="{StaticResource Muted}" FontSize="12.4" TextWrapping="Wrap"/>
-                                <TextBlock Text="{Binding ReportPlanStatus}" Foreground="{StaticResource Accent}" FontSize="12.3" FontWeight="SemiBold" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                            </StackPanel>
-                            <WrapPanel Grid.Column="1" VerticalAlignment="Center">
-                                <Button Content="Probe Selected RCB" Style="{StaticResource PrimaryButton}" Click="ProbeSelectedReportControl_Click" Margin="0,0,8,0"/>
-                                <Button Content="Use Selected RCB" Style="{StaticResource SoftButton}" Click="UseSelectedReportControl_Click" Margin="0,0,8,0"/>
-                                <Button Content="Polling Only" Style="{StaticResource SoftButton}" Click="UsePollingOnly_Click"/>
-                            </WrapPanel>
-                        </Grid>
+                        <StackPanel Grid.Row="0" Margin="0,0,0,10">
+                            <TextBlock Text="Auto report planner maps every selected SCADA signal to the safest transport. Report is used when static DataSet/RCB coverage is known; MMS polling fallback is used when the IED exposes the signal but static reporting does not include it." Foreground="{StaticResource Muted}" FontSize="12.4" TextWrapping="Wrap"/>
+                            <TextBlock Text="{Binding ReportPlanStatus}" Foreground="{StaticResource Accent}" FontSize="12.3" FontWeight="SemiBold" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
 
-                        <Grid Grid.Row="1">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="1.05*"/>
-                                <ColumnDefinition Width="12"/>
-                                <ColumnDefinition Width="0.85*"/>
-                                <ColumnDefinition Width="12"/>
-                                <ColumnDefinition Width="1.15*"/>
-                            </Grid.ColumnDefinitions>
-
-                            <Border Grid.Column="0" Background="#F8FAFC" CornerRadius="16" Padding="10" BorderBrush="{StaticResource Line}" BorderThickness="1">
-                                <DockPanel>
-                                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-                                        <TextBlock Text="Report Control Blocks" FontSize="14.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
-                                        <TextBlock Text="Choose one BRCB/URCB. Probe is read-only; no RptEna or reservation write is sent here." FontSize="11.8" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                    <DataGrid ItemsSource="{Binding ReportControls}" SelectedItem="{Binding SelectedReportControl, Mode=TwoWay}" IsReadOnly="True" Style="{StaticResource ModernDataGrid}" ScrollViewer.HorizontalScrollBarVisibility="Auto">
-                                        <DataGrid.Columns>
-                                            <DataGridTextColumn Header="Type" Binding="{Binding Mode}" Width="62"/>
-                                            <DataGridTextColumn Header="RCB" Binding="{Binding Reference}" Width="250*" MinWidth="230"/>
-                                            <DataGridTextColumn Header="DataSet" Binding="{Binding DataSetReference}" Width="230*" MinWidth="180"/>
-                                            <DataGridTextColumn Header="RptEna" Binding="{Binding EnabledState}" Width="78"/>
-                                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="126"/>
-                                        </DataGrid.Columns>
-                                    </DataGrid>
-                                </DockPanel>
-                            </Border>
-
-                            <Border Grid.Column="2" Background="#F8FAFC" CornerRadius="16" Padding="10" BorderBrush="{StaticResource Line}" BorderThickness="1">
-                                <DockPanel>
-                                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-                                        <TextBlock Text="DataSets" FontSize="14.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
-                                        <TextBlock Text="Online discovery may show names only. SCL import can give stronger FCDA coverage." FontSize="11.8" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                    <DataGrid ItemsSource="{Binding DataSets}" SelectedItem="{Binding SelectedDataSet, Mode=TwoWay}" IsReadOnly="True" Style="{StaticResource ModernDataGrid}" ScrollViewer.HorizontalScrollBarVisibility="Auto">
-                                        <DataGrid.Columns>
-                                            <DataGridTextColumn Header="DataSet" Binding="{Binding Reference}" Width="250*" MinWidth="230"/>
-                                            <DataGridTextColumn Header="LN" Binding="{Binding LogicalNode}" Width="74"/>
-                                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="105"/>
-                                        </DataGrid.Columns>
-                                    </DataGrid>
-                                </DockPanel>
-                            </Border>
-
-                            <Border Grid.Column="4" Background="#F8FAFC" CornerRadius="16" Padding="10" BorderBrush="{StaticResource Line}" BorderThickness="1">
-                                <DockPanel>
-                                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-                                        <TextBlock Text="Selected DataSet / Coverage" FontSize="14.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
-                                        <TextBlock Text="{Binding SelectedDataSetSummary}" FontSize="11.8" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
-                                        <TextBlock Text="{Binding SelectedReportControlSummary}" FontSize="11.8" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,2,0,0"/>
-                                    </StackPanel>
-                                    <DataGrid ItemsSource="{Binding DataSetMembers}" IsReadOnly="True" Style="{StaticResource ModernDataGrid}" ScrollViewer.HorizontalScrollBarVisibility="Auto">
-                                        <DataGrid.Columns>
-                                            <DataGridTextColumn Header="IEC Object" Binding="{Binding DisplayObject}" Width="280*" MinWidth="250"/>
-                                            <DataGridTextColumn Header="Type" Binding="{Binding DataType}" Width="76"/>
-                                            <DataGridTextColumn Header="Coverage" Binding="{Binding Coverage}" Width="190"/>
-                                        </DataGrid.Columns>
-                                    </DataGrid>
-                                </DockPanel>
-                            </Border>
-                        </Grid>
+                        <Border Grid.Row="1" Background="#F8FAFC" CornerRadius="16" Padding="10" BorderBrush="{StaticResource Line}" BorderThickness="1">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                    <TextBlock Text="Selected Signal Transport Plan" FontSize="14.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                    <TextBlock Text="This is a read-only review. User does not choose RCB/DataSet here; technical details are available from Signal Properties and Diagnostics." FontSize="11.8" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <DataGrid ItemsSource="{Binding AutoPlanSignalsView}" IsReadOnly="True" Style="{StaticResource ModernDataGrid}" ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="IEC Signal" Binding="{Binding ObjectReference}" Width="330*" MinWidth="300"/>
+                                        <DataGridTextColumn Header="Source" Binding="{Binding ReportPlan}" Width="150"/>
+                                        <DataGridTextColumn Header="Quality" Binding="{Binding Quality}" Width="90"/>
+                                        <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="110"/>
+                                        <DataGridTextColumn Header="DataSet" Binding="{Binding DataSetReference}" Width="260*" MinWidth="210"/>
+                                        <DataGridTextColumn Header="RCB" Binding="{Binding ReportControlReference}" Width="260*" MinWidth="210"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
 
                         <Border Grid.Row="2" CornerRadius="14" Background="#EEF4FF" Padding="12,8" BorderBrush="#D7E3F7" BorderThickness="1" Margin="0,10,0,0">
-                            <TextBlock Text="Report planning is a configuration task. Runtime will still use safe MMS polling until explicit report activation is implemented, then selected RCB will become the event lane with polling fallback." Foreground="{StaticResource Muted}" FontSize="12.2" TextWrapping="Wrap"/>
+                            <TextBlock Text="Safe default: ARServer does not create or rewrite IED DataSets. It enables useful static report lane(s), keeps polling fallback for uncovered signals, and records exact RCB/DataSet detail per signal for engineering audit." Foreground="{StaticResource Muted}" FontSize="12.2" TextWrapping="Wrap"/>
                         </Border>
                     </Grid>
 
@@ -274,7 +252,7 @@
                             <StackPanel>
                                 <TextBlock Text="Ready to add this IED configuration to runtime workspace" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
                                 <TextBlock Text="Save will update the IEC 61850 Explorer with the selected live signals and update the Modbus Server publish map. Runtime viewing stays clean; editing stays inside this wizard." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="13" Margin="0,8,0,0"/>
-                                <TextBlock Text="Tip: Only selected signals become MMS polling targets. The chosen RCB/DataSet plan is saved with the IED and will be used later by the reporting engine; no runtime re-selection is required." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12.5" Margin="0,18,0,0"/>
+                                <TextBlock Text="Tip: Only selected SCADA signals become runtime targets. ARServer auto-plans report lanes per signal and uses MMS polling fallback for static DataSets that do not contain the selected signal." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="12.5" Margin="0,18,0,0"/>
                             </StackPanel>
                         </Border>
                     </Grid>

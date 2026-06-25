@@ -76,6 +76,8 @@ public static class SclImportService
                                 Unit = GuessUnit(objectRef),
                                 Confidence = "SCL",
                                 Quality = "SCL imported",
+                                ReportCoverage = "Polling fallback",
+                                ReportCoverageReason = "Imported from SCL. DataSet coverage will be assigned from FCDA membership if available.",
                                 IsSelected = SignalDefinition.IsCoreScadaSignal(objectRef, SignalDefinition.DetectLogicalNodeClass(SignalDefinitionExtractLogicalNode(objectRef)), NormalizeDataType(leaf.BasicType), CategorizeSignal(objectRef))
                             };
                             result.Signals.Add(signal);
@@ -277,10 +279,19 @@ public static class SclImportService
     {
         foreach (var signal in result.Signals)
         {
+            if (!signal.CanPublishAsSignal)
+            {
+                signal.IsSelected = false;
+                signal.IsReportCapable = false;
+                continue;
+            }
+
             var match = result.DataSets.FirstOrDefault(ds => ds.Members.Any(m => IsMemberCoveringSignal(m, signal)));
             if (match == null) continue;
             signal.IsReportCapable = true;
             signal.DataSetReference = match.Reference;
+            signal.ReportCoverage = "Report covered + polling fallback";
+            signal.ReportCoverageReason = "SCL FCDA membership confirms this signal is covered by the static DataSet.";
             var rcb = result.ReportControls.FirstOrDefault(r => string.Equals(r.DataSetReference, match.Reference, StringComparison.OrdinalIgnoreCase));
             if (rcb != null)
                 signal.ReportControlReference = rcb.Reference;

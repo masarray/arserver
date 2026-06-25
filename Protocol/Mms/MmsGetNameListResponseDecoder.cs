@@ -44,7 +44,8 @@ public static class MmsGetNameListResponseDecoder
                 return Fail($"Expected MMS GetNameList service response [1] (0xA1), received 0x{service.Tag:X2}.", hex);
 
             var names = new List<string>();
-            var moreFollows = false;
+            var moreFollows = true;
+            var moreFollowsWasPresent = false;
             var serviceReader = new BerReader(service.Value);
             while (!serviceReader.EndOfBuffer)
             {
@@ -55,12 +56,15 @@ public static class MmsGetNameListResponseDecoder
                     while (!listReader.EndOfBuffer)
                     {
                         var id = listReader.ReadTlv();
-                        if (id.Tag == 0x1A || id.Tag == 0x16)
+                        if (IsIdentifierTag(id.Tag))
                             names.Add(Encoding.ASCII.GetString(id.Value.Span));
+                        else if ((id.Tag & 0x20) == 0x20 || id.Tag == 0x30)
+                            names.AddRange(ExtractIdentifierStrings(id.Value));
                     }
                 }
                 else if (field.Tag == 0x81 && field.Length > 0)
                 {
+                    moreFollowsWasPresent = true;
                     moreFollows = field.Value.Span[0] != 0;
                 }
             }
@@ -70,7 +74,8 @@ public static class MmsGetNameListResponseDecoder
                 IsSuccess = true,
                 Names = names.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 MoreFollows = moreFollows,
-                Message = $"MMS GetNameList decoded {names.Count} name(s), moreFollows={moreFollows}.",
+                MoreFollowsWasPresent = moreFollowsWasPresent,
+                Message = $"MMS GetNameList decoded {names.Count} name(s), moreFollows={moreFollows}, moreFollowsPresent={moreFollowsWasPresent}.",
                 ResponseHexPreview = hex
             };
         }
@@ -139,6 +144,28 @@ public static class MmsGetNameListResponseDecoder
             return false;
         }
         return false;
+    }
+
+    private static bool IsIdentifierTag(byte tag)
+        => tag is 0x1A or 0x16 or 0x0C or 0x19 or 0x1B;
+
+    private static IEnumerable<string> ExtractIdentifierStrings(ReadOnlyMemory<byte> value)
+    {
+        var reader = new BerReader(value);
+        while (!reader.EndOfBuffer)
+        {
+            var field = reader.ReadTlv();
+            if (IsIdentifierTag(field.Tag))
+            {
+                var text = Encoding.ASCII.GetString(field.Value.Span);
+                if (!string.IsNullOrWhiteSpace(text)) yield return text;
+            }
+            else if ((field.Tag & 0x20) == 0x20 || field.Tag == 0x30)
+            {
+                foreach (var nested in ExtractIdentifierStrings(field.Value))
+                    yield return nested;
+            }
+        }
     }
 
     private static long DecodeUnsigned(ReadOnlySpan<byte> span)

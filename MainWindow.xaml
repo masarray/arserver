@@ -235,7 +235,7 @@
                                             </StackPanel>
                                         </Border>
                                         <Button Content="✎ Edit IED Wizard" Style="{StaticResource PrimaryButton}" Click="EditActiveRelay_Click" Margin="0,0,8,0" IsEnabled="{Binding IsProjectEditable}"/>
-                                        <Button Content="Report Plan" Style="{StaticResource SoftButton}" Click="OpenReportStudio_Click" Margin="0,0,8,0" IsEnabled="{Binding IsProjectEditable}"/>
+                                        <Button Content="Auto Plan" Style="{StaticResource SoftButton}" Click="OpenReportStudio_Click" Margin="0,0,8,0" IsEnabled="{Binding IsProjectEditable}"/>
                                         <Button Content="⇢ Open Modbus Server" Style="{StaticResource SoftButton}" Click="OpenModbusServer_Click"/>
                                     </WrapPanel>
                                 </Grid>
@@ -252,7 +252,19 @@
                                             <TextBlock Text="Live IEC 61850 Values" FontSize="15.5" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
                                             <TextBlock Text="Runtime view only. Use Edit IED Wizard to add/remove signals, filter MMS objects, and update Modbus binding." FontSize="12.2" Foreground="{StaticResource Muted}" Margin="0,2,0,0"/>
                                         </StackPanel>
-                                        <TextBlock Grid.Column="1" Text="Priority: position → protection → measurement" Foreground="{StaticResource Muted}" FontSize="12.2" VerticalAlignment="Center"/>
+                                        <Border Grid.Column="1" Width="360" MinHeight="38" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="16" Padding="12,0" VerticalAlignment="Center" ToolTip="Search visible IEC 61850 runtime values by LN, object reference, value, quality, type, or category.">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="🔍" FontSize="14" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                                <TextBlock Grid.Column="1" Text="Search IEC signal, LN, value, quality..." Foreground="{StaticResource Muted}" Opacity="0.72" FontSize="12.4" VerticalAlignment="Center" IsHitTestVisible="False" Visibility="{Binding DiscoverySearchPlaceholderVisibility}"/>
+                                                <TextBox Grid.Column="1" Text="{Binding DiscoverySearchText, UpdateSourceTrigger=PropertyChanged}" BorderThickness="0" Background="Transparent" Padding="0,5" MinHeight="30" FontSize="12.6" ToolTip="Search IEC object, LN, value, quality, type, category"/>
+                                                <Button Grid.Column="2" Content="×" Style="{StaticResource MiniChipButton}" Padding="6,2" MinHeight="24" Margin="8,0,0,0" Click="ClearDiscoveryFilter_Click" ToolTip="Clear search" Visibility="{Binding DiscoverySearchClearVisibility}"/>
+                                            </Grid>
+                                        </Border>
                                     </Grid>
                                     <DataGrid ItemsSource="{Binding SignalsView}" IsReadOnly="True" Style="{StaticResource ModernDataGrid}" ScrollViewer.HorizontalScrollBarVisibility="Auto" ToolTip="Select a row and press Ctrl+C to copy it for debugging.">
                                         <DataGrid.Columns>

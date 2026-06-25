@@ -10,6 +10,7 @@ public class SignalDefinition : ObservableObject
     private string _quality = "Unknown";
     private string _deviceTimestamp = "-";
     private string _probeStatus = "Not probed";
+    private string _reportCoverage = "Polling fallback";
     private DateTime _timestamp = DateTime.MinValue;
 
     private static readonly string[] KnownLogicalNodeClasses =
@@ -40,6 +41,15 @@ public class SignalDefinition : ObservableObject
     public string Confidence { get; set; } = "Medium";
     public string DataSetReference { get; set; } = "";
     public string ReportControlReference { get; set; } = "";
+    public string ReportCoverageReason { get; set; } = "Readable by MMS; report coverage not confirmed.";
+
+    // Compatibility alias used by the UI search filter.
+    // The canonical field is ReportCoverageReason; keeping this read-only alias prevents
+    // compile breaks when older/newer UI code searches by report-plan reason text.
+    public string ReportPlanReason => ReportCoverageReason;
+
+    public string QualityReference { get; set; } = "";
+    public string TimestampReference { get; set; } = "";
     public string Source { get; set; } = "Online";
 
     public bool IsReportCapable
@@ -54,21 +64,64 @@ public class SignalDefinition : ObservableObject
 
     public string LogicalNode => ExtractLogicalNode(ObjectReference);
     public string LogicalNodeClass => DetectLogicalNodeClass(LogicalNode);
+
+    // q/t, Health, Beh, Mod, RCB attributes, nameplate, and other engineering leaves are
+    // companion/diagnostic attributes. They must not become user-selected SCADA points.
     public bool IsRawAttribute => IsRawEngineeringAttribute(ObjectReference, DataType);
+
+    public bool IsValueSignal => IsRuntimeValueSignal(ObjectReference, FunctionalConstraint, DataType, Category);
+    public bool CanPublishAsSignal => IsValueSignal && !IsRawAttribute;
     public bool IsScadaCoreSignal => IsCoreScadaSignal(ObjectReference, LogicalNodeClass, DataType, Category);
     public int SortPriority => CalculateSortPriority(LogicalNodeClass, ObjectReference, Category, Confidence, IsScadaCoreSignal);
 
+    public string ReportCoverage
+    {
+        get => _reportCoverage;
+        set
+        {
+            if (Set(ref _reportCoverage, string.IsNullOrWhiteSpace(value) ? "Polling fallback" : value))
+                Raise(nameof(ReportPlan));
+        }
+    }
+
     public string ReportPlan => !IsSelected
         ? "Not selected"
-        : IsReportCapable
-            ? "RCB candidate + polling fallback"
-            : "MMS polling";
+        : !CanPublishAsSignal
+            ? "Hidden attribute"
+            : !string.IsNullOrWhiteSpace(ReportCoverage)
+                ? ReportCoverage
+                : IsReportCapable
+                    ? "Report candidate + polling fallback"
+                    : "MMS polling";
+
+    public string SignalPropertiesSummary => BuildSignalPropertiesSummary();
 
     public string Value { get => _value; set => Set(ref _value, value); }
     public string Quality { get => _quality; set => Set(ref _quality, value); }
     public string DeviceTimestamp { get => _deviceTimestamp; set => Set(ref _deviceTimestamp, string.IsNullOrWhiteSpace(value) ? "-" : value); }
     public string ProbeStatus { get => _probeStatus; set => Set(ref _probeStatus, string.IsNullOrWhiteSpace(value) ? "Not probed" : value); }
     public DateTime Timestamp { get => _timestamp; set => Set(ref _timestamp, value); }
+
+    private string BuildSignalPropertiesSummary()
+    {
+        var q = string.IsNullOrWhiteSpace(QualityReference) ? "auto sidecar / not confirmed" : QualityReference;
+        var t = string.IsNullOrWhiteSpace(TimestampReference) ? "auto sidecar / not confirmed" : TimestampReference;
+        var ds = string.IsNullOrWhiteSpace(DataSetReference) ? "not covered by confirmed DataSet" : DataSetReference;
+        var rcb = string.IsNullOrWhiteSpace(ReportControlReference) ? "none / polling fallback" : ReportControlReference;
+        var reason = string.IsNullOrWhiteSpace(ReportCoverageReason) ? ReportPlan : ReportCoverageReason;
+
+        return $"IEC Signal: {ObjectReference}\n" +
+               $"Functional Constraint: {FunctionalConstraint}\n" +
+               $"Data Type: {DataType}\n" +
+               $"Category: {Category}\n" +
+               $"Logical Node: {LogicalNode} ({LogicalNodeClass})\n" +
+               $"Quality Attribute: {q}\n" +
+               $"Timestamp Attribute: {t}\n" +
+               $"DataSet: {ds}\n" +
+               $"Report Control Block: {rcb}\n" +
+               $"Runtime Source: {ReportPlan}\n" +
+               $"Reason: {reason}";
+    }
 
     private static string ExtractLogicalNode(string reference)
     {
@@ -131,11 +184,11 @@ public class SignalDefinition : ObservableObject
 
     private static int AttributeNoisePenalty(string reference)
     {
-        var lower = reference.ToLowerInvariant();
+        var lower = NormalizeRef(reference);
         if (lower.EndsWith(".q")) return 40;
-        if (lower.EndsWith(".t")) return 50;
+        if (lower.EndsWith(".t") || lower.EndsWith(".tm")) return 50;
         if (lower.Contains(".ctl") || lower.Contains(".origin") || lower.Contains(".ctlmodel")) return 60;
-        if (lower.Contains(".mod.") || lower.EndsWith(".mod.stval") || lower.Contains(".beh.")) return 70;
+        if (lower.Contains(".mod.") || lower.EndsWith(".mod.stval") || lower.Contains(".beh.") || lower.Contains(".health") || lower.Contains(".eehealth")) return 90;
         return 0;
     }
 
@@ -144,6 +197,10 @@ public class SignalDefinition : ObservableObject
         var r = NormalizeRef(reference);
         var cls = logicalNodeClass.ToUpperInvariant();
 
+        if (IsRawEngineeringAttribute(reference, dataType))
+            return false;
+        if (!IsRuntimeValueLeaf(r, dataType))
+            return false;
         if (IsExcludedStatisticLogicalNode(reference))
             return false;
 
@@ -165,10 +222,29 @@ public class SignalDefinition : ObservableObject
         if (cls is "ATCC" or "AVC" or "AVCO")
             return IsAvrOperationalSignal(r, dataType, category);
 
-        if (cls == "GGIO" && (dataType is "Boolean" or "Enum" or "Int32" || string.Equals(category, "Status", StringComparison.OrdinalIgnoreCase)))
-            return true;
+        if (cls == "GGIO")
+            return IsGgioOperationalSignal(r, dataType, category);
 
         if (cls == "YPTR" && (r.Contains(".tappos.") || string.Equals(category, "Status", StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        return false;
+    }
+
+    private static bool IsGgioOperationalSignal(string normalizedReference, string dataType, string category)
+    {
+        var r = NormalizeRef(normalizedReference);
+
+        // Gateway IEDs often expose DI points as GGIO.Ind15.stVal and analogs as GGIO.AnIn1.mag.f.
+        // Keep those as real SCADA points, but never promote GGIO.Beh/Health/q/t as selectable signals.
+        if (Regex.IsMatch(r, @"\.ind\d+\.stval$", RegexOptions.IgnoreCase))
+            return dataType is "Boolean" or "Enum" or "Int32" or "Integer";
+
+        if (Regex.IsMatch(r, @"\.anin\d+\.(?:mag\.)?f$", RegexOptions.IgnoreCase) ||
+            Regex.IsMatch(r, @"\.anin\d+\.mag\.f$", RegexOptions.IgnoreCase))
+            return dataType is "Float32" or "Float" or "Double";
+
+        if (dataType is "Boolean" && r.EndsWith(".stval") && string.Equals(category, "Status", StringComparison.OrdinalIgnoreCase))
             return true;
 
         return false;
@@ -177,8 +253,7 @@ public class SignalDefinition : ObservableObject
     private static bool IsAvrOperationalSignal(string normalizedReference, string dataType, string category)
     {
         var r = NormalizeRef(normalizedReference);
-        if (r.EndsWith(".q") ||
-            r.EndsWith(".t") ||
+        if (IsRawEngineeringAttribute(r, dataType) ||
             r.EndsWith(".ctlmodel") ||
             r.EndsWith(".persistent") ||
             r.EndsWith(".d") ||
@@ -206,13 +281,44 @@ public class SignalDefinition : ObservableObject
                    r.Contains(".auto.") ||
                    r.Contains(".ldc.") ||
                    r.Contains(".errpar.") ||
-                   r.Contains(".opcntrs.") ||
-                   r.EndsWith(".mod.stval") ||
-                   r.EndsWith(".beh.stval") ||
-                   r.EndsWith(".health.stval");
+                   r.Contains(".opcntrs.");
         }
 
         return false;
+    }
+
+    private static bool IsRuntimeValueSignal(string reference, string functionalConstraint, string dataType, string category)
+    {
+        var fc = (functionalConstraint ?? string.Empty).Trim().ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(fc) && fc is not ("ST" or "MX"))
+            return false;
+
+        var r = NormalizeRef(reference);
+        if (IsRawEngineeringAttribute(r, dataType))
+            return false;
+
+        return IsRuntimeValueLeaf(r, dataType) ||
+               (string.Equals(category, "Position", StringComparison.OrdinalIgnoreCase) && r.EndsWith(".stval")) ||
+               (string.Equals(category, "Protection", StringComparison.OrdinalIgnoreCase) && r.EndsWith(".general"));
+    }
+
+    private static bool IsRuntimeValueLeaf(string normalizedReference, string dataType)
+    {
+        var r = NormalizeRef(normalizedReference);
+        if (string.Equals(dataType, "Quality", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(dataType, "Timestamp", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(dataType, "Directory", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return r.EndsWith(".stval") ||
+               r.EndsWith(".general") ||
+               r.EndsWith(".posval") ||
+               r.EndsWith(".actval") ||
+               r.EndsWith(".setval") ||
+               r.EndsWith(".mag.f") ||
+               r.EndsWith(".ang.f") ||
+               r.EndsWith(".f") ||
+               r.EndsWith(".i");
     }
 
     private static bool IsRawEngineeringAttribute(string reference, string dataType)
@@ -224,17 +330,30 @@ public class SignalDefinition : ObservableObject
         return IsStatisticsOrHarmonicNoise(r) ||
                r.EndsWith(".q") ||
                r.EndsWith(".t") ||
+               r.EndsWith(".tm") ||
+               r.Contains(".rp.") ||
+               r.Contains(".br.") ||
                r.Contains(".ctl") ||
                r.Contains(".origin") ||
                r.Contains(".ctlmodel") ||
                r.Contains(".db") ||
-               r.Contains(".d") ||
+               r.EndsWith(".d") ||
                r.Contains(".du") ||
                r.Contains(".configrev") ||
                r.Contains(".numpts") ||
                r.Contains(".olddata") ||
                r.Contains(".mod.") ||
-               r.Contains(".beh.");
+               r.EndsWith(".mod.stval") ||
+               r.Contains(".beh.") ||
+               r.EndsWith(".beh.stval") ||
+               r.Contains(".health.") ||
+               r.EndsWith(".health.stval") ||
+               r.Contains(".eehealth.") ||
+               r.EndsWith(".eehealth.stval") ||
+               r.Contains(".namplt.") ||
+               r.Contains(".vendor") ||
+               r.Contains(".swrev") ||
+               r.Contains(".configrev");
     }
 
 

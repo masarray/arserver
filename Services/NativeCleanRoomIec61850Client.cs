@@ -67,10 +67,11 @@ public sealed class NativeCleanRoomIec61850Client : IIec61850Client
         try
         {
             var domainVariables = await _session.DiscoverDomainVariableNamesAsync(cancellationToken).ConfigureAwait(false);
+            var typeTreeVariables = await _session.DiscoverDomainVariableTypeTreeNamesAsync(domainVariables, cancellationToken).ConfigureAwait(false);
             var domainVariableLists = await _session.DiscoverDomainVariableListNamesAsync(cancellationToken).ConfigureAwait(false);
             var snapshot = new NativeMmsDiscoverySnapshot
             {
-                DomainVariables = domainVariables,
+                DomainVariables = MergeDomainNameMaps(domainVariables, typeTreeVariables),
                 DomainVariableLists = domainVariableLists
             };
 
@@ -84,6 +85,36 @@ public sealed class NativeCleanRoomIec61850Client : IIec61850Client
             LastErrorMessage = $"Native MMS online discovery failed: {ex.GetType().Name}: {ex.Message}. Last discovery: {_session.LastDiscoveryAttemptSummary}. Last request: {_session.LastDiscoveryRequestHex}";
             return Array.Empty<SignalDefinition>();
         }
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> MergeDomainNameMaps(
+        IReadOnlyDictionary<string, IReadOnlyList<string>> first,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> second)
+    {
+        var merged = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(IReadOnlyDictionary<string, IReadOnlyList<string>> source)
+        {
+            foreach (var pair in source)
+            {
+                var domain = (pair.Key ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(domain)) continue;
+                if (!merged.TryGetValue(domain, out var set))
+                {
+                    set = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                    merged[domain] = set;
+                }
+                foreach (var name in pair.Value)
+                {
+                    var text = (name ?? string.Empty).Trim();
+                    if (!string.IsNullOrWhiteSpace(text)) set.Add(text);
+                }
+            }
+        }
+
+        Add(first);
+        Add(second);
+        return merged.ToDictionary(k => k.Key, v => (IReadOnlyList<string>)v.Value.ToList(), StringComparer.OrdinalIgnoreCase);
     }
 
     public Task<object?> ReadValueAsync(string objectReference, CancellationToken cancellationToken)

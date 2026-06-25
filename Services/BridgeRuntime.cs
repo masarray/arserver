@@ -124,7 +124,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
         var fastCandidateCount = _fastAcquisitionEnabled ? _bindings.Count(IsFastAcquisitionCandidate) : 0;
         Log("INFO", "Runtime", $"Runtime started. Active bindings: {_bindings.Count}. Scheduler: target fastest MMS poll {fastestPollMs} ms, fast CB lane {(_fastAcquisitionEnabled ? "ON" : "OFF")} ({fastCandidateCount} candidate point(s)), UI grid uses buffered snapshots.");
         if (_reportPlans.Count > 0)
-            Log("INFO", "Reports", $"Report-aware runtime planner active: {_reportPlans.Count} RCB/DataSet plan(s), {_reportPlans.Sum(p => p.BindingCount)} mapped tag(s), active monitors={_activeReportPlanByPlanId.Count}. Polling remains fallback for tags outside an active report monitor.");
+            Log("INFO", "Reports", $"Report-aware runtime planner active: {_reportPlans.Count} RCB/DataSet plan(s), {_reportPlans.Sum(p => p.BindingCount)} mapped tag(s), active monitors={_activeReportPlanByPlanId.Count}. Multi-RCB per IED is allowed; polling remains fallback for all mapped tags.");
         if (fastestPollMs <= 50)
             Log("WARN", "Runtime", "Fast MMS polling mode is enabled. Effective speed still depends on relay response time, network latency, number of active tags, and MMS server limits; use reports/RCB for critical event capture when available.");
         if (_fastAcquisitionEnabled)
@@ -310,7 +310,6 @@ public sealed class BridgeRuntime : IAsyncDisposable
         if (_reportPlans.Count == 0)
             return;
 
-        var activeRelays = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var plan in _reportPlans
                      .OrderByDescending(p => p.Buffered)
                      .ThenByDescending(p => p.FastStatusCount)
@@ -318,11 +317,6 @@ public sealed class BridgeRuntime : IAsyncDisposable
         {
             token.ThrowIfCancellationRequested();
             var relayKey = NormalizeRelayKey(plan.RelayId);
-            if (!activeRelays.Add(relayKey))
-            {
-                plan.Status = "Polling fallback / another RCB monitor active for relay";
-                continue;
-            }
 
             if (!_relayClients.TryGetValue(relayKey, out var client) && !relayKey.Equals("__single__", StringComparison.OrdinalIgnoreCase))
                 _relayClients.TryGetValue("__single__", out client);
@@ -409,7 +403,44 @@ public sealed class BridgeRuntime : IAsyncDisposable
             var old = binding.CurrentValue;
             var oldQuality = binding.Quality;
             var oldStatus = binding.Status;
-            var display = string.IsNullOrWhiteSpace(update.Value) ? "-" : update.Value;
+            var display = string.IsNullOrWhiteSpace(update.Value) ? "-" : update.Value.Trim();
+
+            if (LooksLikeMmsReferenceEcho(display, update.Reference, binding.IecReference))
+            {
+                // Some IEDs/report decoders can emit the MMS variable-access name
+                // (for example GD7700LD01/GGIO1$ST$Ind7$stVal) as the report value.
+                // That string is a data reference, not the process value. Do not publish it to
+                // the runtime grid, Modbus, or MQTT. Keep the previous good value and let the
+                // normal MMS polling fallback refresh the actual stVal/mag.f value.
+                var hadUsableValue = HasLiveCachedValue(binding) &&
+                                     !LooksLikeMmsReferenceEcho(binding.CurrentValue, update.Reference, binding.IecReference);
+
+                if (!hadUsableValue)
+                {
+                    binding.CurrentValue = "Pending read";
+                    binding.Sequence++;
+                }
+
+                binding.Quality = IsUseful(update.Quality) ? update.Quality : binding.Quality;
+                if (IsUseful(update.Timestamp))
+                    binding.DeviceTimestamp = update.Timestamp;
+                binding.Status = "RCB report reference-only / polling value";
+                binding.LastUpdate = update.UpdatedAt == default ? DateTime.Now : update.UpdatedAt.LocalDateTime;
+                binding.AgeMs = 0;
+
+                if (!string.Equals(old, binding.CurrentValue, StringComparison.Ordinal) ||
+                    !string.Equals(oldQuality, binding.Quality, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(oldStatus, binding.Status, StringComparison.OrdinalIgnoreCase))
+                {
+                    BindingUpdated?.Invoke(binding);
+                }
+
+                if (ShouldLogReferenceEchoWarning(binding, update))
+                    Log("WARN", "IEC61850 Report", $"{binding.IedName}: ignored reference-only report payload for {binding.SignalName}. Reference={update.Reference}, payload={display}. Polling fallback will supply the real value.");
+
+                continue;
+            }
+
             var changed = !string.Equals(old, display, StringComparison.Ordinal);
 
             binding.CurrentValue = display;
@@ -458,6 +489,50 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
     private static bool IsUseful(string value)
         => !string.IsNullOrWhiteSpace(value) && value != "-";
+
+    private bool ShouldLogReferenceEchoWarning(BindingItem binding, NativeReportValueUpdate update)
+    {
+        var key = $"refecho|{GetBindingPollKey(binding)}|{NormalizeIecReference(update.Reference)}";
+        var now = DateTime.UtcNow;
+        if (_lastPerTagReadWarning.TryGetValue(key, out var last) && (now - last).TotalSeconds < 20)
+            return false;
+        _lastPerTagReadWarning[key] = now;
+        return true;
+    }
+
+    private static bool LooksLikeMmsReferenceEcho(string? value, string? updateReference, string? bindingReference)
+    {
+        var text = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text) || text == "-" || text.Equals("Pending read", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // A real Boolean/Enum/numeric value must never be treated as a reference.
+        if (text.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+            double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+            return false;
+
+        var normalizedValue = NormalizeIecReference(text);
+        var normalizedUpdate = NormalizeIecReference(updateReference);
+        var normalizedBinding = NormalizeIecReference(bindingReference);
+
+        if (!string.IsNullOrWhiteSpace(normalizedBinding) && normalizedValue.Equals(normalizedBinding, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(normalizedUpdate) && normalizedValue.Equals(normalizedUpdate, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // MMS variable access names commonly appear as Domain/LN$FC$DO$DA.  They are object names,
+        // not values.  Filter only when the payload clearly looks like an IEC 61850 path.
+        var hasIecDomain = text.Contains('/') && (text.Contains("$ST$", StringComparison.OrdinalIgnoreCase) || text.Contains("$MX$", StringComparison.OrdinalIgnoreCase));
+        if (hasIecDomain)
+            return true;
+
+        if (text.Contains('/') && text.Contains('$') &&
+            (normalizedValue.Contains(".st.") || normalizedValue.Contains(".mx.")))
+            return true;
+
+        return false;
+    }
 
     private static string NormalizeRelayKey(string relayId)
         => string.IsNullOrWhiteSpace(relayId) ? "__single__" : relayId.Trim();
@@ -570,6 +645,30 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
                     if (value == null)
                     {
+                        if (HasReportPlannerLane(binding))
+                        {
+                            // Static reporting context: a signal can be report-covered or report-candidate
+                            // while its direct MMS leaf read is not available on this cycle.  Do not erase
+                            // a good report value with Bad; keep the cached value and let the report lane
+                            // or the next polling cycle update it.
+                            if (HasLiveCachedValue(binding))
+                            {
+                                binding.Status = "Report lane active / polling fallback pending";
+                                binding.AgeMs = binding.LastUpdate == DateTime.MinValue ? 0 : (int)Math.Max(0, (DateTime.Now - binding.LastUpdate).TotalMilliseconds);
+                                BindingUpdated?.Invoke(binding);
+                                continue;
+                            }
+
+                            binding.CurrentValue = "-";
+                            binding.Quality = "Pending";
+                            binding.DeviceTimestamp = "-";
+                            binding.Status = "Awaiting report or polling value";
+                            binding.LastUpdate = DateTime.Now;
+                            binding.AgeMs = 0;
+                            BindingUpdated?.Invoke(binding);
+                            continue;
+                        }
+
                         binding.CurrentValue = "-";
                         binding.Quality = "Bad";
                         binding.DeviceTimestamp = "-";
@@ -887,6 +986,23 @@ public sealed class BridgeRuntime : IAsyncDisposable
                search.Contains("start") ||
                search.Contains("status") ||
                search.Contains("position");
+    }
+
+    private bool HasReportPlannerLane(BindingItem binding)
+    {
+        if (_reportPlanByBindingKey.ContainsKey(GetBindingPollKey(binding))) return true;
+        return !string.IsNullOrWhiteSpace(binding.ReportControlReference) ||
+               !string.IsNullOrWhiteSpace(binding.DataSetReference) ||
+               (binding.ReadMode ?? string.Empty).Contains("report", StringComparison.OrdinalIgnoreCase) ||
+               (binding.RcbMode ?? string.Empty).Contains("report", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasLiveCachedValue(BindingItem binding)
+    {
+        return binding.LastUpdate != DateTime.MinValue &&
+               !string.IsNullOrWhiteSpace(binding.CurrentValue) &&
+               !binding.CurrentValue.Equals("-", StringComparison.OrdinalIgnoreCase) &&
+               !binding.Quality.Equals("Bad", StringComparison.OrdinalIgnoreCase);
     }
 
     private bool IsDueForPoll(BindingItem binding, DateTime nowUtc)

@@ -28,7 +28,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private RelayEndpointView? _selectedRelay;
     private NativeReportControlCandidate? _selectedReportControl;
     private NativeDataSetCandidate? _selectedDataSet;
-    private string _reportStudioStatusText = "Report planning is inside Edit IED Wizard. Select an IED, then choose Report Plan from the Explorer.";
+    private string _reportStudioStatusText = "Auto report planning is inside Edit IED Wizard. Select an IED, then review Auto Report Plan from the Explorer.";
     private string _projectName = "ArServer Project";
     private string _relayIpAddress = "192.168.1.10";
     private int _mmsPort = 102;
@@ -225,9 +225,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 SignalsView.Refresh();
                 Raise(nameof(VisibleSignalCountText));
+                Raise(nameof(DiscoverySearchPlaceholderVisibility));
+                Raise(nameof(DiscoverySearchClearVisibility));
             }
         }
     }
+
+    public Visibility DiscoverySearchPlaceholderVisibility => string.IsNullOrWhiteSpace(DiscoverySearchText) ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility DiscoverySearchClearVisibility => string.IsNullOrWhiteSpace(DiscoverySearchText) ? Visibility.Collapsed : Visibility.Visible;
 
     public bool ShowRawEngineeringAttributes
     {
@@ -243,8 +248,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     public string VisibleSignalCountText => ShowRawEngineeringAttributes
-        ? $"Showing {SignalsView.Cast<object>().Count()} of {Signals.Count} discovered MMS attributes"
-        : $"Showing {SignalsView.Cast<object>().Count()} smart SCADA signals of {Signals.Count} discovered attributes";
+        ? $"Showing {SignalsView.Cast<object>().Count()} of {Signals.Count} discovered MMS leaves/attributes"
+        : $"Showing {SignalsView.Cast<object>().Count()} smart SCADA signals ({Signals.Count(s => s.IsRawAttribute || !s.CanPublishAsSignal)} raw attributes hidden)";
     public string ModbusEndpointText => EnableModbusTcp ? $"{ModbusBindAddress}:{ModbusPort} / UID {ModbusUnitId}" : "Modbus disabled";
     public string MqttEndpointText => MqttSettings.IsEnabled ? $"{MqttSettings.BrokerHost}:{MqttSettings.BrokerPort} / {MqttSettings.TopicRoot}" : "MQTT disabled";
     public string MmsPollingText => $"MMS {BridgeRuntime.NormalizeMmsPollingIntervalMs(MmsPollingIntervalMs)} ms";
@@ -599,7 +604,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void SelectRecommended_Click(object sender, RoutedEventArgs e)
     {
         foreach (var signal in Signals)
-            signal.IsSelected = signal.IsScadaCoreSignal;
+            signal.IsSelected = signal.IsScadaCoreSignal && signal.CanPublishAsSignal;
         SignalsView.Refresh();
         Raise(nameof(VisibleSignalCountText));
         AddLog("INFO", "Discovery", "Selected smart SCADA-core signals only: protection operate/trip, CSWI/XCBR/XSWI Pos, AVR/ATCC/GGIO operational points, and MMXU/MMXN cVal current/voltage. Statistic/harmonic/mean/min/max signals are intentionally excluded.");
@@ -624,25 +629,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (obj is not SignalDefinition signal) return false;
 
+        var visibleByMode = ShowRawEngineeringAttributes
+            ? signal.IsSelected || signal.IsScadaCoreSignal || signal.CanPublishAsSignal
+            : signal.IsSelected && signal.CanPublishAsSignal;
+        if (!visibleByMode) return false;
+
         var text = DiscoverySearchText?.Trim();
         if (!string.IsNullOrWhiteSpace(text))
         {
-            // Search is intentional operator action. Do not hide valid non-core points just
-            // because they are outside the default smart SCADA shortlist. This prevents
-            // a connected IED from looking "empty" when the first smart filter is too strict.
             var tokens = text.Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             if (tokens.Length == 0) return true;
 
-            var haystack = $"{signal.Name} {signal.LogicalNode} {signal.LogicalNodeClass} {signal.Category} {signal.DataType} {signal.FunctionalConstraint} {signal.ObjectReference}";
+            var haystack = $"{signal.Name} {signal.LogicalNode} {signal.LogicalNodeClass} {signal.Category} {signal.DataType} {signal.FunctionalConstraint} {signal.ObjectReference} {signal.Value} {signal.Quality} {signal.DeviceTimestamp} {signal.ReportPlan} {signal.ReportPlanReason}";
             return tokens.All(t => haystack.Contains(t, StringComparison.OrdinalIgnoreCase));
         }
 
-        // Explorer is runtime viewing, not configuration. Show only saved/selected signals here.
-        // Raw browsing and add/remove selection lives inside the IED Configuration Wizard.
-        if (!ShowRawEngineeringAttributes)
-            return signal.IsSelected;
-
-        return signal.IsSelected || signal.IsScadaCoreSignal;
+        return true;
     }
 
 
@@ -670,7 +672,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         var relay = SelectedRelay;
-        var selected = Signals.Where(s => s.IsSelected).ToList();
+        var selected = Signals.Where(s => s.IsSelected && s.CanPublishAsSignal).ToList();
         if (selected.Count == 0)
         {
             MessageBox.Show("Belum ada signal dipilih. Buka Edit IED Wizard lalu pilih signal IEC 61850 yang akan dipublish ke Modbus.", "No signal selected", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -721,7 +723,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var selected = Signals.Where(s => s.IsSelected).ToList();
+        var selected = Signals.Where(s => s.IsSelected && s.CanPublishAsSignal).ToList();
         if (selected.Count == 0)
         {
             AddLog("WARN", "Binding", "No selected IEC 61850 signal to add. Select signals in the IED Wizard first.");
@@ -1312,7 +1314,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (relay != null)
                 SyncLiveWorkspaceToRelay(relay);
             SignalsView.Refresh();
-            AddLog("INFO", "Wizard", $"IED configuration saved. Selected signals: {Signals.Count(s => s.IsSelected)}. Published Modbus bindings: {PublishedModbusBindings.Count}.");
+            AddLog("INFO", "Wizard", $"IED configuration saved. Selected signals: {Signals.Count(s => s.IsSelected && s.CanPublishAsSignal)}. Published Modbus bindings: {PublishedModbusBindings.Count}.");
         }
         else
         {
@@ -1329,7 +1331,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         var candidates = Signals
-            .Where(s => s.IsSelected && s.DataType != "Directory")
+            .Where(s => s.IsSelected && s.CanPublishAsSignal && s.DataType != "Directory")
             .OrderBy(s => s.SortPriority)
             .ThenBy(s => s.LogicalNode)
             .ThenBy(s => s.Name)
@@ -1521,11 +1523,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (SelectedRelay == null)
         {
-            AddLog("WARN", "Reports", "No IED selected. Add or select an IED before editing the report plan.");
+            AddLog("WARN", "Reports", "No IED selected. Add or select an IED before reviewing the auto report plan.");
             return;
         }
 
-        OpenConfigurationWizardInternal($"report plan for {SelectedRelay.DisplayName}", initialStep: 2);
+        OpenConfigurationWizardInternal($"auto report plan for {SelectedRelay.DisplayName}", initialStep: 2);
     }
 
     private async void ProbeSelectedReportControl_Click(object sender, RoutedEventArgs e)
@@ -1587,7 +1589,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         relay.RcbMode = "Report selected / polling fallback";
         relay.ReportRuntimeMode = "Report preferred + polling fallback (planned)";
         relay.RefreshComputed();
-        ReportStudioStatusText = $"Selected {rcb.Reference} as report plan. Runtime still uses MMS polling until explicit report activation is implemented.";
+        ReportStudioStatusText = $"Selected {rcb.Reference} as report plan. Runtime will start report monitor(s) and keep MMS polling fallback.";
         AddLog("INFO", "Reports", ReportStudioStatusText);
         Raise(nameof(SelectedReportControlSummary));
     }
@@ -1878,7 +1880,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Raise(nameof(SignalCount));
         Raise(nameof(VisibleSignalCountText));
         Raise(nameof(BindingCount));
-        AddLog("INFO", "Wizard", $"{relay.DisplayName} committed to runtime. Selected IEC signals: {relay.Signals.Count(s => s.IsSelected)}. Published Modbus map: {PublishedModbusBindings.Count} binding(s) from all saved IEDs.");
+        AddLog("INFO", "Wizard", $"{relay.DisplayName} committed to runtime. Selected IEC signals: {relay.Signals.Count(s => s.IsSelected && s.CanPublishAsSignal)}. Published Modbus map: {PublishedModbusBindings.Count} binding(s) from all saved IEDs.");
         return true;
     }
 
@@ -1896,6 +1898,33 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ApplyWizardReportPlanToRelay(RelayEndpointView relay, IedConfigurationWizardWindow wizard)
     {
+        var mappedReports = relay.ModbusBindings
+            .Select(b => b.ReportControlReference)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (mappedReports.Count > 1)
+        {
+            relay.SelectedReportControlReference = mappedReports[0];
+            relay.RcbName = $"{mappedReports.Count} RCB plans";
+            relay.RcbMode = "Multiple RCB/DataSet plans / polling fallback";
+            relay.ReportRuntimeMode = "Multiple report monitors + MMS polling fallback";
+            relay.RefreshComputed();
+            return;
+        }
+
+        if (mappedReports.Count == 1)
+        {
+            relay.SelectedReportControlReference = mappedReports[0];
+            var selected = relay.ReportControls.FirstOrDefault(r => string.Equals(r.Reference, mappedReports[0], StringComparison.OrdinalIgnoreCase));
+            relay.RcbName = selected?.Name ?? (string.IsNullOrWhiteSpace(wizard.SelectedReportControlName) ? "Report Plan" : wizard.SelectedReportControlName);
+            relay.RcbMode = "Report planned / MMS polling fallback";
+            relay.ReportRuntimeMode = wizard.ReportRuntimeMode;
+            relay.RefreshComputed();
+            return;
+        }
+
         relay.SelectedReportControlReference = wizard.SelectedReportControlReference;
         if (string.IsNullOrWhiteSpace(wizard.SelectedReportControlReference))
         {
@@ -2064,14 +2093,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         // DataSetDirectory service lands, show selected runtime signals as coverage hints. SCL imports
         // already mark signal DataSetReference when the engineering file contained FCDA members.
         var directMembers = SelectedRelay.Signals
-            .Where(s => !string.IsNullOrWhiteSpace(s.DataSetReference) && ReferencesMatch(s.DataSetReference, selectedDataSet.Reference))
+            .Where(s => s.CanPublishAsSignal && !string.IsNullOrWhiteSpace(s.DataSetReference) && ReferencesMatch(s.DataSetReference, selectedDataSet.Reference))
             .OrderBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         if (directMembers.Count == 0)
         {
             directMembers = SelectedRelay.Signals
-                .Where(s => s.IsSelected)
+                .Where(s => s.IsSelected && s.CanPublishAsSignal)
                 .OrderBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
                 .Take(80)
                 .ToList();
@@ -2614,6 +2643,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 Confidence = s.Confidence,
                 DataSetReference = s.DataSetReference,
                 ReportControlReference = s.ReportControlReference,
+                ReportCoverage = s.ReportCoverage,
+                ReportCoverageReason = s.ReportCoverageReason,
+                QualityReference = s.QualityReference,
+                TimestampReference = s.TimestampReference,
                 Source = s.Source,
                 Value = s.Value,
                 Quality = s.Quality,
@@ -2707,10 +2740,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             relay.ModbusBindings.Add(binding);
         }
 
-        relay.TagCount = relay.Signals.Count(s => s.IsSelected);
-        if (relay.ReportControls.Count > 0)
+        relay.TagCount = relay.Signals.Count(s => s.IsSelected && s.CanPublishAsSignal);
+        var mappedReports = relay.ModbusBindings
+            .Select(b => b.ReportControlReference)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (mappedReports.Count > 1)
         {
-            var selected = relay.ReportControls.FirstOrDefault(r => string.Equals(r.Reference, relay.SelectedReportControlReference, StringComparison.OrdinalIgnoreCase))
+            relay.SelectedReportControlReference = mappedReports[0];
+            relay.RcbName = $"{mappedReports.Count} RCB plans";
+            relay.RcbMode = "Multiple RCB/DataSet plans / MMS polling fallback";
+        }
+        else if (relay.ReportControls.Count > 0)
+        {
+            var selected = relay.ReportControls.FirstOrDefault(r => string.Equals(r.Reference, mappedReports.FirstOrDefault() ?? relay.SelectedReportControlReference, StringComparison.OrdinalIgnoreCase))
                 ?? relay.ReportControls.FirstOrDefault();
             relay.RcbName = selected == null ? "Report Plan" : selected.Name;
             relay.RcbMode = "Report plan ready / MMS polling fallback";

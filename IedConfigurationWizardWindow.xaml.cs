@@ -5,6 +5,8 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Input;
+using System.Windows.Media;
 using Ari61850Bridge.Models;
 using Ari61850Bridge.Services;
 
@@ -26,7 +28,10 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
     private bool _isProbing;
     private NativeReportControlCandidate? _selectedReportControl;
     private NativeDataSetCandidate? _selectedDataSet;
-    private string _reportPlanStatus = "Report plan is optional. Choose a DataSet/RCB here once; runtime views stay lightweight.";
+    private SignalDefinition? _selectedSignal;
+    private bool _manualReportPlanOverride;
+    private int _lastClickedSignalIndex = -1;
+    private string _reportPlanStatus = "Auto report planner is ready. Select SCADA signals; ARServer will map RCB/DataSet lanes automatically.";
 
     public ObservableCollection<SignalDefinition> Signals { get; }
     public ObservableCollection<BindingItem> Bindings { get; }
@@ -34,6 +39,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
     public ObservableCollection<NativeDataSetCandidate> DataSets { get; } = new();
     public ObservableCollection<ReportDataSetMemberView> DataSetMembers { get; } = new();
     public ICollectionView SignalsView { get; }
+    public ICollectionView AutoPlanSignalsView { get; }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -65,23 +71,23 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
     {
         0 => "Step 1 — Select IEC 61850 SCADA Signals",
         1 => "Step 2 — Build Modbus TCP Binding",
-        2 => "Step 3 — Choose Report Plan",
+        2 => "Step 3 — Auto Report Plan Review",
         _ => "Step 4 — Add IED Configuration to Runtime"
     };
 
     public string StepSubtitle => StepIndex switch
     {
-        0 => "Recommended tags are checked by default. Harmonic/statistical MMXU and duplicate instCVal are kept out of default publishing.",
+        0 => "Select SCADA signals only. q/t, Health, Beh and engineering attributes stay out of selection and are shown as Quality/Timestamp columns.",
         1 => "Review or edit the Modbus address map. Position uses Input Register, protection uses Discrete Input, measurement uses Holding Register Float32.",
-        2 => "Select the DataSet/RCB once during engineering. Runtime will use the saved plan; no RCB write is done in this phase.",
+        2 => "No manual RCB/DataSet choice is required. Review the read-only auto transport plan per selected signal.",
         _ => "Validate once more, then save. Explorer and Modbus Server will show only the saved runtime view."
     };
 
     public string PrimaryActionText => StepIndex switch
     {
         0 => "Save Selection → Binding",
-        1 => "Save Binding → Report Plan",
-        2 => "Save Report Plan → Review",
+        1 => "Save Binding → Auto Plan",
+        2 => "Review Auto Plan → Finish",
         _ => "Add to Runtime"
     };
 
@@ -97,6 +103,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
             RebuildSelectedDataSetMembers();
             Raise(nameof(SelectedReportControlSummary));
             Raise(nameof(SelectedDataSetSummary));
+            Raise(nameof(ReportPlanStatus));
         }
     }
 
@@ -110,6 +117,18 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
             Raise(nameof(SelectedDataSet));
             RebuildSelectedDataSetMembers();
             Raise(nameof(SelectedDataSetSummary));
+            Raise(nameof(ReportPlanStatus));
+        }
+    }
+
+    public SignalDefinition? SelectedSignal
+    {
+        get => _selectedSignal;
+        set
+        {
+            if (ReferenceEquals(_selectedSignal, value)) return;
+            _selectedSignal = value;
+            Raise(nameof(SelectedSignal));
         }
     }
 
@@ -124,12 +143,12 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         }
     }
 
-    public string SelectedReportControlReference => SelectedReportControl?.Reference ?? string.Empty;
-    public string SelectedReportControlName => SelectedReportControl?.Name ?? string.Empty;
-    public string SelectedDataSetReference => SelectedDataSet?.Reference ?? SelectedReportControl?.DataSetReference ?? string.Empty;
-    public string ReportRuntimeMode => string.IsNullOrWhiteSpace(SelectedReportControlReference) ? "MMS polling only" : "Report preferred + polling fallback (planned)";
+    public string SelectedReportControlReference => _manualReportPlanOverride ? SelectedReportControl?.Reference ?? string.Empty : string.Empty;
+    public string SelectedReportControlName => _manualReportPlanOverride ? SelectedReportControl?.Name ?? string.Empty : string.Empty;
+    public string SelectedDataSetReference => _manualReportPlanOverride ? SelectedDataSet?.Reference ?? SelectedReportControl?.DataSetReference ?? string.Empty : string.Empty;
+    public string ReportRuntimeMode => "Auto report planner + MMS polling fallback";
     public string SelectedReportControlSummary => SelectedReportControl == null
-        ? "No RCB selected. Runtime will use MMS polling only."
+        ? "No RCB selected manually. Auto planner will use per-signal RCB hints and polling fallback."
         : $"{SelectedReportControl.Mode} • {SelectedReportControl.Reference} • DS: {(string.IsNullOrWhiteSpace(SelectedReportControl.DataSetReference) ? "not confirmed" : SelectedReportControl.DataSetReference)}";
     public string SelectedDataSetSummary => SelectedDataSet == null
         ? "No DataSet selected."
@@ -155,8 +174,13 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
             _searchText = value;
             SignalsView.Refresh();
             Raise(nameof(VisibleSignalCountText));
+            Raise(nameof(SearchPlaceholderVisibility));
+            Raise(nameof(SearchClearVisibility));
         }
     }
+
+    public Visibility SearchPlaceholderVisibility => string.IsNullOrWhiteSpace(SearchText) ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility SearchClearVisibility => string.IsNullOrWhiteSpace(SearchText) ? Visibility.Collapsed : Visibility.Visible;
 
     public bool ShowRaw
     {
@@ -203,12 +227,12 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         }
     }
 
-    public int SelectedSignalCount => Signals.Count(s => s.IsSelected);
+    public int SelectedSignalCount => Signals.Count(s => s.IsSelected && s.CanPublishAsSignal);
     public int BindingCount => Bindings.Count;
 
     public string VisibleSignalCountText => ShowRaw
-        ? $"Showing {SignalsView.Cast<object>().Count()} of {Signals.Count} MMS attributes"
-        : $"Showing {SignalsView.Cast<object>().Count()} smart SCADA signals of {Signals.Count}";
+        ? $"Showing {SignalsView.Cast<object>().Count()} of {Signals.Count} MMS leaves/attributes"
+        : $"Showing {SignalsView.Cast<object>().Count()} smart SCADA signals ({Signals.Count(s => s.IsRawAttribute || !s.CanPublishAsSignal)} raw attributes hidden)";
 
     public IedConfigurationWizardWindow(ObservableCollection<SignalDefinition> signals, ObservableCollection<BindingItem> bindings, IIec61850Client? probeClient = null, NativeReportInventory? reportInventory = null, string selectedReportControlReference = "")
     {
@@ -224,17 +248,28 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         SignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.LogicalNode), ListSortDirection.Ascending));
         SignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.Name), ListSortDirection.Ascending));
 
+        var autoPlanSource = new CollectionViewSource { Source = Signals };
+        AutoPlanSignalsView = autoPlanSource.View;
+        AutoPlanSignalsView.Filter = item => item is SignalDefinition signal && signal.IsSelected && signal.CanPublishAsSignal;
+        AutoPlanSignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.ReportPlan), ListSortDirection.Ascending));
+        AutoPlanSignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.LogicalNode), ListSortDirection.Ascending));
+        AutoPlanSignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.ObjectReference), ListSortDirection.Ascending));
+
         LoadReportInventory(reportInventory, selectedReportControlReference);
 
         foreach (var signal in Signals)
+        {
+            if (!signal.CanPublishAsSignal)
+                signal.IsSelected = false;
             signal.PropertyChanged += Signal_PropertyChanged;
+        }
 
         DataContext = this;
         InitializeComponent();
 
-        if (!Signals.Any(s => s.IsSelected))
+        if (!Signals.Any(s => s.IsSelected && s.CanPublishAsSignal))
             SelectRecommendedSignals();
-        if (Bindings.Count == 0 && Signals.Any(s => s.IsSelected))
+        if (Bindings.Count == 0 && Signals.Any(s => s.IsSelected && s.CanPublishAsSignal))
             RebuildBindingFromSelection();
 
         RefreshCounts();
@@ -244,21 +279,30 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
     private void Signal_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(SignalDefinition.IsSelected))
+        {
+            AutoPlanSignalsView.Refresh();
             RefreshCounts();
+        }
     }
 
     private bool FilterSignal(object obj)
     {
         if (obj is not SignalDefinition signal) return false;
+
+        // Normal wizard mode is signal-centric: value leaves only. Quality/timestamp/health/behaviour
+        // remain available in Advanced raw for diagnostics, but they are not selectable runtime signals.
+        var visibleByMode = ShowRaw || signal.IsScadaCoreSignal || (signal.IsSelected && signal.CanPublishAsSignal);
+        if (!visibleByMode) return false;
+
         var text = SearchText?.Trim();
         if (!string.IsNullOrWhiteSpace(text))
         {
             var tokens = text.Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            var haystack = $"{signal.Name} {signal.LogicalNode} {signal.LogicalNodeClass} {signal.Category} {signal.DataType} {signal.FunctionalConstraint} {signal.ObjectReference}";
+            var haystack = $"{signal.Name} {signal.LogicalNode} {signal.LogicalNodeClass} {signal.Category} {signal.DataType} {signal.FunctionalConstraint} {signal.ObjectReference} {signal.Value} {signal.Quality} {signal.DeviceTimestamp} {signal.ReportPlan} {signal.ReportPlanReason}";
             return tokens.All(t => haystack.Contains(t, StringComparison.OrdinalIgnoreCase));
         }
 
-        return ShowRaw || signal.IsScadaCoreSignal || signal.IsSelected;
+        return true;
     }
 
     private void StepNav_Click(object sender, RoutedEventArgs e)
@@ -322,7 +366,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
                 return;
             }
             ValidationState = "OK";
-            StatusMessage = "Binding saved. Choose a report plan or keep MMS polling only.";
+            StatusMessage = "Binding saved. Auto report plan prepared; no RCB/DataSet selection is required.";
             StepIndex = 2;
             return;
         }
@@ -330,9 +374,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         if (StepIndex == 2)
         {
             ApplySelectedReportPlanToWorkspace();
-            StatusMessage = string.IsNullOrWhiteSpace(SelectedReportControlReference)
-                ? "Report plan saved as polling only. Review the configuration, then add it to runtime."
-                : $"Report plan saved: {SelectedReportControlReference}. Runtime will still use polling fallback until report activation is implemented.";
+            StatusMessage = BuildAutoReportPlanStatus();
             StepIndex = 3;
             return;
         }
@@ -362,12 +404,12 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         if (SelectedReportControl == null)
         {
             SelectedDataSet = DataSets.FirstOrDefault();
-            ReportPlanStatus = "No RCB inventory is available for this IED. Runtime will use MMS polling only.";
+            ReportPlanStatus = BuildAutoReportPlanStatus();
         }
         else
         {
             MatchSelectedDataSetToReportControl();
-            ReportPlanStatus = $"Report inventory loaded: {ReportControls.Count} RCB(s), {DataSets.Count} DataSet(s). Select one plan or keep polling only.";
+            ReportPlanStatus = BuildAutoReportPlanStatus();
         }
         RebuildSelectedDataSetMembers();
     }
@@ -429,14 +471,14 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
             return;
 
         var directMembers = Signals
-            .Where(s => !string.IsNullOrWhiteSpace(s.DataSetReference) && ReferencesMatch(s.DataSetReference, selectedDataSet.Reference))
+            .Where(s => s.CanPublishAsSignal && !string.IsNullOrWhiteSpace(s.DataSetReference) && ReferencesMatch(s.DataSetReference, selectedDataSet.Reference))
             .OrderBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         if (directMembers.Count == 0)
         {
             directMembers = Signals
-                .Where(s => s.IsSelected)
+                .Where(s => s.IsSelected && s.CanPublishAsSignal)
                 .OrderBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
                 .Take(80)
                 .ToList();
@@ -480,6 +522,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
             ReportPlanStatus = $"Probe complete: {rcb.Status}. DataSet: {(string.IsNullOrWhiteSpace(rcb.DataSetReference) ? "not confirmed" : rcb.DataSetReference)}.";
             Raise(nameof(SelectedReportControlSummary));
             Raise(nameof(SelectedDataSetSummary));
+            Raise(nameof(ReportPlanStatus));
         }
         catch (Exception ex)
         {
@@ -491,17 +534,19 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
     {
         if (SelectedReportControl == null)
         {
-            ReportPlanStatus = "Select one RCB first, or choose Polling Only.";
+            ReportPlanStatus = "Select one RCB first, or choose Force Polling Only.";
             return;
         }
 
-        ApplySelectedReportPlanToWorkspace();
-        ReportPlanStatus = $"Selected {SelectedReportControl.Reference} as the saved report plan. Runtime remains polling-safe until report activation is implemented.";
+        _manualReportPlanOverride = true;
+        ApplySelectedReportPlanToWorkspace(allowManualFallback: true);
+        ReportPlanStatus = $"Advanced override saved: {SelectedReportControl.Reference}. Only matching uncovered signals will be forced to this RCB; polling fallback remains active.";
         SignalsView.Refresh();
     }
 
     private void UsePollingOnly_Click(object sender, RoutedEventArgs e)
     {
+        _manualReportPlanOverride = false;
         _selectedReportControl = null;
         _selectedDataSet = null;
         foreach (var signal in Signals)
@@ -509,52 +554,263 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
             signal.ReportControlReference = string.Empty;
             signal.DataSetReference = string.Empty;
             signal.IsReportCapable = false;
+            signal.ReportCoverage = signal.CanPublishAsSignal ? "Polling fallback" : "Hidden attribute";
+            signal.ReportCoverageReason = "Polling-only mode was forced for this IED configuration.";
         }
         foreach (var binding in Bindings)
         {
             binding.ReportControlReference = string.Empty;
             binding.DataSetReference = string.Empty;
             binding.RcbMode = "MMS polling";
+            binding.ReadMode = "MMS polling";
+            binding.Status = "MMS polling fallback";
         }
-        ReportPlanStatus = "Polling-only plan selected. No RCB/DataSet plan will be saved for this IED.";
+        ReportPlanStatus = "Polling-only mode forced. No RCB/DataSet lane will be used; runtime will read selected signals by MMS polling only.";
         DataSetMembers.Clear();
         Raise(nameof(SelectedReportControl));
         Raise(nameof(SelectedDataSet));
         Raise(nameof(SelectedReportControlSummary));
         Raise(nameof(SelectedDataSetSummary));
+        Raise(nameof(ReportPlanStatus));
         SignalsView.Refresh();
     }
 
-    private void ApplySelectedReportPlanToWorkspace()
+    private void ApplySelectedReportPlanToWorkspace(bool allowManualFallback = false)
     {
-        var rcbRef = SelectedReportControl?.Reference ?? string.Empty;
-        var dsRef = SelectedReportControl?.DataSetReference;
-        if (string.IsNullOrWhiteSpace(dsRef)) dsRef = SelectedDataSet?.Reference ?? string.Empty;
+        var selectedRcbRef = SelectedReportControl?.Reference ?? string.Empty;
+        var selectedDsRef = SelectedReportControl?.DataSetReference;
+        if (string.IsNullOrWhiteSpace(selectedDsRef)) selectedDsRef = SelectedDataSet?.Reference ?? string.Empty;
 
-        if (string.IsNullOrWhiteSpace(rcbRef) && string.IsNullOrWhiteSpace(dsRef))
-            return;
-
-        foreach (var signal in Signals.Where(s => s.IsSelected))
+        // Preserve per-signal report hints created by discovery/SCL.  Some IEDs expose GGIO and
+        // MMXU through separate DataSet + RCB lanes.  A single visible selection in this page is
+        // now used only as a fallback for uncovered signals that look like members of that lane.
+        var selectedSignals = Signals.Where(s => s.IsSelected && s.CanPublishAsSignal).ToList();
+        foreach (var signal in selectedSignals)
         {
-            signal.ReportControlReference = rcbRef;
-            signal.DataSetReference = dsRef ?? string.Empty;
-            signal.IsReportCapable = !string.IsNullOrWhiteSpace(rcbRef) || !string.IsNullOrWhiteSpace(dsRef);
+            var hasNativeHint = !string.IsNullOrWhiteSpace(signal.ReportControlReference) ||
+                                !string.IsNullOrWhiteSpace(signal.DataSetReference);
+
+            if (!hasNativeHint && (allowManualFallback || _manualReportPlanOverride) && (!string.IsNullOrWhiteSpace(selectedRcbRef) || !string.IsNullOrWhiteSpace(selectedDsRef)) &&
+                SignalLikelyCoveredByReportPlan(signal, SelectedReportControl, selectedDsRef ?? string.Empty))
+            {
+                signal.ReportControlReference = selectedRcbRef;
+                signal.DataSetReference = selectedDsRef ?? string.Empty;
+                hasNativeHint = true;
+                signal.ReportCoverage = "Advanced forced RCB + polling fallback";
+                signal.ReportCoverageReason = "User forced the selected RCB/DataSet for this uncovered signal. Runtime keeps polling fallback if static DataSet membership does not match.";
+            }
+
+            signal.IsReportCapable = hasNativeHint;
+            if (!hasNativeHint && signal.CanPublishAsSignal)
+            {
+                signal.ReportCoverage = "Polling fallback";
+                signal.ReportCoverageReason = "No confirmed or candidate RCB/DataSet lane is mapped to this signal. Runtime will use MMS polling.";
+            }
         }
+
+        var signalByReference = selectedSignals
+            .GroupBy(s => NormalizeReference(s.ObjectReference), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
         foreach (var binding in Bindings)
         {
-            if (!Signals.Any(s => s.IsSelected && string.Equals(s.ObjectReference, binding.IecReference, StringComparison.OrdinalIgnoreCase)))
+            if (!signalByReference.TryGetValue(NormalizeReference(binding.IecReference), out var signal))
                 continue;
-            binding.ReportControlReference = rcbRef;
-            binding.DataSetReference = dsRef ?? string.Empty;
-            binding.RcbMode = string.IsNullOrWhiteSpace(rcbRef) ? "MMS polling" : "Report planned / polling fallback";
-            binding.ReadMode = string.IsNullOrWhiteSpace(rcbRef) ? "MMS polling" : "RCB candidate + MMS polling fallback";
+
+            binding.ReportControlReference = signal.ReportControlReference;
+            binding.DataSetReference = signal.DataSetReference;
+            var reportCapable = !string.IsNullOrWhiteSpace(binding.ReportControlReference) ||
+                                !string.IsNullOrWhiteSpace(binding.DataSetReference);
+            binding.RcbMode = reportCapable ? "Auto report planner" : "MMS polling";
+            binding.ReadMode = reportCapable ? signal.ReportCoverage : "MMS polling";
+            binding.Status = reportCapable ? signal.ReportCoverage : "MMS polling fallback";
         }
         RebuildSelectedDataSetMembers();
         Raise(nameof(SelectedReportControlReference));
         Raise(nameof(SelectedReportControlName));
         Raise(nameof(SelectedDataSetReference));
         Raise(nameof(ReportRuntimeMode));
+    }
+
+    private static bool SignalLikelyCoveredByReportPlan(SignalDefinition signal, NativeReportControlCandidate? rcb, string dataSetReference)
+    {
+        var signalLn = signal.LogicalNode ?? string.Empty;
+        var signalClass = signal.LogicalNodeClass ?? string.Empty;
+        var dataSetLn = ExtractLogicalNodeFromDataSetReference(dataSetReference);
+
+        if (!string.IsNullOrWhiteSpace(dataSetLn) && !dataSetLn.Equals("LLN0", StringComparison.OrdinalIgnoreCase))
+            return LogicalNodeMatches(signalLn, signalClass, dataSetLn);
+
+        if (rcb != null && !string.IsNullOrWhiteSpace(rcb.LogicalNode) && !rcb.LogicalNode.Equals("LLN0", StringComparison.OrdinalIgnoreCase))
+            return LogicalNodeMatches(signalLn, signalClass, rcb.LogicalNode);
+
+        // Generic LLN0-hosted DataSets may legitimately cover many LNs.  Keep the older behavior
+        // only for this generic case; LN-specific DataSets stay isolated.
+        return true;
+    }
+
+    private static bool LogicalNodeMatches(string signalLn, string signalClass, string candidateLn)
+    {
+        if (string.IsNullOrWhiteSpace(candidateLn)) return false;
+        if (!string.IsNullOrWhiteSpace(signalLn) && candidateLn.Equals(signalLn, StringComparison.OrdinalIgnoreCase))
+            return true;
+        // Manual override must not accidentally route one logical-node instance through
+        // another instance just because the LN class is the same. Class-level report candidates are produced by
+        // the smart discovery planner only, then verified by DataSet directory at runtime.
+        return false;
+    }
+
+    private static string ExtractLogicalNodeFromDataSetReference(string reference)
+    {
+        var text = (reference ?? string.Empty).Trim().Replace('$', '.');
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        var slash = text.IndexOf('/');
+        var item = slash >= 0 && slash < text.Length - 1 ? text[(slash + 1)..] : text;
+        var dot = item.IndexOf('.');
+        return dot > 0 ? item[..dot] : string.Empty;
+    }
+
+    private static string NormalizeReference(string? reference)
+        => (reference ?? string.Empty).Trim().Replace('$', '.').Replace("..", ".").ToLowerInvariant();
+
+    private string BuildAutoReportPlanStatus()
+    {
+        var selected = Signals.Where(s => s.IsSelected && s.CanPublishAsSignal).ToList();
+        var total = selected.Count;
+        var covered = selected.Count(s => s.ReportCoverage.Contains("covered", StringComparison.OrdinalIgnoreCase));
+        var candidate = selected.Count(s => s.ReportCoverage.Contains("candidate", StringComparison.OrdinalIgnoreCase));
+        var polling = selected.Count(s => !s.IsReportCapable);
+        var lanes = selected
+            .Where(s => !string.IsNullOrWhiteSpace(s.ReportControlReference) || !string.IsNullOrWhiteSpace(s.DataSetReference))
+            .GroupBy(s => string.IsNullOrWhiteSpace(s.ReportControlReference) ? s.DataSetReference : s.ReportControlReference, StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+        return $"Auto plan: {total} selected, {covered} report-covered, {candidate} report-candidate/static-verify, {polling} polling fallback, {lanes} RCB/DataSet lane(s).";
+    }
+
+    private void SignalsGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var row = FindVisualParent<DataGridRow>(e.OriginalSource as DependencyObject);
+        if (row != null)
+        {
+            row.IsSelected = true;
+            SelectedSignal = row.Item as SignalDefinition;
+        }
+    }
+
+
+    private void SignalsGrid_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Space && SignalsGrid.SelectedItems.Count > 0)
+        {
+            var selectedSignals = SignalsGrid.SelectedItems
+                .OfType<SignalDefinition>()
+                .Where(s => s.CanPublishAsSignal)
+                .ToList();
+            if (selectedSignals.Count == 0) return;
+
+            var target = selectedSignals.Any(s => !s.IsSelected);
+            foreach (var signal in selectedSignals)
+                signal.IsSelected = target;
+
+            SignalsView.Refresh();
+            AutoPlanSignalsView.Refresh();
+            RefreshCounts();
+            StatusMessage = target
+                ? $"Selected {selectedSignals.Count} highlighted signal(s)."
+                : $"Deselected {selectedSignals.Count} highlighted signal(s).";
+            e.Handled = true;
+        }
+    }
+
+
+    private void SignalUseHeaderCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox checkBox)
+            return;
+
+        var target = checkBox.IsChecked == true;
+        var affected = 0;
+        foreach (var signal in GetVisibleSignals().Where(s => s.CanPublishAsSignal))
+        {
+            signal.IsSelected = target;
+            affected++;
+        }
+
+        SignalsView.Refresh();
+        AutoPlanSignalsView.Refresh();
+        RefreshCounts();
+        StatusMessage = target
+            ? $"Selected {affected} visible publishable signal(s)."
+            : $"Deselected {affected} visible publishable signal(s).";
+    }
+
+    private void SignalUseCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox checkBox || checkBox.DataContext is not SignalDefinition clicked || !clicked.CanPublishAsSignal)
+            return;
+
+        var target = checkBox.IsChecked == true;
+        var visible = GetVisibleSignals().ToList();
+        var clickedIndex = visible.FindIndex(s => ReferenceEquals(s, clicked));
+        var applied = 0;
+
+        if ((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift && _lastClickedSignalIndex >= 0 && clickedIndex >= 0)
+        {
+            var start = Math.Min(_lastClickedSignalIndex, clickedIndex);
+            var end = Math.Max(_lastClickedSignalIndex, clickedIndex);
+            for (var i = start; i <= end; i++)
+            {
+                if (!visible[i].CanPublishAsSignal) continue;
+                visible[i].IsSelected = target;
+                applied++;
+            }
+            StatusMessage = $"Block selection updated: {applied} signal(s).";
+        }
+        else if (SignalsGrid?.SelectedItems.Count > 1 && SignalsGrid.SelectedItems.Contains(clicked))
+        {
+            foreach (var item in SignalsGrid.SelectedItems.OfType<SignalDefinition>().Where(s => s.CanPublishAsSignal))
+            {
+                item.IsSelected = target;
+                applied++;
+            }
+            StatusMessage = $"Multi-selection updated: {applied} signal(s).";
+        }
+        else
+        {
+            clicked.IsSelected = target;
+            StatusMessage = target ? "Signal selected." : "Signal deselected.";
+        }
+
+        _lastClickedSignalIndex = clickedIndex;
+        SignalsView.Refresh();
+        AutoPlanSignalsView.Refresh();
+        RefreshCounts();
+        e.Handled = true;
+    }
+
+    private IEnumerable<SignalDefinition> GetVisibleSignals()
+        => SignalsView.Cast<object>().OfType<SignalDefinition>();
+
+    private void ShowSignalProperties_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedSignal == null)
+        {
+            StatusMessage = "Select a signal row first.";
+            return;
+        }
+
+        MessageBox.Show(this, SelectedSignal.SignalPropertiesSummary, "Signal Properties", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private static T? FindVisualParent<T>(DependencyObject? child) where T : DependencyObject
+    {
+        while (child != null)
+        {
+            if (child is T typed) return typed;
+            child = VisualTreeHelper.GetParent(child);
+        }
+        return null;
     }
 
     private async void ProbeSelected_Click(object sender, RoutedEventArgs e)
@@ -568,7 +824,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         }
 
         var selected = Signals
-            .Where(s => s.IsSelected && !string.Equals(s.DataType, "Directory", StringComparison.OrdinalIgnoreCase))
+            .Where(s => s.IsSelected && s.CanPublishAsSignal && !string.Equals(s.DataType, "Directory", StringComparison.OrdinalIgnoreCase))
             .OrderBy(s => s.SortPriority)
             .ThenBy(s => s.LogicalNode)
             .ThenBy(s => s.Name)
@@ -731,7 +987,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
     private void SelectRecommendedSignals()
     {
         foreach (var signal in Signals)
-            signal.IsSelected = signal.IsScadaCoreSignal;
+            signal.IsSelected = signal.IsScadaCoreSignal && signal.CanPublishAsSignal;
         SignalsView.Refresh();
         RefreshCounts();
         StatusMessage = $"Recommended SCADA selection applied: {SelectedSignalCount} signal(s).";
@@ -766,7 +1022,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
 
     private void RebuildBindingFromSelection()
     {
-        var selected = Signals.Where(s => s.IsSelected).ToList();
+        var selected = Signals.Where(s => s.IsSelected && s.CanPublishAsSignal).ToList();
         Bindings.Clear();
         foreach (var item in BindingAutoMapper.CreateBindings(selected))
             Bindings.Add(item);
@@ -815,7 +1071,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
 
     private void SaveAndClose()
     {
-        if (Bindings.Count == 0 && Signals.Any(s => s.IsSelected))
+        if (Bindings.Count == 0 && Signals.Any(s => s.IsSelected && s.CanPublishAsSignal))
             RebuildBindingFromSelection();
 
         var errors = ValidateBindings();
@@ -898,11 +1154,13 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
 
     private void RefreshCounts()
     {
+        AutoPlanSignalsView.Refresh();
         Raise(nameof(SelectedSignalCount));
         Raise(nameof(BindingCount));
         Raise(nameof(VisibleSignalCountText));
         Raise(nameof(SelectedReportControlSummary));
         Raise(nameof(SelectedDataSetSummary));
+        Raise(nameof(ReportPlanStatus));
     }
 
     private void Raise(string propertyName) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));

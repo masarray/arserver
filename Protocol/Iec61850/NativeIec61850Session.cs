@@ -225,6 +225,282 @@ public sealed class NativeIec61850Session : IAsyncDisposable
         return result;
     }
 
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> DiscoverDomainVariableTypeTreeNamesAsync(
+        IReadOnlyDictionary<string, IReadOnlyList<string>> domainVariables,
+        CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        var summary = new List<string>();
+
+        foreach (var domainPair in domainVariables.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase).Take(256))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var domain = (domainPair.Key ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(domain)) continue;
+
+            var expanded = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            var roots = domainPair.Value
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .Take(512)
+                .ToList();
+
+            foreach (var root in roots)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (var item in await ExpandVariableTypeTreeAsync(domain, root, maxDepth: 3, maxChildrenPerNode: 256, cancellationToken).ConfigureAwait(false))
+                    expanded.Add(item);
+            }
+
+            foreach (var item in await ExpandAdaptiveSiblingLogicalNodeTypeTreesAsync(domain, roots, expanded, cancellationToken).ConfigureAwait(false))
+                expanded.Add(item);
+
+            result[domain] = expanded.ToList();
+            summary.Add($"{domain}:vaa={expanded.Count}");
+        }
+
+        if (summary.Count > 0)
+            LastDiscoveryAttemptSummary = "Native GetVariableAccessAttributes expansion: " + string.Join(" | ", summary.Take(20));
+        return result;
+    }
+
+    private async Task<IReadOnlyList<string>> ExpandAdaptiveSiblingLogicalNodeTypeTreesAsync(
+        string domain,
+        IReadOnlyList<string> roots,
+        IEnumerable<string> alreadyExpanded,
+        CancellationToken cancellationToken)
+    {
+        var output = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var observed = new Dictionary<NativeLnSiblingKey, SortedSet<int>>();
+
+        foreach (var root in roots.Concat(alreadyExpanded ?? Array.Empty<string>()))
+        {
+            var logicalNode = ExtractRootLogicalNodeName(root);
+            if (!TryParseNativeLogicalNodeName(logicalNode, out var parts))
+                continue;
+            if (!ShouldAdaptiveExpandLogicalNodeClass(parts.LogicalNodeClass))
+                continue;
+
+            var key = new NativeLnSiblingKey(parts.Prefix, parts.LogicalNodeClass, parts.InstanceWidth);
+            if (!observed.TryGetValue(key, out var set))
+            {
+                set = new SortedSet<int>();
+                observed[key] = set;
+            }
+            set.Add(parts.Instance);
+        }
+
+        foreach (var group in observed.OrderBy(g => g.Key.Prefix, StringComparer.OrdinalIgnoreCase)
+                                      .ThenBy(g => g.Key.LogicalNodeClass, StringComparer.OrdinalIgnoreCase))
+        {
+            if (group.Value.Count == 0) continue;
+
+            var instance = Math.Max(1, group.Value.Min);
+            var maxInstance = Math.Max(group.Value.Max + 64, 256);
+            var consecutiveMisses = 0;
+
+            while (instance <= maxInstance && consecutiveMisses < 10)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (group.Value.Contains(instance))
+                {
+                    instance++;
+                    consecutiveMisses = 0;
+                    continue;
+                }
+
+                var ln = BuildNativeLogicalNodeName(group.Key.Prefix, group.Key.LogicalNodeClass, instance, group.Key.InstanceWidth);
+                var expanded = await ExpandVariableTypeTreeAsync(domain, ln, maxDepth: 3, maxChildrenPerNode: 256, cancellationToken).ConfigureAwait(false);
+                if (expanded.Count == 0)
+                {
+                    consecutiveMisses++;
+                    instance++;
+                    continue;
+                }
+
+                group.Value.Add(instance);
+                consecutiveMisses = 0;
+                foreach (var item in expanded)
+                    output.Add(item);
+                instance++;
+            }
+        }
+
+        return output.ToList();
+    }
+
+    private readonly record struct NativeLnSiblingKey(string Prefix, string LogicalNodeClass, int InstanceWidth);
+    private readonly record struct NativeLnNameParts(string Prefix, string LogicalNodeClass, int Instance, int InstanceWidth);
+
+    private static string ExtractRootLogicalNodeName(string item)
+    {
+        var text = (item ?? string.Empty).Trim().Replace('.', '$').Trim('$');
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        var slash = text.LastIndexOf('/');
+        if (slash >= 0 && slash < text.Length - 1)
+            text = text[(slash + 1)..];
+        var first = text.Split('$', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+        return first ?? string.Empty;
+    }
+
+    private static bool ShouldAdaptiveExpandLogicalNodeClass(string logicalNodeClass)
+    {
+        var cls = (logicalNodeClass ?? string.Empty).Trim().ToUpperInvariant();
+        return cls is "MMXU" or "MMXN" or "MSQI" or "GGIO" or
+               "CSWI" or "XCBR" or "XSWI" or
+               "PTOC" or "PTRC" or "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF";
+    }
+
+    private static bool TryParseNativeLogicalNodeName(string logicalNode, out NativeLnNameParts parts)
+    {
+        parts = default;
+        var text = (logicalNode ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        var classes = new[]
+        {
+            "MMXU", "MMXN", "MSQI", "GGIO", "CSWI", "XCBR", "XSWI",
+            "PTOC", "PTRC", "PDIF", "PDIS", "PIOC", "PTOV", "PTUV", "PTEF", "PDEF"
+        };
+
+        foreach (var cls in classes.OrderByDescending(c => c.Length))
+        {
+            var index = text.LastIndexOf(cls, StringComparison.OrdinalIgnoreCase);
+            if (index < 0) continue;
+            var prefix = text[..index];
+            var suffix = text[(index + cls.Length)..];
+            if (string.IsNullOrWhiteSpace(suffix) || !suffix.All(char.IsDigit)) continue;
+            if (!int.TryParse(suffix, out var instance) || instance <= 0) continue;
+            parts = new NativeLnNameParts(prefix, cls, instance, suffix.Length);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string BuildNativeLogicalNodeName(string prefix, string logicalNodeClass, int instance, int width)
+    {
+        var text = instance.ToString();
+        if (width > 1) text = text.PadLeft(width, '0');
+        return $"{prefix}{logicalNodeClass}{text}";
+    }
+
+    private async Task<IReadOnlyList<string>> ExpandVariableTypeTreeAsync(
+        string domain,
+        string rootItem,
+        int maxDepth,
+        int maxChildrenPerNode,
+        CancellationToken cancellationToken)
+    {
+        var output = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var queue = new Queue<(string Item, int Depth)>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        queue.Enqueue((rootItem, 0));
+
+        while (queue.Count > 0 && visited.Count < 4096)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var (item, depth) = queue.Dequeue();
+            if (string.IsNullOrWhiteSpace(item) || !visited.Add(item)) continue;
+
+            var attrs = await GetVariableAccessAttributesAsync(domain, item, cancellationToken).ConfigureAwait(false);
+            if (!attrs.IsSuccess || attrs.ComponentPaths.Count == 0)
+                continue;
+
+            var childCount = 0;
+            foreach (var componentPath in attrs.ComponentPaths.Take(maxChildrenPerNode))
+            {
+                var combined = CombineMmsItemPath(item, componentPath);
+                if (string.IsNullOrWhiteSpace(combined)) continue;
+                output.Add(combined);
+                childCount++;
+
+                // Walk LN -> FC -> DO shallow branches. We do not need to read every scalar here;
+                // the decoder already returns nested leaves when the IED provides the full type spec.
+                if (depth < maxDepth && ShouldBrowseVariableAttributeChild(combined, depth))
+                    queue.Enqueue((combined, depth + 1));
+            }
+
+            if (childCount == 0 && LooksLikeScalarMmsItem(item))
+                output.Add(item);
+        }
+
+        return output.ToList();
+    }
+
+    public async Task<MmsVariableAccessAttributesResult> GetVariableAccessAttributesAsync(string domainId, string itemId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsMmsInitiated)
+        {
+            var recovered = await TryRecoverAssociationAsync(cancellationToken).ConfigureAwait(false);
+            if (!recovered)
+            {
+                return new MmsVariableAccessAttributesResult
+                {
+                    IsSuccess = false,
+                    ComponentPaths = Array.Empty<string>(),
+                    Message = $"Native MMS association is not available for GetVariableAccessAttributes {domainId}/{itemId}. State={State}."
+                };
+            }
+        }
+
+        var invokeId = NextInvokeId();
+        var request = MmsVariableAccessAttributesRequest.Build(invokeId, domainId, itemId);
+        LastDiscoveryRequestHex = HexDump.ToCompactString(request);
+
+        try
+        {
+            var response = await SendPresentationPayloadAsync(request, cancellationToken).ConfigureAwait(false);
+            var result = MmsVariableAccessAttributesResponseDecoder.Decode(response, invokeId);
+            LastDiscoveryResponseHex = result.ResponseHexPreview;
+            LastDiscoveryAttemptSummary = $"GetVariableAccessAttributes {domainId}/{itemId}: {result.Message}";
+            return result;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or ObjectDisposedException or InvalidOperationException)
+        {
+            await MarkProtocolFaultAsync().ConfigureAwait(false);
+            LastDiscoveryAttemptSummary = $"GetVariableAccessAttributes {domainId}/{itemId} transport fault: {ex.GetType().Name}: {ex.Message}";
+            return new MmsVariableAccessAttributesResult
+            {
+                IsSuccess = false,
+                ComponentPaths = Array.Empty<string>(),
+                Message = LastDiscoveryAttemptSummary,
+                ResponseHexPreview = LastDiscoveryResponseHex
+            };
+        }
+    }
+
+    private static string CombineMmsItemPath(string parent, string childPath)
+    {
+        parent = (parent ?? string.Empty).Trim().Trim('$');
+        childPath = (childPath ?? string.Empty).Trim().Replace('.', '$').Trim('$');
+        if (string.IsNullOrWhiteSpace(parent)) return childPath;
+        if (string.IsNullOrWhiteSpace(childPath)) return parent;
+        if (childPath.StartsWith(parent + "$", StringComparison.OrdinalIgnoreCase) || childPath.Equals(parent, StringComparison.OrdinalIgnoreCase))
+            return childPath;
+        return parent + "$" + childPath;
+    }
+
+    private static bool ShouldBrowseVariableAttributeChild(string item, int depth)
+    {
+        var parts = item.Split('$', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length <= 1) return true;     // LN -> FC/DO
+        if (parts.Length == 2) return true;     // LN$MX -> DO or LN$DO -> child
+        if (parts.Length == 3) return true;     // LN$MX$PhV -> nested CDC
+        if (parts.Length == 4 && (parts.Contains("MX") || parts.Contains("ST"))) return true;
+        return false;
+    }
+
+    private static bool LooksLikeScalarMmsItem(string item)
+    {
+        var lower = (item ?? string.Empty).ToLowerInvariant();
+        return lower.EndsWith("$stval") || lower.EndsWith("$general") || lower.EndsWith("$posval") ||
+               lower.EndsWith("$f") || lower.EndsWith("$i") || lower.EndsWith("$q") || lower.EndsWith("$t");
+    }
+
     public async Task<MmsNameListResult> GetNameListPagedAsync(MmsGetNameListObjectClass objectClass, string? domainId, CancellationToken cancellationToken)
     {
         var names = new List<string>();
@@ -264,6 +540,17 @@ public sealed class NativeIec61850Session : IAsyncDisposable
                 if (!last.IsSuccess)
                 {
                     LastDiscoveryAttemptSummary = $"GetNameList {objectClass}/{domainId ?? "VMD"} page {page} failed: {last.Message}";
+                    if (names.Count > 0)
+                    {
+                        return new MmsNameListResult
+                        {
+                            IsSuccess = true,
+                            Names = names,
+                            MoreFollows = false,
+                            Message = $"GetNameList stopped after {names.Count} collected name(s); trailing page failed: {last.Message}",
+                            ResponseHexPreview = last.ResponseHexPreview
+                        };
+                    }
                     return new MmsNameListResult
                     {
                         IsSuccess = false,
@@ -274,11 +561,24 @@ public sealed class NativeIec61850Session : IAsyncDisposable
                     };
                 }
 
+                var before = names.Count;
                 foreach (var name in last.Names)
                     if (!names.Contains(name, StringComparer.OrdinalIgnoreCase)) names.Add(name);
+                var newCount = names.Count - before;
 
                 continueAfter = last.Names.LastOrDefault() ?? continueAfter;
-                LastDiscoveryAttemptSummary = $"GetNameList {objectClass}/{domainId ?? "VMD"}: page={page}, total={names.Count}, more={last.MoreFollows}.";
+                LastDiscoveryAttemptSummary = $"GetNameList {objectClass}/{domainId ?? "VMD"}: page={page}, total={names.Count}, new={newCount}, more={last.MoreFollows}, morePresent={last.MoreFollowsWasPresent}.";
+
+                // IEC 61850/MMS encoders often omit moreFollows when it is TRUE because the ASN.1
+                // default is TRUE. Older ARServer code treated an omitted flag as FALSE and stopped
+                // after the first page, which can make large IEDs look as if only the first MMXU/GGIO
+                // instance exists. Keep paging while the server returns new names; stop defensively if
+                // a broken server repeats the same page.
+                if (last.MoreFollows && newCount <= 0)
+                {
+                    LastDiscoveryAttemptSummary += " Stopped paging because the IED returned no new names.";
+                    break;
+                }
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or ObjectDisposedException or InvalidOperationException)
             {
@@ -286,10 +586,10 @@ public sealed class NativeIec61850Session : IAsyncDisposable
                 LastDiscoveryAttemptSummary = $"GetNameList {objectClass}/{domainId ?? "VMD"} transport fault on page {page}: {ex.GetType().Name}: {ex.Message}";
                 return new MmsNameListResult
                 {
-                    IsSuccess = false,
+                    IsSuccess = names.Count > 0,
                     Names = names,
                     MoreFollows = false,
-                    Message = LastDiscoveryAttemptSummary,
+                    Message = names.Count > 0 ? $"GetNameList collected {names.Count} name(s) before trailing transport fault: {ex.GetType().Name}: {ex.Message}" : LastDiscoveryAttemptSummary,
                     ResponseHexPreview = LastDiscoveryResponseHex
                 };
             }

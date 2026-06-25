@@ -17,6 +17,7 @@ namespace Ari61850Bridge.Services;
 public sealed class NativeIec61850Client : IIec61850Client
 {
     private readonly ArMms.MmsClientSession _session = new();
+    private readonly SemaphoreSlim _mmsIoGate = new(1, 1);
     private ArMms.MmsDiscoveryResult? _lastDiscovery;
     private LiveIedModelDiscoveryDocument? _liveModel;
     private readonly Dictionary<string, ArMms.MmsPersistentReportMonitorSession> _reportMonitorSessions = new(StringComparer.OrdinalIgnoreCase);
@@ -51,10 +52,12 @@ public sealed class NativeIec61850Client : IIec61850Client
 
         try
         {
-            await _session.ConnectAsync(
-                _host,
-                _port,
-                TimeSpan.FromSeconds(8),
+            await RunMmsOperationAsync(
+                () => _session.ConnectAsync(
+                    _host,
+                    _port,
+                    TimeSpan.FromSeconds(8),
+                    cancellationToken),
                 cancellationToken).ConfigureAwait(false);
 
             LastErrorMessage = string.IsNullOrWhiteSpace(_session.LastAssociationAttemptSummary)
@@ -81,9 +84,11 @@ public sealed class NativeIec61850Client : IIec61850Client
 
         try
         {
-            var discovery = await _session.DiscoverAsync(
-                probeReportAttributes: true,
-                maxReportAttributeProbes: 64,
+            var discovery = await RunMmsOperationAsync(
+                () => _session.DiscoverAsync(
+                    probeReportAttributes: true,
+                    maxReportAttributeProbes: 64,
+                    cancellationToken),
                 cancellationToken).ConfigureAwait(false);
 
             _lastDiscovery = discovery;
@@ -94,13 +99,34 @@ public sealed class NativeIec61850Client : IIec61850Client
                 IncludeLowConfidenceTemplates = true
             });
 
-            var snapshot = ToNativeSnapshot(discovery.Snapshot);
+            var primarySnapshot = ToNativeSnapshot(discovery.Snapshot);
+            var supplementalSnapshot = await TryBuildSupplementalGetNameListSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            var snapshot = MergeDiscoverySnapshots(primarySnapshot, supplementalSnapshot);
             LastReportInventory = ToNativeInventory(discovery.ReportInventory);
 
-            var signals = BuildSignalsFromArIecModel(_liveModel, snapshot);
+            var signals = BuildSignalsFromArIecModel(_liveModel, snapshot).ToList();
+            AddGenericLogicalNodeFallbacksFromDiscoveryArtifacts(
+                signals,
+                discovery,
+                snapshot,
+                LastReportInventory,
+                DateTime.Now);
+
+            var adaptiveSiblingProbeCount = await AddAdaptiveLogicalNodeSiblingProbeSignalsAsync(
+                signals,
+                cancellationToken).ConfigureAwait(false);
+
+            signals = FinalizeDiscoveredSignals(signals).ToList();
             NativeReportDiscoveryMapper.ApplyReportHints(signals, LastReportInventory);
 
-            LastDiscoverySummary = $"{discovery.Summary} {_liveModel.Summary} SCADA candidates={signals.Count}. Engine=ARIEC61850 live-model/schema/read-plan.";
+            var discoveredLogicalNodes = signals
+                .Select(s => s.LogicalNode)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+            var primaryVariableCount = primarySnapshot.DomainVariables.Values.Sum(v => v.Count);
+            var supplementalVariableCount = supplementalSnapshot.DomainVariables.Values.Sum(v => v.Count);
+            LastDiscoverySummary = $"{discovery.Summary} {_liveModel.Summary} LN={discoveredLogicalNodes}, SCADA candidates={signals.Count}, MMS names={primaryVariableCount}, supplemental names={supplementalVariableCount}, adaptive sibling probes={adaptiveSiblingProbeCount}. Engine=ARIEC61850 live model + full GetNameList directory + VAA type-tree + adaptive LN sibling proof-probe.";
             LastErrorMessage = LastDiscoverySummary;
             return signals;
         }
@@ -196,7 +222,8 @@ public sealed class NativeIec61850Client : IIec61850Client
             allowUrCbFallback: true,
             allowPollingFallback: true);
 
-        if (!subscription.IsReady)
+        var dynamicDataSetPlanned = false;
+        if (!subscription.IsReady && IsDynamicReportWriteAllowed(plan))
         {
             var dynamicPlan = ArMms.MmsReportSubscriptionPlanner.BuildDynamicPlan(
                 inventory,
@@ -210,7 +237,10 @@ public sealed class NativeIec61850Client : IIec61850Client
                 allowPollingFallback: true);
 
             if (dynamicPlan.IsReady)
+            {
                 subscription = dynamicPlan;
+                dynamicDataSetPlanned = true;
+            }
         }
 
         if (!subscription.IsReady)
@@ -228,11 +258,13 @@ public sealed class NativeIec61850Client : IIec61850Client
             };
         }
 
-        var start = await _session.StartPersistentReportMonitorAsync(
-            subscription,
-            triggerGeneralInterrogation: true,
-            deleteDynamicDataSetOnStop: true,
-            directory,
+        var start = await RunMmsOperationAsync(
+            () => _session.StartPersistentReportMonitorAsync(
+                subscription,
+                triggerGeneralInterrogation: true,
+                deleteDynamicDataSetOnStop: dynamicDataSetPlanned,
+                directory,
+                cancellationToken),
             cancellationToken).ConfigureAwait(false);
 
         if (!start.IsSuccess || start.Session == null)
@@ -276,13 +308,15 @@ public sealed class NativeIec61850Client : IIec61850Client
         }
 
         var discovery = await EnsureDiscoveryForReportingAsync(cancellationToken).ConfigureAwait(false);
-        var slice = await _session.ReceivePersistentReportMonitorSliceAsync(
-            session,
-            duration,
-            discovery?.IedDirectory,
-            pollReferences: null,
-            pollInterval: null,
-            triggerGeneralInterrogation: false,
+        var slice = await RunMmsOperationAsync(
+            () => _session.ReceivePersistentReportMonitorSliceAsync(
+                session,
+                duration,
+                discovery?.IedDirectory,
+                pollReferences: null,
+                pollInterval: null,
+                triggerGeneralInterrogation: false,
+                cancellationToken),
             cancellationToken).ConfigureAwait(false);
 
         var updates = new List<NativeReportValueUpdate>();
@@ -323,7 +357,9 @@ public sealed class NativeIec61850Client : IIec61850Client
         {
             try
             {
-                var stop = await _session.StopPersistentReportMonitorAsync(item.Value, CancellationToken.None).ConfigureAwait(false);
+                var stop = await RunMmsOperationAsync(
+                    () => _session.StopPersistentReportMonitorAsync(item.Value, CancellationToken.None),
+                    CancellationToken.None).ConfigureAwait(false);
                 results.Add(new NativeReportMonitorStopResult
                 {
                     IsSuccess = stop.IsSuccess,
@@ -347,6 +383,32 @@ public sealed class NativeIec61850Client : IIec61850Client
         }
 
         return results;
+    }
+
+    private async Task<T> RunMmsOperationAsync<T>(Func<Task<T>> operation, CancellationToken cancellationToken)
+    {
+        await _mmsIoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await operation().ConfigureAwait(false);
+        }
+        finally
+        {
+            _mmsIoGate.Release();
+        }
+    }
+
+    private async Task RunMmsOperationAsync(Func<Task> operation, CancellationToken cancellationToken)
+    {
+        await _mmsIoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await operation().ConfigureAwait(false);
+        }
+        finally
+        {
+            _mmsIoGate.Release();
+        }
     }
 
     private async Task TryReadReportAttributeAsync(NativeReportControlCandidate rcb, string attribute, Action<object?> apply, CancellationToken cancellationToken)
@@ -396,9 +458,11 @@ public sealed class NativeIec61850Client : IIec61850Client
 
         try
         {
-            var discovery = await _session.DiscoverAsync(
-                probeReportAttributes: true,
-                maxReportAttributeProbes: 96,
+            var discovery = await RunMmsOperationAsync(
+                () => _session.DiscoverAsync(
+                    probeReportAttributes: true,
+                    maxReportAttributeProbes: 96,
+                    cancellationToken),
                 cancellationToken).ConfigureAwait(false);
 
             _lastDiscovery = discovery;
@@ -438,7 +502,9 @@ public sealed class NativeIec61850Client : IIec61850Client
         if (dataSets.Length == 0)
             return Array.Empty<ArMms.MmsDataSetDirectoryResult>();
 
-        return await _session.GetDataSetDirectoriesAsync(dataSets, directory, cancellationToken).ConfigureAwait(false);
+        return await RunMmsOperationAsync(
+            () => _session.GetDataSetDirectoriesAsync(dataSets, directory, cancellationToken),
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static ArMms.MmsReportInventory BuildEngineReportInventory(ArMms.MmsReportInventory source, ReportControlPlan plan)
@@ -574,6 +640,16 @@ public sealed class NativeIec61850Client : IIec61850Client
         return (domain, logicalNode, functionalConstraint, name, buffered || functionalConstraint.Equals("BR", StringComparison.OrdinalIgnoreCase));
     }
 
+    private static bool IsDynamicReportWriteAllowed(ReportControlPlan plan)
+    {
+        // Default gateway mode is static-safe: do not create DataSets, do not reassign RCB.DatSet,
+        // and do not write engineering configuration unless an advanced/dynamic mode explicitly asks for it.
+        var mode = $"{plan.Mode} {plan.Status}";
+        return mode.Contains("dynamic", StringComparison.OrdinalIgnoreCase) ||
+               mode.Contains("advanced", StringComparison.OrdinalIgnoreCase) ||
+               mode.Contains("engineering write", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string ResolvePreferredLogicalDevice(ReportControlPlan plan)
     {
         if (!string.IsNullOrWhiteSpace(plan.ReportControlReference))
@@ -619,7 +695,9 @@ public sealed class NativeIec61850Client : IIec61850Client
             {
                 try
                 {
-                    var smart = await _session.ReadSmartAsync(_lastDiscovery.IedDirectory, candidate.Reference, cancellationToken).ConfigureAwait(false);
+                    var smart = await RunMmsOperationAsync(
+                        () => _session.ReadSmartAsync(_lastDiscovery.IedDirectory, candidate.Reference, cancellationToken),
+                        cancellationToken).ConfigureAwait(false);
                     attempts.Add($"{candidate.Label}/smart: {smart.ReadResult.Message}");
                     if (smart.ReadResult.IsSuccess)
                     {
@@ -642,7 +720,9 @@ public sealed class NativeIec61850Client : IIec61850Client
             try
             {
                 var normalized = ArMms.MmsObjectReference.Parse(candidate.Reference, candidate.FunctionalConstraint);
-                var result = await _session.ReadSingleVariableAsync(normalized, cancellationToken).ConfigureAwait(false);
+                var result = await RunMmsOperationAsync(
+                    () => _session.ReadSingleVariableAsync(normalized, cancellationToken),
+                    cancellationToken).ConfigureAwait(false);
                 attempts.Add($"{candidate.Label}/direct {normalized}: {(result.IsSuccess ? "OK" : result.Message)}");
                 if (result.IsSuccess)
                 {
@@ -671,7 +751,349 @@ public sealed class NativeIec61850Client : IIec61850Client
     public async ValueTask DisposeAsync()
     {
         await StopReportMonitorsAsync().ConfigureAwait(false);
-        await _session.DisposeAsync().ConfigureAwait(false);
+        await _mmsIoGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await _session.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _mmsIoGate.Release();
+        }
+        _mmsIoGate.Dispose();
+    }
+
+    private readonly record struct LogicalNodeSiblingKey(string Domain, string Prefix, string LogicalNodeClass, int InstanceWidth);
+    private readonly record struct LogicalNodeNameParts(string Prefix, string LogicalNodeClass, int Instance, int InstanceWidth);
+
+    private async Task<int> AddAdaptiveLogicalNodeSiblingProbeSignalsAsync(
+        ICollection<SignalDefinition> signals,
+        CancellationToken cancellationToken)
+    {
+        if (!_session.IsMmsInitiated || signals.Count == 0)
+            return 0;
+
+        var observed = new Dictionary<LogicalNodeSiblingKey, SortedSet<int>>();
+        foreach (var signal in signals)
+        {
+            var domain = ExtractDomain(signal.ObjectReference);
+            if (string.IsNullOrWhiteSpace(domain) || string.IsNullOrWhiteSpace(signal.LogicalNode))
+                continue;
+            if (!TryParseLogicalNodeName(signal.LogicalNode, out var parts))
+                continue;
+            if (!ShouldAdaptiveProbeLogicalNodeClass(parts.LogicalNodeClass))
+                continue;
+
+            var key = new LogicalNodeSiblingKey(domain, parts.Prefix, parts.LogicalNodeClass, parts.InstanceWidth);
+            if (!observed.TryGetValue(key, out var set))
+            {
+                set = new SortedSet<int>();
+                observed[key] = set;
+            }
+            set.Add(parts.Instance);
+        }
+
+        var addedSignals = 0;
+        foreach (var group in observed.OrderBy(g => g.Key.Domain, StringComparer.OrdinalIgnoreCase)
+                                      .ThenBy(g => g.Key.Prefix, StringComparer.OrdinalIgnoreCase)
+                                      .ThenBy(g => g.Key.LogicalNodeClass, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (group.Value.Count == 0) continue;
+
+            var maxObserved = group.Value.Max;
+            var consecutiveMisses = 0;
+            var instance = Math.Max(1, group.Value.Min);
+            var hardSafetyLimit = Math.Max(maxObserved + 64, 256);
+
+            while (instance <= hardSafetyLimit && consecutiveMisses < 10)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (group.Value.Contains(instance))
+                {
+                    instance++;
+                    consecutiveMisses = 0;
+                    continue;
+                }
+
+                var logicalNode = BuildLogicalNodeName(group.Key.Prefix, group.Key.LogicalNodeClass, instance, group.Key.InstanceWidth);
+                var exists = signals.Any(s =>
+                    ExtractDomain(s.ObjectReference).Equals(group.Key.Domain, StringComparison.OrdinalIgnoreCase) &&
+                    s.LogicalNode.Equals(logicalNode, StringComparison.OrdinalIgnoreCase));
+                if (exists)
+                {
+                    group.Value.Add(instance);
+                    instance++;
+                    consecutiveMisses = 0;
+                    continue;
+                }
+
+                var found = await ProbeLogicalNodeInstanceExistsAsync(
+                    group.Key.Domain,
+                    logicalNode,
+                    group.Key.LogicalNodeClass,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (!found)
+                {
+                    consecutiveMisses++;
+                    instance++;
+                    continue;
+                }
+
+                group.Value.Add(instance);
+                consecutiveMisses = 0;
+                var now = DateTime.Now;
+                foreach (var point in BuildArIecLogicalNodeFallbackPoints(group.Key.LogicalNodeClass))
+                {
+                    var reference = $"{group.Key.Domain}/{logicalNode}.{point.Path}";
+                    if (signals.Any(s => ReferencesEqual(s.ObjectReference, reference)))
+                        continue;
+
+                    signals.Add(CreateArIecSignal(
+                        reference,
+                        point.FunctionalConstraint,
+                        point.Category,
+                        group.Key.LogicalNodeClass,
+                        point.DataObject,
+                        string.Empty,
+                        now,
+                        "Adaptive IEC 61850 LN sibling proof-probe"));
+                    addedSignals++;
+                }
+
+                instance++;
+            }
+        }
+
+        return addedSignals;
+    }
+
+    private static bool ShouldAdaptiveProbeLogicalNodeClass(string logicalNodeClass)
+    {
+        var cls = (logicalNodeClass ?? string.Empty).Trim().ToUpperInvariant();
+        return cls is "MMXU" or "MMXN" or "MSQI" or "GGIO" or
+               "CSWI" or "XCBR" or "XSWI" or
+               "PTOC" or "PTRC" or "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF";
+    }
+
+    private async Task<bool> ProbeLogicalNodeInstanceExistsAsync(
+        string domain,
+        string logicalNode,
+        string logicalNodeClass,
+        CancellationToken cancellationToken)
+    {
+        foreach (var point in BuildAdaptiveProbePoints(logicalNodeClass))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var reference = $"{domain}/{logicalNode}.{point.Path}";
+                var value = await ReadValueAsync(reference, point.FunctionalConstraint, point.DataType, cancellationToken).ConfigureAwait(false);
+                if (value != null)
+                    return true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Missing objects and vendor-specific rejects are normal while probing sibling LNs.
+            }
+        }
+
+        return false;
+    }
+
+    private readonly record struct AdaptiveProbePoint(string Path, string FunctionalConstraint, string DataType);
+
+    private static IEnumerable<AdaptiveProbePoint> BuildAdaptiveProbePoints(string logicalNodeClass)
+    {
+        var cls = (logicalNodeClass ?? string.Empty).Trim().ToUpperInvariant();
+        if (cls is "MMXU" or "MMXN" or "MSQI")
+        {
+            yield return new("PhV.phsA.cVal.mag.f", "MX", "Float32");
+            yield return new("A.phsA.cVal.mag.f", "MX", "Float32");
+            yield return new("PPV.phsAB.cVal.mag.f", "MX", "Float32");
+            yield break;
+        }
+
+        if (cls == "GGIO")
+        {
+            yield return new("Ind1.stVal", "ST", "Boolean");
+            yield return new("AnIn1.mag.f", "MX", "Float32");
+            yield break;
+        }
+
+        if (cls is "CSWI" or "XCBR" or "XSWI")
+        {
+            yield return new("Pos.stVal", "ST", "Enum");
+            yield break;
+        }
+
+        if (cls == "PTRC")
+        {
+            yield return new("Tr.general", "ST", "Boolean");
+            yield break;
+        }
+
+        if (cls.StartsWith("P", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return new("Op.general", "ST", "Boolean");
+            yield return new("Str.general", "ST", "Boolean");
+        }
+    }
+
+    private static bool TryParseLogicalNodeName(string logicalNode, out LogicalNodeNameParts parts)
+    {
+        parts = default;
+        var text = (logicalNode ?? string.Empty).Trim().Replace('$', '.');
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var classes = new[]
+        {
+            "MMXU", "MMXN", "MSQI", "GGIO", "CSWI", "XCBR", "XSWI",
+            "PTOC", "PTRC", "PDIF", "PDIS", "PIOC", "PTOV", "PTUV", "PTEF", "PDEF"
+        };
+
+        foreach (var cls in classes.OrderByDescending(c => c.Length))
+        {
+            var index = text.LastIndexOf(cls, StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+                continue;
+
+            var prefix = text[..index];
+            var suffix = text[(index + cls.Length)..];
+            if (string.IsNullOrWhiteSpace(suffix) || !suffix.All(char.IsDigit))
+                continue;
+            if (!int.TryParse(suffix, out var instance) || instance <= 0)
+                continue;
+
+            parts = new LogicalNodeNameParts(prefix, cls, instance, suffix.Length);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string BuildLogicalNodeName(string prefix, string logicalNodeClass, int instance, int width)
+    {
+        var instanceText = instance.ToString(CultureInfo.InvariantCulture);
+        if (width > 1)
+            instanceText = instanceText.PadLeft(width, '0');
+        return $"{prefix}{logicalNodeClass}{instanceText}";
+    }
+
+
+    private async Task<NativeMmsDiscoverySnapshot> TryBuildSupplementalGetNameListSnapshotAsync(CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_host))
+            return new NativeMmsDiscoverySnapshot();
+
+        // Some vendor IEDs expose the full logical-node directory through plain MMS
+        // GetNameList even when the higher-level ARIEC61850 model builder only returns
+        // the first readable branch.  Use a short, independent read-only association as
+        // a supplemental directory browse.  If the IED allows only one client, this fails
+        // silently and the primary ARIEC61850 discovery remains authoritative.
+        await using var supplemental = new Ari61850Bridge.Protocol.Iec61850.NativeIec61850Session();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(12));
+
+        try
+        {
+            await supplemental.ConnectAsync(_host, _port <= 0 ? 102 : _port, timeout.Token).ConfigureAwait(false);
+            if (!supplemental.IsMmsInitiated)
+                return new NativeMmsDiscoverySnapshot();
+
+            var domainVariables = await supplemental.DiscoverDomainVariableNamesAsync(timeout.Token).ConfigureAwait(false);
+            var typeTreeVariables = await supplemental.DiscoverDomainVariableTypeTreeNamesAsync(domainVariables, timeout.Token).ConfigureAwait(false);
+            var domainVariableLists = await supplemental.DiscoverDomainVariableListNamesAsync(timeout.Token).ConfigureAwait(false);
+            return new NativeMmsDiscoverySnapshot
+            {
+                DomainVariables = MergeDomainNameMaps(domainVariables, typeTreeVariables),
+                DomainVariableLists = domainVariableLists
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Discovery must never fail only because the supplemental browse was rejected.
+            return new NativeMmsDiscoverySnapshot();
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new NativeMmsDiscoverySnapshot();
+        }
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> MergeDomainNameMaps(
+        IReadOnlyDictionary<string, IReadOnlyList<string>> first,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> second)
+    {
+        var merged = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(IReadOnlyDictionary<string, IReadOnlyList<string>> source)
+        {
+            foreach (var pair in source)
+            {
+                var domain = (pair.Key ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(domain)) continue;
+                if (!merged.TryGetValue(domain, out var set))
+                {
+                    set = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                    merged[domain] = set;
+                }
+                foreach (var name in pair.Value)
+                {
+                    var text = (name ?? string.Empty).Trim();
+                    if (!string.IsNullOrWhiteSpace(text)) set.Add(text);
+                }
+            }
+        }
+
+        Add(first);
+        Add(second);
+        return merged.ToDictionary(k => k.Key, v => (IReadOnlyList<string>)v.Value.ToList(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static NativeMmsDiscoverySnapshot MergeDiscoverySnapshots(params NativeMmsDiscoverySnapshot?[] snapshots)
+    {
+        var variables = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var lists = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        static void MergeInto(
+            Dictionary<string, SortedSet<string>> target,
+            IReadOnlyDictionary<string, IReadOnlyList<string>> source)
+        {
+            foreach (var pair in source)
+            {
+                var domain = (pair.Key ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(domain)) continue;
+                if (!target.TryGetValue(domain, out var set))
+                {
+                    set = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                    target[domain] = set;
+                }
+
+                foreach (var item in pair.Value)
+                {
+                    var text = (item ?? string.Empty).Trim();
+                    if (!string.IsNullOrWhiteSpace(text)) set.Add(text);
+                }
+            }
+        }
+
+        foreach (var snapshot in snapshots)
+        {
+            if (snapshot == null) continue;
+            MergeInto(variables, snapshot.DomainVariables);
+            MergeInto(lists, snapshot.DomainVariableLists);
+        }
+
+        return new NativeMmsDiscoverySnapshot
+        {
+            DomainVariables = variables.ToDictionary(k => k.Key, v => (IReadOnlyList<string>)v.Value.ToList(), StringComparer.OrdinalIgnoreCase),
+            DomainVariableLists = lists.ToDictionary(k => k.Key, v => (IReadOnlyList<string>)v.Value.ToList(), StringComparer.OrdinalIgnoreCase)
+        };
     }
 
     private static IReadOnlyList<SignalDefinition> BuildSignalsFromArIecModel(
@@ -683,13 +1105,29 @@ public sealed class NativeIec61850Client : IIec61850Client
 
         foreach (var logicalDevice in model.LogicalDevices)
         {
+            var logicalDeviceDomainHint = ResolveLogicalDeviceDomainHint(logicalDevice);
+
             foreach (var logicalNode in logicalDevice.LogicalNodes)
             {
                 foreach (var dataObject in logicalNode.DataObjects)
                 {
                     AddArIecSmartTargets(signals, logicalNode, dataObject, now);
                     AddArIecAvrSemanticTargets(signals, logicalNode, dataObject, now);
+                    var dataObjectDomain = ExtractDomain(dataObject.Reference);
+                    if (!string.IsNullOrWhiteSpace(dataObjectDomain) &&
+                        (string.IsNullOrWhiteSpace(logicalDeviceDomainHint) ||
+                         dataObjectDomain.EndsWith(logicalDeviceDomainHint, StringComparison.OrdinalIgnoreCase) ||
+                         logicalDeviceDomainHint.Equals("LD0", StringComparison.OrdinalIgnoreCase) ||
+                         logicalDeviceDomainHint.Equals("LD01", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        logicalDeviceDomainHint = dataObjectDomain;
+                    }
                 }
+
+                // Some gateways expose the LN shell and DataSet/RCB correctly, but their online
+                // data-object tree is shallow. Keep every logical-node instance separate; the
+                // later probe/runtime decides readable vs polling fallback.
+                AddArIecLogicalNodeFallbackTargets(signals, logicalDevice, logicalNode, logicalDeviceDomainHint, now);
             }
         }
 
@@ -699,7 +1137,12 @@ public sealed class NativeIec61850Client : IIec61850Client
                 signals.Add(fallback);
         }
 
-        return signals
+        return FinalizeDiscoveredSignals(signals);
+    }
+
+
+    private static IReadOnlyList<SignalDefinition> FinalizeDiscoveredSignals(IEnumerable<SignalDefinition> signals)
+        => signals
             .Where(s => s.DataType != "Directory")
             .Where(IsGatewayReadableSignal)
             .GroupBy(s => NormalizeReference(s.ObjectReference), StringComparer.OrdinalIgnoreCase)
@@ -714,6 +1157,583 @@ public sealed class NativeIec61850Client : IIec61850Client
             .ThenBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
             .Take(12000)
             .ToList();
+
+    private readonly record struct LogicalNodeHint(string Domain, string LogicalNode, string LogicalNodeClass, string Source);
+
+    private static void AddGenericLogicalNodeFallbacksFromDiscoveryArtifacts(
+        ICollection<SignalDefinition> signals,
+        object discovery,
+        NativeMmsDiscoverySnapshot snapshot,
+        NativeReportInventory inventory,
+        DateTime now)
+    {
+        var hints = new Dictionary<string, LogicalNodeHint>(StringComparer.OrdinalIgnoreCase);
+
+        void AddHint(string domain, string logicalNode, string source)
+        {
+            domain = (domain ?? string.Empty).Trim().Replace('$', '.');
+            logicalNode = (logicalNode ?? string.Empty).Trim().Replace('$', '.');
+            if (string.IsNullOrWhiteSpace(domain) || string.IsNullOrWhiteSpace(logicalNode))
+                return;
+
+            var cls = SignalDefinition.DetectLogicalNodeClass(logicalNode).ToUpperInvariant();
+            if (!IsScadaLogicalNodeClassForFallback(cls))
+                return;
+
+            var key = $"{domain}/{logicalNode}";
+            if (!hints.ContainsKey(key))
+                hints[key] = new LogicalNodeHint(domain, logicalNode, cls, source);
+        }
+
+        foreach (var signal in signals)
+        {
+            var domain = ExtractDomain(signal.ObjectReference);
+            if (!string.IsNullOrWhiteSpace(domain) && !string.IsNullOrWhiteSpace(signal.LogicalNode))
+                AddHint(domain, signal.LogicalNode, "existing signal inventory");
+        }
+
+        foreach (var domainPair in snapshot.DomainVariables)
+        {
+            var domain = domainPair.Key ?? string.Empty;
+            foreach (var raw in domainPair.Value)
+                foreach (var hint in ExtractLogicalNodeHintsFromText(raw, domain, "MMS NamedVariable"))
+                    AddHint(hint.Domain, hint.LogicalNode, hint.Source);
+        }
+
+        foreach (var domainPair in snapshot.DomainVariableLists)
+        {
+            var domain = domainPair.Key ?? string.Empty;
+            foreach (var raw in domainPair.Value)
+                foreach (var hint in ExtractLogicalNodeHintsFromText(raw, domain, "MMS NamedVariableList/DataSet"))
+                    AddHint(hint.Domain, hint.LogicalNode, hint.Source);
+        }
+
+        foreach (var ds in inventory.DataSets)
+        {
+            AddHint(ds.Domain, ds.LogicalNode, "Report inventory DataSet");
+            foreach (var hint in ExtractLogicalNodeHintsFromText(ds.Reference, ds.Domain, "Report inventory DataSet reference"))
+                AddHint(hint.Domain, hint.LogicalNode, hint.Source);
+            foreach (var hint in ExtractLogicalNodeHintsFromText(ds.RawMmsName, ds.Domain, "Report inventory DataSet raw name"))
+                AddHint(hint.Domain, hint.LogicalNode, hint.Source);
+        }
+
+        foreach (var rcb in inventory.ReportControls)
+        {
+            AddHint(rcb.Domain, rcb.LogicalNode, "Report inventory RCB");
+            foreach (var hint in ExtractLogicalNodeHintsFromText(rcb.Reference, rcb.Domain, "Report inventory RCB reference"))
+                AddHint(hint.Domain, hint.LogicalNode, hint.Source);
+            foreach (var hint in ExtractLogicalNodeHintsFromText(rcb.DataSetReference, rcb.Domain, "Report inventory RCB DataSet reference"))
+                AddHint(hint.Domain, hint.LogicalNode, hint.Source);
+        }
+
+        var knownDomains = signals
+            .Select(s => ExtractDomain(s.ObjectReference))
+            .Concat(snapshot.DomainVariables.Keys)
+            .Concat(snapshot.DomainVariableLists.Keys)
+            .Select(d => (d ?? string.Empty).Trim())
+            .Where(d => !string.IsNullOrWhiteSpace(d))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var reflectionDefaultDomain = knownDomains.Count == 1 ? knownDomains[0] : string.Empty;
+
+        foreach (var text in EnumerateDiscoveryStrings(discovery, maxDepth: 7, maxItems: 50000))
+        {
+            foreach (var hint in ExtractLogicalNodeHintsFromText(text, reflectionDefaultDomain, "ARIEC61850 discovery object"))
+                AddHint(hint.Domain, hint.LogicalNode, hint.Source);
+        }
+
+        foreach (var hint in EnumerateLogicalNodeHintsFromObjectShapes(discovery, reflectionDefaultDomain, maxDepth: 8, maxItems: 50000))
+            AddHint(hint.Domain, hint.LogicalNode, hint.Source);
+
+        foreach (var hint in hints.Values.OrderBy(h => h.Domain, StringComparer.OrdinalIgnoreCase).ThenBy(h => h.LogicalNode, StringComparer.OrdinalIgnoreCase))
+        {
+            var hasCoreSignalForLn = signals.Any(s =>
+                ExtractDomain(s.ObjectReference).Equals(hint.Domain, StringComparison.OrdinalIgnoreCase) &&
+                s.LogicalNode.Equals(hint.LogicalNode, StringComparison.OrdinalIgnoreCase) &&
+                s.IsScadaCoreSignal);
+
+            if (hasCoreSignalForLn)
+                continue;
+
+            foreach (var point in BuildArIecLogicalNodeFallbackPoints(hint.LogicalNodeClass))
+            {
+                var reference = $"{hint.Domain}/{hint.LogicalNode}.{point.Path}";
+                if (signals.Any(s => ReferencesEqual(s.ObjectReference, reference)))
+                    continue;
+
+                signals.Add(CreateArIecSignal(
+                    reference,
+                    point.FunctionalConstraint,
+                    point.Category,
+                    hint.LogicalNodeClass,
+                    point.DataObject,
+                    string.Empty,
+                    now,
+                    $"Generic full-LN discovery fallback ({hint.Source})"));
+            }
+        }
+    }
+
+    private static bool IsScadaLogicalNodeClassForFallback(string logicalNodeClass)
+    {
+        var cls = (logicalNodeClass ?? string.Empty).ToUpperInvariant();
+        return cls is "GGIO" or "MMXU" or "MMXN" or "CSWI" or "XCBR" or "XSWI" or
+               "PTOC" or "PTRC" or "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF" or
+               "ATCC" or "AVC" or "AVCO" or "YPTR";
+    }
+
+    private static IEnumerable<LogicalNodeHint> ExtractLogicalNodeHintsFromText(string text, string defaultDomain, string source)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            yield break;
+
+        var normalized = text.Trim().Replace('$', '.').Replace('\\', '/');
+        var pattern = @"(?:(?<domain>[A-Za-z0-9_.-]+)/)?(?<ln>[A-Za-z0-9_]*(?:LLN0|LPHD\d*|GGIO\d+|MMXU\d+|MMXN\d+|CSWI\d+|XCBR\d+|XSWI\d+|PTOC\d+|PTRC\d+|PDIF\d+|PDIS\d+|PIOC\d+|PTOV\d+|PTUV\d+|PTEF\d+|PDEF\d+|ATCC\d+|AVCO\d+|AVC\d+|YPTR\d+))(?:[.$/]|$)";
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(normalized, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            var ln = match.Groups["ln"].Value;
+            var domain = match.Groups["domain"].Success ? match.Groups["domain"].Value : defaultDomain;
+            if (string.IsNullOrWhiteSpace(domain) || string.IsNullOrWhiteSpace(ln))
+                continue;
+
+            yield return new LogicalNodeHint(domain, ln, SignalDefinition.DetectLogicalNodeClass(ln), source);
+        }
+    }
+
+
+    private static IEnumerable<LogicalNodeHint> EnumerateLogicalNodeHintsFromObjectShapes(object? root, string defaultDomain, int maxDepth, int maxItems)
+    {
+        if (root == null || maxDepth <= 0 || maxItems <= 0)
+            yield break;
+
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var queue = new Queue<(object Value, int Depth)>();
+        queue.Enqueue((root, 0));
+        var visitedItems = 0;
+        var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        while (queue.Count > 0 && visitedItems < maxItems)
+        {
+            var (value, depth) = queue.Dequeue();
+            if (value == null) continue;
+            if (value is string) continue;
+
+            var type = value.GetType();
+            if (type.IsValueType || type.IsEnum) continue;
+            if (!visited.Add(value)) continue;
+            visitedItems++;
+
+            var reference = ReadStringProperty(value, "Reference", "ObjectReference", "IecReference", "MmsReference", "Path", "FullPath", "FullName");
+            var domain = ExtractDomain(reference);
+            if (string.IsNullOrWhiteSpace(domain))
+            {
+                domain = ReadStringProperty(value, "Domain", "DomainName", "MmsDomain", "MmsDomainName", "LogicalDevice", "LogicalDeviceName", "LdName", "LdInst", "LdInstance");
+                if (domain.Contains('/')) domain = ExtractDomain(domain);
+            }
+            if (string.IsNullOrWhiteSpace(domain))
+                domain = defaultDomain;
+
+            var lnClass = ReadStringProperty(value, "LnClass", "LogicalNodeClass", "Class", "LogicalNodeType", "LogicalNodeClassName");
+            var inst = ReadStringProperty(value, "Inst", "Instance", "InstanceNumber", "LnInst", "LogicalNodeInstance", "InstanceId");
+            var lnName = ReadStringProperty(value, "LogicalNode", "LogicalNodeName", "LnName", "Name", "InstanceName", "NodeName");
+
+            if (!string.IsNullOrWhiteSpace(reference) && reference.Contains('/'))
+            {
+                var fromReference = ExtractLogicalNode(reference);
+                if (!string.IsNullOrWhiteSpace(fromReference))
+                    lnName = fromReference;
+            }
+
+            if (!string.IsNullOrWhiteSpace(lnClass))
+                lnName = BuildLogicalNodeName(lnName, lnClass, inst, value);
+
+            if (string.IsNullOrWhiteSpace(lnClass) && LooksLikeLogicalNodeName(lnName))
+                lnClass = SignalDefinition.DetectLogicalNodeClass(lnName);
+
+            if (!string.IsNullOrWhiteSpace(domain) && !string.IsNullOrWhiteSpace(lnName) && !string.IsNullOrWhiteSpace(lnClass))
+            {
+                var cls = SignalDefinition.DetectLogicalNodeClass(lnName);
+                if (string.IsNullOrWhiteSpace(cls)) cls = lnClass;
+                if (IsScadaLogicalNodeClassForFallback(cls))
+                {
+                    var key = $"{domain}/{lnName}";
+                    if (emitted.Add(key))
+                        yield return new LogicalNodeHint(domain.Trim().Replace('$', '.'), lnName.Trim().Replace('$', '.'), cls, "ARIEC61850 object-shape LN inventory");
+                }
+            }
+
+            if (depth >= maxDepth)
+                continue;
+
+            if (value is System.Collections.IDictionary dictionary)
+            {
+                foreach (System.Collections.DictionaryEntry entry in dictionary)
+                {
+                    if (entry.Key != null) queue.Enqueue((entry.Key, depth + 1));
+                    if (entry.Value != null) queue.Enqueue((entry.Value, depth + 1));
+                }
+                continue;
+            }
+
+            if (value is System.Collections.IEnumerable enumerable)
+            {
+                foreach (var item in enumerable)
+                    if (item != null) queue.Enqueue((item, depth + 1));
+                continue;
+            }
+
+            foreach (var prop in type.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public))
+            {
+                if (prop.GetIndexParameters().Length != 0)
+                    continue;
+
+                object? propertyValue;
+                try
+                {
+                    propertyValue = prop.GetValue(value);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (propertyValue != null)
+                    queue.Enqueue((propertyValue, depth + 1));
+            }
+        }
+    }
+
+    private static bool LooksLikeLogicalNodeName(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            text.Trim(),
+            @"^[A-Za-z0-9_]*(LLN0|LPHD\d*|GGIO\d+|MMXU\d+|MMXN\d+|CSWI\d+|XCBR\d+|XSWI\d+|PTOC\d+|PTRC\d+|PDIF\d+|PDIS\d+|PIOC\d+|PTOV\d+|PTUV\d+|PTEF\d+|PDEF\d+|ATCC\d+|AVCO\d+|AVC\d+|YPTR\d+)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    private static IEnumerable<string> EnumerateDiscoveryStrings(object? root, int maxDepth, int maxItems)
+    {
+        if (root == null || maxDepth <= 0 || maxItems <= 0)
+            yield break;
+
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var queue = new Queue<(object Value, int Depth)>();
+        queue.Enqueue((root, 0));
+        var emitted = 0;
+
+        while (queue.Count > 0 && emitted < maxItems)
+        {
+            var (value, depth) = queue.Dequeue();
+            if (value == null)
+                continue;
+
+            if (value is string text)
+            {
+                emitted++;
+                yield return text;
+                continue;
+            }
+
+            var type = value.GetType();
+            if (type.IsValueType || type.IsEnum)
+                continue;
+            if (!visited.Add(value))
+                continue;
+            if (depth >= maxDepth)
+                continue;
+
+            if (value is System.Collections.IDictionary dictionary)
+            {
+                foreach (System.Collections.DictionaryEntry entry in dictionary)
+                {
+                    if (entry.Key != null) queue.Enqueue((entry.Key, depth + 1));
+                    if (entry.Value != null) queue.Enqueue((entry.Value, depth + 1));
+                }
+                continue;
+            }
+
+            if (value is System.Collections.IEnumerable enumerable)
+            {
+                foreach (var item in enumerable)
+                    if (item != null) queue.Enqueue((item, depth + 1));
+                continue;
+            }
+
+            foreach (var prop in type.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public))
+            {
+                if (prop.GetIndexParameters().Length != 0)
+                    continue;
+
+                object? propertyValue;
+                try
+                {
+                    propertyValue = prop.GetValue(value);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (propertyValue != null)
+                    queue.Enqueue((propertyValue, depth + 1));
+            }
+        }
+    }
+
+    private static void AddArIecLogicalNodeFallbackTargets(
+        ICollection<SignalDefinition> signals,
+        object logicalDevice,
+        LiveIedLogicalNodeModel logicalNode,
+        string logicalDeviceDomainHint,
+        DateTime now)
+    {
+        var lnClass = (logicalNode.LnClass ?? string.Empty).ToUpperInvariant();
+        if (lnClass is not ("MMXU" or "MMXN" or "GGIO" or "CSWI" or "XCBR" or "XSWI" or "PTOC" or "PTRC" or "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF"))
+            return;
+
+        var lnReference = ResolveArIecLogicalNodeReference(logicalDevice, logicalNode, logicalDeviceDomainHint);
+        if (string.IsNullOrWhiteSpace(lnReference) || !lnReference.Contains('/'))
+            return;
+
+        foreach (var point in BuildArIecLogicalNodeFallbackPoints(lnClass))
+        {
+            var reference = $"{lnReference}.{point.Path}";
+            if (signals.Any(s => ReferencesEqual(s.ObjectReference, reference)))
+                continue;
+
+            signals.Add(CreateArIecSignal(
+                reference,
+                point.FunctionalConstraint,
+                point.Category,
+                lnClass,
+                point.DataObject,
+                string.Empty,
+                now,
+                "ARIEC61850 LN profile fallback"));
+        }
+    }
+
+    private readonly record struct ArIecFallbackPoint(string DataObject, string Path, string FunctionalConstraint, string Category);
+
+    private static IEnumerable<ArIecFallbackPoint> BuildArIecLogicalNodeFallbackPoints(string lnClass)
+    {
+        if (lnClass is "MMXU" or "MMXN")
+        {
+            yield return new("PhV", "PhV.phsA.cVal.mag.f", "MX", "Measurement");
+            yield return new("PhV", "PhV.phsB.cVal.mag.f", "MX", "Measurement");
+            yield return new("PhV", "PhV.phsC.cVal.mag.f", "MX", "Measurement");
+            yield return new("A", "A.phsA.cVal.mag.f", "MX", "Measurement");
+            yield return new("A", "A.phsB.cVal.mag.f", "MX", "Measurement");
+            yield return new("A", "A.phsC.cVal.mag.f", "MX", "Measurement");
+            yield return new("PPV", "PPV.phsAB.cVal.mag.f", "MX", "Measurement");
+            yield return new("PPV", "PPV.phsBC.cVal.mag.f", "MX", "Measurement");
+            yield return new("PPV", "PPV.phsCA.cVal.mag.f", "MX", "Measurement");
+            yield return new("Hz", "Hz.mag.f", "MX", "Measurement");
+            yield break;
+        }
+
+        if (lnClass == "GGIO")
+        {
+            for (var i = 1; i <= 32; i++)
+                yield return new($"Ind{i}", $"Ind{i}.stVal", "ST", "Status");
+            for (var i = 1; i <= 16; i++)
+                yield return new($"AnIn{i}", $"AnIn{i}.mag.f", "MX", "Measurement");
+            yield break;
+        }
+
+        if (lnClass is "CSWI" or "XCBR" or "XSWI")
+        {
+            yield return new("Pos", "Pos.stVal", "ST", "Position");
+            yield break;
+        }
+
+        if (lnClass == "PTRC")
+        {
+            yield return new("Tr", "Tr.general", "ST", "Protection");
+            yield break;
+        }
+
+        if (lnClass.StartsWith("P", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return new("Op", "Op.general", "ST", "Protection");
+            yield return new("Str", "Str.general", "ST", "Protection");
+        }
+    }
+
+    private static string ExtractDomain(string? reference)
+    {
+        var text = (reference ?? string.Empty).Trim().Replace('$', '.');
+        var slash = text.IndexOf('/');
+        return slash > 0 ? text[..slash] : string.Empty;
+    }
+
+    private static string ResolveLogicalDeviceDomainHint(object logicalDevice)
+    {
+        var domain = ResolveArIecLogicalDeviceDomain(logicalDevice);
+        if (!string.IsNullOrWhiteSpace(domain))
+            return domain;
+
+        // Fallback: derive the MMS domain from the first fully-qualified data-object reference
+        // inside this logical device. This keeps generated fallback points in the same real
+        // MMS domain as the discovered LN, instead of producing LD01/... when the domain is
+        // actually vendor-prefixed.
+        var logicalNodesProperty = logicalDevice.GetType().GetProperty("LogicalNodes");
+        if (logicalNodesProperty?.GetValue(logicalDevice) is System.Collections.IEnumerable logicalNodes)
+        {
+            foreach (var ln in logicalNodes)
+            {
+                var dataObjectsProperty = ln?.GetType().GetProperty("DataObjects");
+                if (dataObjectsProperty?.GetValue(ln) is not System.Collections.IEnumerable dataObjects)
+                    continue;
+
+                foreach (var dataObject in dataObjects)
+                {
+                    var reference = ReadStringProperty(dataObject!, "Reference", "ObjectReference", "IecReference", "Path", "MmsReference");
+                    var extracted = ExtractDomain(reference);
+                    if (!string.IsNullOrWhiteSpace(extracted))
+                        return extracted;
+                }
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string ResolveArIecLogicalNodeReference(object logicalDevice, object logicalNode, string logicalDeviceDomainHint = "")
+    {
+        var lnReference = ReadStringProperty(logicalNode, "Reference", "ObjectReference", "IecReference", "Path", "MmsReference");
+        var lnClass = ReadStringProperty(logicalNode, "LnClass", "LogicalNodeClass", "Class", "LogicalNodeType");
+        var inst = ReadStringProperty(logicalNode, "Inst", "Instance", "InstanceNumber", "LnInst", "LogicalNodeInstance", "InstanceId");
+
+        if (!string.IsNullOrWhiteSpace(lnReference) && lnReference.Contains('/'))
+        {
+            var normalized = lnReference.Trim().Replace('$', '.');
+            if (!string.IsNullOrWhiteSpace(inst) && !string.IsNullOrWhiteSpace(lnClass))
+                normalized = EnsureLogicalNodeInstanceSuffix(normalized, lnClass, inst);
+            return normalized;
+        }
+
+        var lnName = ReadStringProperty(logicalNode, "Name", "LogicalNodeName", "LnName", "InstanceName", "FullName", "NodeName");
+        lnName = BuildLogicalNodeName(lnName, lnClass, inst, logicalNode);
+
+        if (string.IsNullOrWhiteSpace(lnName))
+            return string.Empty;
+        if (lnName.Contains('/'))
+            return lnName.Trim().Replace('$', '.');
+
+        var domain = string.IsNullOrWhiteSpace(logicalDeviceDomainHint)
+            ? ResolveArIecLogicalDeviceDomain(logicalDevice)
+            : logicalDeviceDomainHint;
+        if (string.IsNullOrWhiteSpace(domain))
+            return string.Empty;
+
+        return $"{domain.Trim().Replace('$', '.')}/{lnName.Trim().Replace('$', '.')}";
+    }
+
+    private static string BuildLogicalNodeName(string lnName, string lnClass, string inst, object logicalNode)
+    {
+        lnName = (lnName ?? string.Empty).Trim().Replace('$', '.');
+        lnClass = (lnClass ?? string.Empty).Trim();
+        inst = NormalizeInstanceText(inst);
+
+        // ARIEC61850 model builders and vendor MMS trees do not all expose the same property
+        // shape. Some expose Name="MMXU" plus InstanceNumber=2 instead of Name="MMXU2".
+        // If we do not append the instance, multiple LN instances collapse into one synthetic
+        // class-only reference and the wizard appears to discover only the first LN.
+        if (string.IsNullOrWhiteSpace(lnName))
+        {
+            var prefix = ReadStringProperty(logicalNode, "Prefix", "LnPrefix", "LogicalNodePrefix");
+            lnName = string.IsNullOrWhiteSpace(inst) ? $"{prefix}{lnClass}" : $"{prefix}{lnClass}{inst}";
+        }
+        else if (!string.IsNullOrWhiteSpace(lnClass) && !string.IsNullOrWhiteSpace(inst))
+        {
+            lnName = EnsureLogicalNodeInstanceSuffix(lnName, lnClass, inst);
+        }
+
+        return lnName;
+    }
+
+    private static string EnsureLogicalNodeInstanceSuffix(string text, string lnClass, string inst)
+    {
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(lnClass) || string.IsNullOrWhiteSpace(inst))
+            return text ?? string.Empty;
+
+        inst = NormalizeInstanceText(inst);
+        if (string.IsNullOrWhiteSpace(inst))
+            return text;
+
+        var normalized = text.Trim().Replace('$', '.');
+        var slash = normalized.LastIndexOf('/');
+        var prefix = slash >= 0 ? normalized[..(slash + 1)] : string.Empty;
+        var leaf = slash >= 0 ? normalized[(slash + 1)..] : normalized;
+        var dot = leaf.IndexOf('.');
+        var ln = dot >= 0 ? leaf[..dot] : leaf;
+        var suffix = dot >= 0 ? leaf[dot..] : string.Empty;
+
+        var classIndex = ln.IndexOf(lnClass, StringComparison.OrdinalIgnoreCase);
+        if (classIndex < 0)
+            return normalized;
+
+        var afterClass = classIndex + lnClass.Length;
+        if (afterClass < ln.Length && char.IsDigit(ln[afterClass]))
+            return normalized;
+
+        var fixedLn = ln.Insert(afterClass, inst);
+        return prefix + fixedLn + suffix;
+    }
+
+    private static string ResolveArIecLogicalDeviceDomain(object logicalDevice)
+    {
+        var domain = ReadStringProperty(logicalDevice,
+            "Reference", "ObjectReference", "IecReference", "Domain", "DomainName", "MmsDomain",
+            "MmsDomainName", "Name", "LogicalDeviceName", "LdName", "LdInst", "Inst",
+            "Instance", "InstanceName", "Id", "Identifier");
+
+        if (string.IsNullOrWhiteSpace(domain))
+            return string.Empty;
+
+        domain = domain.Trim().Replace('$', '.');
+        if (domain.Contains('/'))
+            domain = domain[..domain.IndexOf('/')];
+        return domain;
+    }
+
+    private static string NormalizeInstanceText(string value)
+    {
+        value = (value ?? string.Empty).Trim();
+        if (value.Length == 0) return string.Empty;
+        if (int.TryParse(value, out var number))
+            return number <= 0 ? string.Empty : number.ToString(CultureInfo.InvariantCulture);
+        return value;
+    }
+
+    private static string ReadStringProperty(object source, params string[] propertyNames)
+    {
+        if (source == null) return string.Empty;
+        var type = source.GetType();
+        foreach (var name in propertyNames)
+        {
+            var prop = type.GetProperty(name);
+            if (prop == null) continue;
+            var raw = prop.GetValue(source);
+            if (raw == null) continue;
+            var value = raw switch
+            {
+                string text => text,
+                int i => i.ToString(CultureInfo.InvariantCulture),
+                long l => l.ToString(CultureInfo.InvariantCulture),
+                short sh => sh.ToString(CultureInfo.InvariantCulture),
+                byte b => b.ToString(CultureInfo.InvariantCulture),
+                uint ui => ui.ToString(CultureInfo.InvariantCulture),
+                ulong ul => ul.ToString(CultureInfo.InvariantCulture),
+                ushort us => us.ToString(CultureInfo.InvariantCulture),
+                _ when prop.PropertyType.IsEnum => raw.ToString() ?? string.Empty,
+                _ => string.Empty
+            };
+            if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+        }
+        return string.Empty;
     }
 
     private static void AddArIecSmartTargets(
@@ -855,22 +1875,58 @@ public sealed class NativeIec61850Client : IIec61850Client
         var ln = ExtractLogicalNode(reference);
         var isCore = SignalDefinition.IsCoreScadaSignal(reference, SignalDefinition.DetectLogicalNodeClass(ln), dataType, category);
 
+        var normalizedReference = reference.Trim().Replace('$', '.');
+        TryBuildCompanionReference(normalizedReference, "q", out var qRef);
+        TryBuildCompanionReference(normalizedReference, "t", out var tRef);
+
         return new SignalDefinition
         {
             Name = MakeArIecFriendlyName(reference, dataObjectName, category, semanticKind),
-            ObjectReference = reference.Trim().Replace('$', '.'),
+            ObjectReference = normalizedReference,
             FunctionalConstraint = functionalConstraint.Trim().ToUpperInvariant(),
             DataType = dataType,
             Category = category,
             Unit = unit,
             Confidence = isCore || source.Contains("semantic", StringComparison.OrdinalIgnoreCase) ? "High" : "Medium",
             IsSelected = isCore,
-            IsReportCapable = isCore && functionalConstraint.Trim().ToUpperInvariant() is "ST" or "MX",
+            IsReportCapable = false,
+            ReportCoverage = "Polling fallback",
+            ReportCoverageReason = "ARIEC61850 identified this as a SCADA value. Report DataSet/RCB coverage will be auto-planned separately.",
+            QualityReference = qRef,
+            TimestampReference = tRef,
             Source = source,
             Value = "Pending read",
             Quality = "Pending",
             Timestamp = now
         };
+    }
+
+    private static bool TryBuildCompanionReference(string reference, string companion, out string companionReference)
+    {
+        companionReference = string.Empty;
+        if (!companion.Equals("q", StringComparison.OrdinalIgnoreCase) && !companion.Equals("t", StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.IsNullOrWhiteSpace(reference)) return false;
+
+        var normalized = reference.Replace('$', '.').Trim();
+        if (normalized.EndsWith(".q", StringComparison.OrdinalIgnoreCase) || normalized.EndsWith(".t", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var parent = normalized;
+        if (parent.EndsWith(".ValWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
+        else if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
+        else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
+        else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];
+        else if (parent.EndsWith(".mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
+        else
+        {
+            var slash = parent.IndexOf('/');
+            var dot = parent.LastIndexOf('.');
+            if (dot <= slash) return false;
+            parent = parent[..dot];
+        }
+
+        if (string.IsNullOrWhiteSpace(parent)) return false;
+        companionReference = $"{parent}.{companion.ToLowerInvariant()}";
+        return true;
     }
 
     private static string InferArIecDataType(string reference, string functionalConstraint, string semanticKind, string dataObjectName, string cdc)
