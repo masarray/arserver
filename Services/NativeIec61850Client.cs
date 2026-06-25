@@ -701,6 +701,7 @@ public sealed class NativeIec61850Client : IIec61850Client
 
         return signals
             .Where(s => s.DataType != "Directory")
+            .Where(IsGatewayReadableSignal)
             .GroupBy(s => NormalizeReference(s.ObjectReference), StringComparer.OrdinalIgnoreCase)
             .Select(g => g
                 .OrderByDescending(x => x.Source.StartsWith("ARIEC61850", StringComparison.OrdinalIgnoreCase))
@@ -727,8 +728,9 @@ public sealed class NativeIec61850Client : IIec61850Client
             if (string.IsNullOrWhiteSpace(target.Reference) || string.IsNullOrWhiteSpace(target.FunctionalConstraint))
                 continue;
 
+            var reference = NormalizeStructuredStatusTargetReference(target.Reference, dataObject.Name, dataObject.InferredCdc);
             var signal = CreateArIecSignal(
-                target.Reference,
+                reference,
                 target.FunctionalConstraint,
                 target.Purpose,
                 logicalNode.LnClass,
@@ -739,6 +741,78 @@ public sealed class NativeIec61850Client : IIec61850Client
 
             signals.Add(signal);
         }
+    }
+
+    private static string NormalizeStructuredStatusTargetReference(string reference, string dataObjectName, string cdc)
+    {
+        var normalized = (reference ?? string.Empty).Trim().Replace('$', '.');
+        if (string.IsNullOrWhiteSpace(normalized) || string.IsNullOrWhiteSpace(dataObjectName))
+            return normalized;
+
+        if (normalized.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase) ||
+            normalized.EndsWith(".general", StringComparison.OrdinalIgnoreCase) ||
+            normalized.EndsWith(".q", StringComparison.OrdinalIgnoreCase) ||
+            normalized.EndsWith(".t", StringComparison.OrdinalIgnoreCase))
+        {
+            return normalized;
+        }
+
+        if (IsStatusCdc(cdc) && EndsWithPathSegment(normalized, dataObjectName))
+            return normalized + ".stVal";
+
+        return normalized;
+    }
+
+    private static bool IsStatusCdc(string cdc)
+        => cdc.Equals("DPC", StringComparison.OrdinalIgnoreCase) ||
+           cdc.Equals("SPC", StringComparison.OrdinalIgnoreCase) ||
+           cdc.Equals("SPS", StringComparison.OrdinalIgnoreCase) ||
+           cdc.Equals("INS", StringComparison.OrdinalIgnoreCase) ||
+           cdc.Equals("ENS", StringComparison.OrdinalIgnoreCase) ||
+           cdc.Equals("BSC", StringComparison.OrdinalIgnoreCase);
+
+    private static bool EndsWithPathSegment(string reference, string segment)
+    {
+        var text = reference.Replace('$', '.').TrimEnd('.');
+        var dot = text.LastIndexOf('.');
+        var slash = text.LastIndexOf('/');
+        var start = Math.Max(dot, slash) + 1;
+        return start >= 0 &&
+               start < text.Length &&
+               text[start..].Equals(segment, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGatewayReadableSignal(SignalDefinition signal)
+    {
+        if (signal.IsScadaCoreSignal)
+            return true;
+
+        var r = NormalizeReference(signal.ObjectReference);
+        var dataType = signal.DataType ?? string.Empty;
+
+        if (dataType.Equals("Quality", StringComparison.OrdinalIgnoreCase))
+            return r.EndsWith(".q");
+        if (dataType.Equals("Timestamp", StringComparison.OrdinalIgnoreCase))
+            return r.EndsWith(".t") || r.EndsWith(".tm");
+        if (dataType.Equals("Float32", StringComparison.OrdinalIgnoreCase) || dataType.Equals("Double", StringComparison.OrdinalIgnoreCase))
+            return r.EndsWith(".f") || r.EndsWith(".mag.f") || r.EndsWith(".ang.f");
+        if (dataType.Equals("Dbpos", StringComparison.OrdinalIgnoreCase))
+            return r.EndsWith(".pos.stval") || r.EndsWith(".stval");
+        if (dataType.Equals("Boolean", StringComparison.OrdinalIgnoreCase))
+            return r.EndsWith(".stval") || r.EndsWith(".general") || r.EndsWith(".ctlval");
+        if (dataType.Equals("Enum", StringComparison.OrdinalIgnoreCase) ||
+            dataType.Equals("Int32", StringComparison.OrdinalIgnoreCase) ||
+            dataType.Equals("UInt32", StringComparison.OrdinalIgnoreCase) ||
+            dataType.Equals("Integer", StringComparison.OrdinalIgnoreCase))
+        {
+            return r.EndsWith(".stval") ||
+                   r.EndsWith(".posval") ||
+                   r.EndsWith(".actval") ||
+                   r.EndsWith(".setval") ||
+                   r.EndsWith(".ctlmodel");
+        }
+
+        return false;
     }
 
     private static void AddArIecAvrSemanticTargets(
@@ -1389,11 +1463,20 @@ public sealed class NativeIec61850Client : IIec61850Client
         if (value == null || value.Kind is not (ArMms.MmsDataKind.Structure or ArMms.MmsDataKind.Array))
             return false;
 
-        if (!IsScalarLeafReference(requestedReference))
+        string[] segments;
+        if (IsScalarLeafReference(requestedReference))
+        {
+            if (!TryGetRelativeLeafSegments(readReference, requestedReference, out segments))
+                return false;
+        }
+        else if (IsStatusScalarDataTypeHint(dataType))
+        {
+            segments = new[] { "stVal" };
+        }
+        else
+        {
             return false;
-
-        if (!TryGetRelativeLeafSegments(readReference, requestedReference, out var segments))
-            return false;
+        }
 
         var leaf = segments[^1];
         if (!IsSemanticLeafProjectionCandidate(leaf, requestedReference))
@@ -1474,6 +1557,18 @@ public sealed class NativeIec61850Client : IIec61850Client
         }
 
         return requestedReference.EndsWith(".ValWTr.posVal", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsStatusScalarDataTypeHint(string dataType)
+    {
+        var hint = (dataType ?? string.Empty).Trim();
+        return hint.Equals("Boolean", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Bool", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Dbpos", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Enum", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Int32", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("UInt32", StringComparison.OrdinalIgnoreCase) ||
+               hint.Equals("Integer", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsKnownSingleStructBranch(string segment)

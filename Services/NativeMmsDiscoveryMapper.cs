@@ -475,7 +475,30 @@ public static class NativeMmsDiscoveryMapper
         if (normalized.Contains(".numpts") || normalized.Contains(".olddata") || normalized.Contains(".configrev")) return false;
         if (normalized.Contains(".mod.") || normalized.Contains(".beh.")) return false;
 
-        return (signal.FunctionalConstraint is "ST" or "MX") && (signal.DataType is "Boolean" or "Enum" or "Float32" or "Int32" or "UInt16" or "Dbpos");
+        return (signal.FunctionalConstraint is "ST" or "MX") &&
+               (signal.DataType is "Boolean" or "Enum" or "Float32" or "Int32" or "UInt16" or "Dbpos") &&
+               IsKnownScalarSignalReference(normalized, signal.DataType);
+    }
+
+    private static bool IsKnownScalarSignalReference(string normalizedReference, string dataType)
+    {
+        if (normalizedReference.EndsWith(".stval") ||
+            normalizedReference.EndsWith(".general") ||
+            normalizedReference.EndsWith(".posval") ||
+            normalizedReference.EndsWith(".actval") ||
+            normalizedReference.EndsWith(".setval") ||
+            normalizedReference.EndsWith(".ctlval") ||
+            normalizedReference.EndsWith(".ctlmodel") ||
+            normalizedReference.EndsWith(".f") ||
+            normalizedReference.EndsWith(".i"))
+        {
+            return true;
+        }
+
+        if (string.Equals(dataType, "Float32", StringComparison.OrdinalIgnoreCase))
+            return normalizedReference.Contains(".mag.") || normalizedReference.Contains(".ang.");
+
+        return false;
     }
 
     private static bool LooksLikeReadableLeaf(string[] parts)
