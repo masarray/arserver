@@ -17,7 +17,7 @@ public readonly record struct MmsObjectReference(string Domain, string Item, str
             throw new ArgumentException("IEC 61850 object reference is empty.", nameof(reference));
 
         var fc = functionalConstraint?.Trim() ?? string.Empty;
-        var normalized = reference.Trim().Replace('$', '.');
+        var normalized = CanonicalizeIecReferenceCase(reference.Trim().Replace('$', '.'));
         var slash = normalized.IndexOf('/');
         if (slash <= 0 || slash >= normalized.Length - 1)
             return new MmsObjectReference(string.Empty, normalized.Replace('.', '$'), fc);
@@ -41,6 +41,13 @@ public readonly record struct MmsObjectReference(string Domain, string Item, str
             return string.Join('$', parts);
 
         return string.Join('$', new[] { parts[0], functionalConstraint }.Concat(parts.Skip(1)));
+    }
+
+    private static string CanonicalizeIecReferenceCase(string reference)
+    {
+        return (reference ?? string.Empty)
+            .Replace(".ValWTr", ".valWTr", StringComparison.OrdinalIgnoreCase)
+            .Replace(".CtlDITms", ".CtlDlTms", StringComparison.OrdinalIgnoreCase);
     }
 
     public MmsObjectReference WithoutFunctionalConstraint()

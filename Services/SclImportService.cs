@@ -340,7 +340,9 @@ public static class SclImportService
         var r = objectReference.ToLowerInvariant();
         if (r.Contains(".pos.stval")) return "Position";
         if (r.Contains(".op.general") || r.Contains(".str.general") || r.Contains(".tr.general")) return "Protection";
-        if (r.Contains(".cval.mag.f") || r.Contains(".instcval.mag.f")) return "Measurement";
+        if (r.Contains(".setmag") || r.EndsWith(".setval")) return "Setting";
+        if (r.Contains(".cval.mag.f") || r.Contains(".instcval.mag.f") || r.EndsWith(".mag.f") || r.EndsWith(".ang.f")) return "Measurement";
+        if (r.Contains(".valwtr.posval") || r.EndsWith(".stval") || r.EndsWith(".general")) return "Status";
         if (r.EndsWith(".q")) return "Quality";
         if (r.EndsWith(".t")) return "Timestamp";
         return "Raw";

@@ -6,7 +6,7 @@ on:
       version:
         description: 'Release version without leading v, for example 1.0.1-public-beta'
         required: true
-        default: '1.0.1-public-beta'
+        default: '1.0.2-public-beta'
       publish_release:
         description: 'Create or update GitHub Release and upload assets'
         required: true
@@ -25,7 +25,7 @@ on:
       release_notes_file:
         description: 'Markdown file used as release body'
         required: true
-        default: 'docs/RELEASE_NOTES_v1.0.1.md'
+        default: 'docs/RELEASE_NOTES_v1.0.2.md'
   push:
     tags:
       - 'v*'
@@ -72,7 +72,7 @@ jobs:
             $publishRelease = "true"
             $preRelease = "false"
             $draft = "false"
-            $releaseNotesFile = "docs/RELEASE_NOTES_v1.0.1.md"
+            $releaseNotesFile = "docs/RELEASE_NOTES_v1.0.2.md"
           }
           else {
             $version = "${{ inputs.version }}"

@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
-    [string]$Version = "1.0.1-public-beta",
+    [string]$Version = "1.0.2-public-beta",
 
     [Parameter(Mandatory = $false)]
     [ValidateSet("Release", "Debug")]

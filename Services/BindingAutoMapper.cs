@@ -23,7 +23,7 @@ public static class BindingAutoMapper
         var inputAddress = 30001 + normalizedIndex * normalizedBlock;
         var holdingAddress = 40001 + normalizedIndex * normalizedBlock;
 
-        foreach (var signal in selectedSignals.OrderBy(GetModbusPriority).ThenBy(s => s.LogicalNode).ThenBy(s => s.Name))
+        foreach (var signal in selectedSignals.Where(s => s.CanPublishToRuntime).OrderBy(GetModbusPriority).ThenBy(s => s.LogicalNode).ThenBy(s => s.Name))
         {
             var binding = new BindingItem
             {

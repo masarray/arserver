@@ -604,7 +604,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void SelectRecommended_Click(object sender, RoutedEventArgs e)
     {
         foreach (var signal in Signals)
-            signal.IsSelected = signal.IsScadaCoreSignal && signal.CanPublishAsSignal;
+            signal.IsSelected = signal.IsScadaCoreSignal && signal.CanPublishToRuntime;
         SignalsView.Refresh();
         Raise(nameof(VisibleSignalCountText));
         AddLog("INFO", "Discovery", "Selected smart SCADA-core signals only: protection operate/trip, CSWI/XCBR/XSWI Pos, AVR/ATCC/GGIO operational points, and MMXU/MMXN cVal current/voltage. Statistic/harmonic/mean/min/max signals are intentionally excluded.");
@@ -672,7 +672,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         var relay = SelectedRelay;
-        var selected = Signals.Where(s => s.IsSelected && s.CanPublishAsSignal).ToList();
+        var selected = Signals.Where(s => s.IsSelected && s.CanPublishToRuntime).ToList();
         if (selected.Count == 0)
         {
             MessageBox.Show("Belum ada signal dipilih. Buka Edit IED Wizard lalu pilih signal IEC 61850 yang akan dipublish ke Modbus.", "No signal selected", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -723,7 +723,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var selected = Signals.Where(s => s.IsSelected && s.CanPublishAsSignal).ToList();
+        var selected = Signals.Where(s => s.IsSelected && s.CanPublishToRuntime).ToList();
         if (selected.Count == 0)
         {
             AddLog("WARN", "Binding", "No selected IEC 61850 signal to add. Select signals in the IED Wizard first.");
@@ -1314,7 +1314,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (relay != null)
                 SyncLiveWorkspaceToRelay(relay);
             SignalsView.Refresh();
-            AddLog("INFO", "Wizard", $"IED configuration saved. Selected signals: {Signals.Count(s => s.IsSelected && s.CanPublishAsSignal)}. Published Modbus bindings: {PublishedModbusBindings.Count}.");
+            AddLog("INFO", "Wizard", $"IED configuration saved. Runtime-ready selected signals: {Signals.Count(s => s.IsSelected && s.CanPublishToRuntime)}. Published Modbus bindings: {PublishedModbusBindings.Count}.");
         }
         else
         {
@@ -1331,7 +1331,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         var candidates = Signals
-            .Where(s => s.IsSelected && s.CanPublishAsSignal && s.DataType != "Directory")
+            .Where(s => s.IsSelected && s.CanPublishToRuntime && s.DataType != "Directory")
             .OrderBy(s => s.SortPriority)
             .ThenBy(s => s.LogicalNode)
             .ThenBy(s => s.Name)
@@ -1352,6 +1352,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     signal.Value = "-";
                     signal.Quality = "Bad";
                     signal.DeviceTimestamp = "-";
+                    signal.ProbeStatus = "Not readable";
+                    signal.IsSelected = false;
                     signal.Timestamp = DateTime.Now;
                     failed++;
                     if (failed <= 3)
@@ -1360,6 +1362,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 }
 
                 ApplyReadValueToSignal(signal, value);
+                signal.ProbeStatus = "Readable";
                 signal.Timestamp = DateTime.Now;
                 UpdateBindingFromSignal(signal);
                 ok++;
@@ -1370,6 +1373,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 signal.Value = "Read failed";
                 signal.Quality = "Bad";
                 signal.DeviceTimestamp = "-";
+                signal.ProbeStatus = ex.GetType().Name;
+                signal.IsSelected = false;
                 signal.Timestamp = DateTime.Now;
                 if (failed <= 3)
                     AddLog("WARN", "IEC61850", $"Initial read failed for {signal.Name}: {ex.Message}");
@@ -1880,7 +1885,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Raise(nameof(SignalCount));
         Raise(nameof(VisibleSignalCountText));
         Raise(nameof(BindingCount));
-        AddLog("INFO", "Wizard", $"{relay.DisplayName} committed to runtime. Selected IEC signals: {relay.Signals.Count(s => s.IsSelected && s.CanPublishAsSignal)}. Published Modbus map: {PublishedModbusBindings.Count} binding(s) from all saved IEDs.");
+        AddLog("INFO", "Wizard", $"{relay.DisplayName} committed to runtime. Runtime-ready IEC signals: {relay.Signals.Count(s => s.IsSelected && s.CanPublishToRuntime)}. Published Modbus map: {PublishedModbusBindings.Count} binding(s) from all saved IEDs.");
         return true;
     }
 
@@ -2100,7 +2105,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (directMembers.Count == 0)
         {
             directMembers = SelectedRelay.Signals
-                .Where(s => s.IsSelected && s.CanPublishAsSignal)
+                .Where(s => s.IsSelected && s.CanPublishToRuntime)
                 .OrderBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
                 .Take(80)
                 .ToList();
@@ -2740,7 +2745,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             relay.ModbusBindings.Add(binding);
         }
 
-        relay.TagCount = relay.Signals.Count(s => s.IsSelected && s.CanPublishAsSignal);
+        relay.TagCount = relay.Signals.Count(s => s.IsSelected && s.CanPublishToRuntime);
         var mappedReports = relay.ModbusBindings
             .Select(b => b.ReportControlReference)
             .Where(x => !string.IsNullOrWhiteSpace(x))

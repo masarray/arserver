@@ -71,6 +71,8 @@ public class SignalDefinition : ObservableObject
 
     public bool IsValueSignal => IsRuntimeValueSignal(ObjectReference, FunctionalConstraint, DataType, Category);
     public bool CanPublishAsSignal => IsValueSignal && !IsRawAttribute;
+    public bool IsKnownReadFailure => IsKnownReadFailureState(Value, Quality, ProbeStatus);
+    public bool CanPublishToRuntime => CanPublishAsSignal && !IsKnownReadFailure;
     public bool IsScadaCoreSignal => IsCoreScadaSignal(ObjectReference, LogicalNodeClass, DataType, Category);
     public int SortPriority => CalculateSortPriority(LogicalNodeClass, ObjectReference, Category, Confidence, IsScadaCoreSignal);
 
@@ -187,7 +189,7 @@ public class SignalDefinition : ObservableObject
         var lower = NormalizeRef(reference);
         if (lower.EndsWith(".q")) return 40;
         if (lower.EndsWith(".t") || lower.EndsWith(".tm")) return 50;
-        if (lower.Contains(".ctl") || lower.Contains(".origin") || lower.Contains(".ctlmodel")) return 60;
+        if (lower.Contains(".ctlval") || lower.Contains(".origin") || lower.Contains(".ctlmodel")) return 60;
         if (lower.Contains(".mod.") || lower.EndsWith(".mod.stval") || lower.Contains(".beh.") || lower.Contains(".health") || lower.Contains(".eehealth")) return 90;
         return 0;
     }
@@ -225,8 +227,8 @@ public class SignalDefinition : ObservableObject
         if (cls == "GGIO")
             return IsGgioOperationalSignal(r, dataType, category);
 
-        if (cls == "YPTR" && (r.Contains(".tappos.") || string.Equals(category, "Status", StringComparison.OrdinalIgnoreCase)))
-            return true;
+        if (cls == "YPTR" && r.Contains(".tappos."))
+            return dataType is "Int32" or "Integer" or "UInt32" or "Enum";
 
         return false;
     }
@@ -264,9 +266,9 @@ public class SignalDefinition : ObservableObject
         }
 
         if (string.Equals(category, "Measurement", StringComparison.OrdinalIgnoreCase) && dataType == "Float32")
-            return true;
+            return IsKnownAvrMeasurement(r);
 
-        if (dataType is "Boolean" or "Enum" or "Int32")
+        if (dataType is "Boolean" or "Enum" or "Int32" or "Integer" or "UInt32")
         {
             return r.Contains(".loc.") ||
                    r.Contains(".tapchg.valwtr.posval") ||
@@ -285,6 +287,15 @@ public class SignalDefinition : ObservableObject
         }
 
         return false;
+    }
+
+    private static bool IsKnownAvrMeasurement(string normalizedReference)
+    {
+        var r = NormalizeRef(normalizedReference);
+        return Regex.IsMatch(
+            r,
+            @"\.(?:ctlv|loda|circa|phang|ctldv)\.(?:mag\.)?f$",
+            RegexOptions.IgnoreCase);
     }
 
     private static bool IsRuntimeValueSignal(string reference, string functionalConstraint, string dataType, string category)
@@ -321,6 +332,30 @@ public class SignalDefinition : ObservableObject
                r.EndsWith(".i");
     }
 
+    public static bool IsKnownReadFailureState(string value, string quality, string probeStatus)
+    {
+        var status = (probeStatus ?? string.Empty).Trim();
+        if (status.Equals("Readable", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("Not probed", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("Reading...", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (status.Equals("Not readable", StringComparison.OrdinalIgnoreCase) ||
+            status.EndsWith("Exception", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("TimeoutException", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("OperationCanceledException", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var v = (value ?? string.Empty).Trim();
+        var q = (quality ?? string.Empty).Trim();
+        return q.Equals("Bad", StringComparison.OrdinalIgnoreCase) &&
+               (string.IsNullOrWhiteSpace(v) || v == "-" || v.Equals("Read failed", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static bool IsRawEngineeringAttribute(string reference, string dataType)
     {
         if (string.Equals(dataType, "Quality", StringComparison.OrdinalIgnoreCase)) return true;
@@ -333,9 +368,9 @@ public class SignalDefinition : ObservableObject
                r.EndsWith(".tm") ||
                r.Contains(".rp.") ||
                r.Contains(".br.") ||
-               r.Contains(".ctl") ||
-               r.Contains(".origin") ||
                r.Contains(".ctlmodel") ||
+               r.Contains(".ctlval") ||
+               r.Contains(".origin") ||
                r.Contains(".db") ||
                r.EndsWith(".d") ||
                r.Contains(".du") ||

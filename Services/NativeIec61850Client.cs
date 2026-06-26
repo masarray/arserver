@@ -1848,7 +1848,7 @@ public sealed class NativeIec61850Client : IIec61850Client
         if (dataObject.Name.Equals("TapChg", StringComparison.OrdinalIgnoreCase))
         {
             signals.Add(CreateArIecSignal(
-                $"{dataObject.Reference}.ValWTr.posVal",
+                $"{dataObject.Reference}.valWTr.posVal",
                 "ST",
                 "IntegerStepPosition",
                 lnClass,
@@ -1911,7 +1911,7 @@ public sealed class NativeIec61850Client : IIec61850Client
         if (normalized.EndsWith(".q", StringComparison.OrdinalIgnoreCase) || normalized.EndsWith(".t", StringComparison.OrdinalIgnoreCase)) return false;
 
         var parent = normalized;
-        if (parent.EndsWith(".ValWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
+        if (parent.EndsWith(".valWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
         else if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
         else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
         else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];
@@ -1974,7 +1974,7 @@ public sealed class NativeIec61850Client : IIec61850Client
         var ln = ExtractLogicalNode(reference);
         var path = reference.Contains('.') ? reference[(reference.IndexOf('.') + 1)..] : reference;
         path = path
-            .Replace("ValWTr.posVal", "Position", StringComparison.OrdinalIgnoreCase)
+            .Replace("valWTr.posVal", "Position", StringComparison.OrdinalIgnoreCase)
             .Replace("cVal.mag.f", "Value", StringComparison.OrdinalIgnoreCase)
             .Replace("mag.f", "Value", StringComparison.OrdinalIgnoreCase)
             .Replace("stVal", "Status", StringComparison.OrdinalIgnoreCase)
@@ -2062,8 +2062,14 @@ public sealed class NativeIec61850Client : IIec61850Client
             candidates.Add(new ReadReferenceCandidate(reference.Trim(), fc, label, useSmartDirectory));
         }
 
-        var reference = objectReference.Trim().Replace('$', '.');
+        var reference = CanonicalizeIecReferenceCase(objectReference.Trim().Replace('$', '.'));
         Add(reference, "requested");
+
+        if (TryRemoveSuffix(reference, ".TapChg.stVal", out var tapChangeOwner))
+        {
+            Add($"{tapChangeOwner}.TapChg.valWTr.posVal", "legacy-avr-tapchg-stval-alias");
+            Add($"{tapChangeOwner}.TapChg", "legacy-avr-tapchg-parent", useSmartDirectory: false);
+        }
 
         if (TryGetDataObjectReference(reference, out var rootDataObjectReference) &&
             !ReferencesEqual(rootDataObjectReference, reference))
@@ -2071,10 +2077,10 @@ public sealed class NativeIec61850Client : IIec61850Client
             Add(rootDataObjectReference, "parent-data-object-schema", useSmartDirectory: false);
         }
 
-        if (TryRemoveSuffix(reference, ".ValWTr.posVal", out var valWithTransParent))
+        if (TryRemoveSuffix(reference, ".valWTr.posVal", out var valWithTransParent))
         {
             Add(valWithTransParent, "parent-do-for-valwtr-posval", useSmartDirectory: false);
-            Add($"{valWithTransParent}.ValWTr", "parent-valwtr-for-posval", useSmartDirectory: false);
+            Add($"{valWithTransParent}.valWTr", "parent-valwtr-for-posval", useSmartDirectory: false);
         }
         if (TryRemoveSuffix(reference, ".posVal", out var posValParent))
             Add(posValParent, "parent-do-for-posval", useSmartDirectory: false);
@@ -2104,6 +2110,13 @@ public sealed class NativeIec61850Client : IIec61850Client
             Add(fParent, "parent-for-f", useSmartDirectory: false);
 
         return candidates;
+    }
+
+    private static string CanonicalizeIecReferenceCase(string reference)
+    {
+        return (reference ?? string.Empty)
+            .Replace(".ValWTr", ".valWTr", StringComparison.OrdinalIgnoreCase)
+            .Replace(".CtlDITms", ".CtlDlTms", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryGetDataObjectReference(string reference, out string dataObjectReference)
@@ -2149,7 +2162,8 @@ public sealed class NativeIec61850Client : IIec61850Client
             r.EndsWith(".f", StringComparison.OrdinalIgnoreCase) ||
             r.Contains(".cVal", StringComparison.OrdinalIgnoreCase))
             return "MX";
-        if (r.Contains(".ctl", StringComparison.OrdinalIgnoreCase) ||
+        if (r.Contains(".ctlVal", StringComparison.OrdinalIgnoreCase) ||
+            r.Contains(".ctlModel", StringComparison.OrdinalIgnoreCase) ||
             r.Contains(".Oper", StringComparison.OrdinalIgnoreCase))
             return "CO";
         if (r.Contains(".set", StringComparison.OrdinalIgnoreCase))
@@ -2534,6 +2548,12 @@ public sealed class NativeIec61850Client : IIec61850Client
             return false;
         }
 
+        if (IsLegacyAvrTapChangeStatusReference(requestedReference) &&
+            EndsWithPathSegment(readReference, "TapChg"))
+        {
+            segments = new[] { "valWTr", "posVal" };
+        }
+
         var leaf = segments[^1];
         if (!IsSemanticLeafProjectionCandidate(leaf, requestedReference))
             return false;
@@ -2612,8 +2632,11 @@ public sealed class NativeIec61850Client : IIec61850Client
             return true;
         }
 
-        return requestedReference.EndsWith(".ValWTr.posVal", StringComparison.OrdinalIgnoreCase);
+        return requestedReference.EndsWith(".valWTr.posVal", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsLegacyAvrTapChangeStatusReference(string requestedReference)
+        => NormalizeReference(requestedReference).EndsWith(".tapchg.stval", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsStatusScalarDataTypeHint(string dataType)
     {

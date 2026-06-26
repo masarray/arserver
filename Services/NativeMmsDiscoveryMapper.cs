@@ -31,7 +31,7 @@ public static class NativeMmsDiscoveryMapper
     private static readonly FallbackPoint[] AtccAvrFallbacks =
     {
         new("Loc", "ST", "stVal", "Boolean", "Status"),
-        new("TapChg", "ST", "ValWTr.posVal", "Int32", "Status"),
+        new("TapChg", "ST", "valWTr.posVal", "Int32", "Status"),
         new("ParOp", "ST", "stVal", "Boolean", "Status"),
         new("LTCBlk", "ST", "stVal", "Boolean", "Status"),
         new("MasterSel", "ST", "stVal", "Boolean", "Status"),
@@ -49,18 +49,8 @@ public static class NativeMmsDiscoveryMapper
         new("CtlV", "MX", "mag.f", "Float32", "Measurement", "V"),
         new("LodA", "MX", "mag.f", "Float32", "Measurement", "A"),
         new("CircA", "MX", "mag.f", "Float32", "Measurement", "A"),
-        new("RefPF", "MX", "mag.f", "Float32", "Measurement"),
         new("PhAng", "MX", "mag.f", "Float32", "Measurement", "deg"),
-        new("BndCtr", "MX", "mag.f", "Float32", "Measurement", "V"),
-        new("BndCtrV", "MX", "mag.f", "Float32", "Measurement", "V"),
-        new("BndWid", "MX", "mag.f", "Float32", "Measurement"),
-        new("CtlDITms", "MX", "mag.f", "Float32", "Measurement", "s"),
-        new("LDCR", "MX", "mag.f", "Float32", "Measurement"),
-        new("LDCX", "MX", "mag.f", "Float32", "Measurement"),
-        new("BlkLV", "MX", "mag.f", "Float32", "Measurement"),
-        new("LimLodA", "MX", "mag.f", "Float32", "Measurement", "A"),
-        new("CtlDv", "MX", "mag.f", "Float32", "Measurement", "V"),
-        new("LDCZ", "MX", "mag.f", "Float32", "Measurement")
+        new("CtlDv", "MX", "mag.f", "Float32", "Measurement", "V")
     };
 
     private static readonly FallbackPoint[] GgioFallbacks =
@@ -73,6 +63,28 @@ public static class NativeMmsDiscoveryMapper
         new("AnIn2", "MX", "mag.f", "Float32", "Measurement"),
         new("AnIn3", "MX", "mag.f", "Float32", "Measurement"),
         new("AnIn4", "MX", "mag.f", "Float32", "Measurement")
+    };
+
+    private static readonly FallbackPoint[] AvcoAvrFallbacks =
+    {
+        new("Loc", "ST", "stVal", "Boolean", "Status"),
+        new("TapChg", "ST", "valWTr.posVal", "Int32", "Status")
+    };
+
+    private static readonly HashSet<string> AvrMeasuredValueObjects = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CtlV", "LodA", "CircA", "PhAng", "CtlDv"
+    };
+
+    private static readonly HashSet<string> AvrAnalogueSettingObjects = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "RefPF", "BndCtr", "BndCtrV", "BndCtrV1", "BndCtrV2", "BndCtrV3",
+        "BndWid", "CtlDlTms", "LDCR", "LDCX", "BlkLV", "LimLodA", "LDCZ"
+    };
+
+    private static readonly HashSet<string> AvrBooleanSettingObjects = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "LDC", "TmDlChr", "RefLodTyp"
     };
 
     public static IReadOnlyList<SignalDefinition> BuildSignals(NativeMmsDiscoverySnapshot snapshot)
@@ -401,9 +413,16 @@ public static class NativeMmsDiscoveryMapper
         foreach (var point in CommonLogicalNodeFallbacks)
             yield return point;
 
-        if (lnClass is "ATCC" or "AVC" or "AVCO")
+        if (lnClass == "ATCC")
         {
             foreach (var point in AtccAvrFallbacks)
+                yield return point;
+            yield break;
+        }
+
+        if (lnClass is "AVC" or "AVCO")
+        {
+            foreach (var point in AvcoAvrFallbacks)
                 yield return point;
             yield break;
         }
@@ -433,10 +452,8 @@ public static class NativeMmsDiscoveryMapper
             yield break;
         }
 
-        if (lnClass == "YPTR")
-        {
-            yield return new FallbackPoint("TapPos", "ST", "stVal", "Int32", "Status");
-        }
+        // Do not synthesize YPTR TapPos from an LN shell alone. Some AVR IEDs expose YPTR
+        // as limit/exceeded flags only; real TapPos is still discovered when the DO exists.
     }
 
     private static IEnumerable<FallbackPoint> InferFallbackPoints(string logicalNode, string dataObjectName)
@@ -454,6 +471,33 @@ public static class NativeMmsDiscoveryMapper
         {
             yield return knownAtcc with { DataObject = name };
             yield break;
+        }
+
+        if (lnClass is "ATCC" or "AVC" or "AVCO")
+        {
+            if (AvrMeasuredValueObjects.Contains(name))
+            {
+                yield return new FallbackPoint(name, "MX", "mag.f", "Float32", "Measurement", InferUnitFromDataObject(name));
+                yield break;
+            }
+
+            if (AvrAnalogueSettingObjects.Contains(name))
+            {
+                yield return new FallbackPoint(name, "SP", "setMag.f", "Float32", "Setting", InferUnitFromDataObject(name));
+                yield break;
+            }
+
+            if (AvrBooleanSettingObjects.Contains(name))
+            {
+                yield return new FallbackPoint(name, "SP", "setVal", "Boolean", "Setting");
+                yield break;
+            }
+
+            if (LooksLikeAvrStatusDataObject(name))
+            {
+                yield return new FallbackPoint(name, "ST", "stVal", "Boolean", "Status");
+                yield break;
+            }
         }
 
         if (lnClass == "MMXU" && EqualsAny(name, "A", "PhV", "PPV"))
@@ -497,6 +541,17 @@ public static class NativeMmsDiscoveryMapper
                name.Contains("LDC", StringComparison.OrdinalIgnoreCase) ||
                name.Contains("CtlD", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool LooksLikeAvrStatusDataObject(string name)
+        => name.EndsWith("Sel", StringComparison.OrdinalIgnoreCase) ||
+           name.EndsWith("Act", StringComparison.OrdinalIgnoreCase) ||
+           name.EndsWith("Ex", StringComparison.OrdinalIgnoreCase) ||
+           name.Contains("Blk", StringComparison.OrdinalIgnoreCase) ||
+           name.Contains("Err", StringComparison.OrdinalIgnoreCase) ||
+           name.Equals("Auto", StringComparison.OrdinalIgnoreCase) ||
+           name.Equals("ParOp", StringComparison.OrdinalIgnoreCase) ||
+           name.Equals("FuncMon", StringComparison.OrdinalIgnoreCase) ||
+           name.Equals("Loc", StringComparison.OrdinalIgnoreCase);
 
     private static bool LooksLikeIntegerStatusDataObject(string name)
         => name.Contains("Cnt", StringComparison.OrdinalIgnoreCase) ||
@@ -658,6 +713,7 @@ public static class NativeMmsDiscoveryMapper
         if (r.EndsWith(".q")) return "Quality";
         if (r.EndsWith(".t") || r.EndsWith(".tm")) return "Timestamp";
         if (r.EndsWith(".pos.stval")) return "Position";
+        if (r.Contains(".setmag") || r.EndsWith(".setval")) return "Setting";
         if (r.EndsWith(".mag.f") || r.Contains(".cval.mag.f")) return "Measurement";
         if (IsProtectionClass(cls) || r.EndsWith(".op.general") || r.EndsWith(".str.general") || r.EndsWith(".tr.general")) return "Protection";
         if (cls is "ATCC" or "AVC" or "AVCO" or "GGIO" or "YPTR") return "Status";
@@ -671,6 +727,8 @@ public static class NativeMmsDiscoveryMapper
         if (r.EndsWith(".posval")) return "Int32";
         if (r.EndsWith(".q")) return "Quality";
         if (r.EndsWith(".t") || r.EndsWith(".tm")) return "Timestamp";
+        if (r.Contains(".setmag")) return "Float32";
+        if (r.EndsWith(".setval")) return "Boolean";
         if (r.EndsWith(".mag.f") || r.EndsWith(".ang.f")) return "Float32";
         if (r.EndsWith(".general")) return "Boolean";
         if (r.Contains("cnt") || r.Contains("tapchg") || r.Contains("tappos")) return "Int32";
@@ -719,7 +777,7 @@ public static class NativeMmsDiscoveryMapper
         if (normalized.EndsWith(".q", StringComparison.OrdinalIgnoreCase) || normalized.EndsWith(".t", StringComparison.OrdinalIgnoreCase)) return false;
 
         var parent = normalized;
-        if (parent.EndsWith(".ValWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
+        if (parent.EndsWith(".valWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
         else if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
         else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
         else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];

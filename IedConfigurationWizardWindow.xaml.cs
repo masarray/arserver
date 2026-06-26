@@ -227,7 +227,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         }
     }
 
-    public int SelectedSignalCount => Signals.Count(s => s.IsSelected && s.CanPublishAsSignal);
+    public int SelectedSignalCount => Signals.Count(s => s.IsSelected && s.CanPublishToRuntime);
     public int BindingCount => Bindings.Count;
 
     public string VisibleSignalCountText => ShowRaw
@@ -250,7 +250,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
 
         var autoPlanSource = new CollectionViewSource { Source = Signals };
         AutoPlanSignalsView = autoPlanSource.View;
-        AutoPlanSignalsView.Filter = item => item is SignalDefinition signal && signal.IsSelected && signal.CanPublishAsSignal;
+        AutoPlanSignalsView.Filter = item => item is SignalDefinition signal && signal.IsSelected && signal.CanPublishToRuntime;
         AutoPlanSignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.ReportPlan), ListSortDirection.Ascending));
         AutoPlanSignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.LogicalNode), ListSortDirection.Ascending));
         AutoPlanSignalsView.SortDescriptions.Add(new SortDescription(nameof(SignalDefinition.ObjectReference), ListSortDirection.Ascending));
@@ -267,9 +267,9 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         DataContext = this;
         InitializeComponent();
 
-        if (!Signals.Any(s => s.IsSelected && s.CanPublishAsSignal))
+        if (!Signals.Any(s => s.IsSelected && s.CanPublishToRuntime))
             SelectRecommendedSignals();
-        if (Bindings.Count == 0 && Signals.Any(s => s.IsSelected && s.CanPublishAsSignal))
+        if (Bindings.Count == 0 && Signals.Any(s => s.IsSelected && s.CanPublishToRuntime))
             RebuildBindingFromSelection();
 
         RefreshCounts();
@@ -478,7 +478,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         if (directMembers.Count == 0)
         {
             directMembers = Signals
-                .Where(s => s.IsSelected && s.CanPublishAsSignal)
+                .Where(s => s.IsSelected && s.CanPublishToRuntime)
                 .OrderBy(s => s.ObjectReference, StringComparer.OrdinalIgnoreCase)
                 .Take(80)
                 .ToList();
@@ -584,7 +584,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         // Preserve per-signal report hints created by discovery/SCL.  Some IEDs expose GGIO and
         // MMXU through separate DataSet + RCB lanes.  A single visible selection in this page is
         // now used only as a fallback for uncovered signals that look like members of that lane.
-        var selectedSignals = Signals.Where(s => s.IsSelected && s.CanPublishAsSignal).ToList();
+        var selectedSignals = Signals.Where(s => s.IsSelected && s.CanPublishToRuntime).ToList();
         foreach (var signal in selectedSignals)
         {
             var hasNativeHint = !string.IsNullOrWhiteSpace(signal.ReportControlReference) ||
@@ -675,7 +675,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
 
     private string BuildAutoReportPlanStatus()
     {
-        var selected = Signals.Where(s => s.IsSelected && s.CanPublishAsSignal).ToList();
+        var selected = Signals.Where(s => s.IsSelected && s.CanPublishToRuntime).ToList();
         var total = selected.Count;
         var covered = selected.Count(s => s.ReportCoverage.Contains("covered", StringComparison.OrdinalIgnoreCase));
         var candidate = selected.Count(s => s.ReportCoverage.Contains("candidate", StringComparison.OrdinalIgnoreCase));
@@ -824,7 +824,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         }
 
         var selected = Signals
-            .Where(s => s.IsSelected && s.CanPublishAsSignal && !string.Equals(s.DataType, "Directory", StringComparison.OrdinalIgnoreCase))
+            .Where(s => s.IsSelected && s.CanPublishToRuntime && !string.Equals(s.DataType, "Directory", StringComparison.OrdinalIgnoreCase))
             .OrderBy(s => s.SortPriority)
             .ThenBy(s => s.LogicalNode)
             .ThenBy(s => s.Name)
@@ -865,6 +865,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
                         signal.Quality = "Bad";
                         signal.DeviceTimestamp = "-";
                         signal.ProbeStatus = "Not readable";
+                        signal.IsSelected = false;
                         continue;
                     }
 
@@ -882,6 +883,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
                     signal.Quality = "Bad";
                     signal.DeviceTimestamp = "-";
                     signal.ProbeStatus = ex.GetType().Name;
+                    signal.IsSelected = false;
                 }
             }
 
@@ -894,6 +896,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         finally
         {
             IsProbing = false;
+            PruneBindingsToRuntimeReadySelection();
             SignalsView.Refresh();
         }
     }
@@ -964,7 +967,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         if (normalized.EndsWith(".q", StringComparison.OrdinalIgnoreCase) || normalized.EndsWith(".t", StringComparison.OrdinalIgnoreCase)) return false;
 
         var parent = normalized;
-        if (parent.EndsWith(".ValWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
+        if (parent.EndsWith(".valWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
         else if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
         else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
         else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];
@@ -987,7 +990,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
     private void SelectRecommendedSignals()
     {
         foreach (var signal in Signals)
-            signal.IsSelected = signal.IsScadaCoreSignal && signal.CanPublishAsSignal;
+            signal.IsSelected = signal.IsScadaCoreSignal && signal.CanPublishToRuntime;
         SignalsView.Refresh();
         RefreshCounts();
         StatusMessage = $"Recommended SCADA selection applied: {SelectedSignalCount} signal(s).";
@@ -1022,11 +1025,28 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
 
     private void RebuildBindingFromSelection()
     {
-        var selected = Signals.Where(s => s.IsSelected && s.CanPublishAsSignal).ToList();
+        var selected = Signals.Where(s => s.IsSelected && s.CanPublishToRuntime).ToList();
         Bindings.Clear();
         foreach (var item in BindingAutoMapper.CreateBindings(selected))
             Bindings.Add(item);
         ApplySelectedReportPlanToWorkspace();
+        SelectedBinding = Bindings.FirstOrDefault();
+        RefreshCounts();
+    }
+
+    private void PruneBindingsToRuntimeReadySelection()
+    {
+        var allowed = Signals
+            .Where(s => s.IsSelected && s.CanPublishToRuntime)
+            .Select(s => s.ObjectReference)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        for (var i = Bindings.Count - 1; i >= 0; i--)
+        {
+            if (!allowed.Contains(Bindings[i].IecReference))
+                Bindings.RemoveAt(i);
+        }
+
         SelectedBinding = Bindings.FirstOrDefault();
         RefreshCounts();
     }
@@ -1071,7 +1091,9 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
 
     private void SaveAndClose()
     {
-        if (Bindings.Count == 0 && Signals.Any(s => s.IsSelected && s.CanPublishAsSignal))
+        PruneBindingsToRuntimeReadySelection();
+
+        if (Bindings.Count == 0 && Signals.Any(s => s.IsSelected && s.CanPublishToRuntime))
             RebuildBindingFromSelection();
 
         var errors = ValidateBindings();
