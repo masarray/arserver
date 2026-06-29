@@ -45,10 +45,11 @@
 
         <!-- Gateway navigation: runtime views only. Report/DataSet planning lives inside Edit IED Wizard. -->
         <Grid Grid.Row="1" Margin="0,0,0,10">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
+                                                     <Grid.ColumnDefinitions>
+                                                         <ColumnDefinition Width="Auto"/>
+                                                         <ColumnDefinition Width="*"/>
+                                                         <ColumnDefinition Width="Auto"/>
+                                                     </Grid.ColumnDefinitions>
             <Border x:Name="WorkflowNavShell" Width="720" Height="42" HorizontalAlignment="Left" Background="#E7ECF5" CornerRadius="21" Padding="4" Effect="{StaticResource SoftShadow}">
                 <Grid x:Name="WorkflowNavGrid" ClipToBounds="True">
                     <Grid.ColumnDefinitions>
@@ -170,8 +171,11 @@
                                                         <TextBlock Text="{Binding EndpointText}" FontSize="11.8" Foreground="{StaticResource Muted}" Margin="0,2,0,0"/>
                                                         <TextBlock Text="{Binding SummaryText}" FontSize="11.8" Foreground="{StaticResource Muted}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
                                                         <TextBlock Text="{Binding RcbSummaryText}" FontSize="11.4" Foreground="{StaticResource Muted}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
-                                                    </StackPanel>
-                                                    <WrapPanel Grid.Row="1" Grid.Column="1" Margin="0,9,0,0">
+                                                     </StackPanel>
+                                                     <Button Grid.Row="0" Grid.Column="2" Content="{Binding SessionActionGlyph}" Width="34" Height="34" Padding="0" Margin="8,0,0,0"
+                                                             Style="{StaticResource MiniChipButton}" Click="ToggleRelayConnection_Click"
+                                                             IsEnabled="{Binding IsSessionActionEnabled}" ToolTip="{Binding SessionActionToolTip}" FontSize="13" FontWeight="SemiBold"/>
+                                                     <WrapPanel Grid.Row="1" Grid.Column="1" Margin="0,9,0,0">
                                                         <Button Content="✎ Edit" Style="{StaticResource MiniChipButton}" Click="EditRelay_Click" Margin="0,0,6,6" IsEnabled="{Binding DataContext.IsProjectEditable, RelativeSource={RelativeSource AncestorType=Window}}"/>
                                                         <Button Content="🗑 Delete" Style="{StaticResource MiniChipButton}" Click="DeleteRelay_Click" Margin="0,0,0,6" IsEnabled="{Binding DataContext.IsProjectEditable, RelativeSource={RelativeSource AncestorType=Window}}"/>
                                                     </WrapPanel>
@@ -347,6 +351,7 @@
                                     <TextBlock Text="  •  authoritative published map from all IED sessions · separated DI/IR/HR blocks per IED" Foreground="{StaticResource Muted}" FontSize="12.2" VerticalAlignment="Center"/>
                                 </StackPanel>
                                 <WrapPanel Grid.Column="1">
+                                    <Button Content="＋ Assign Signal to Modbus" Style="{StaticResource PrimaryButton}" Click="AssignSignalsToModbus_Click" Margin="0,0,8,0"/>
                                     <Button Content="− Remove Binding" Style="{StaticResource SoftButton}" Click="RemoveSelectedBinding_Click" Margin="0,0,8,0"/>
                                     <Button Content="✓ Validate" Style="{StaticResource SoftButton}" Click="Validate_Click" Margin="0,0,8,0"/>
                                     <Button Content="💾 Save" Style="{StaticResource PrimaryButton}" Click="SaveProject_Click"/>
@@ -519,5 +524,52 @@
                 <TextBlock Grid.Column="2" Text="{Binding LastStatusLevel}" Foreground="{StaticResource Muted}" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" Margin="16,0,0,0"/>
             </Grid>
         </Border>
+
+        <Grid Grid.RowSpan="4" Panel.ZIndex="100" Visibility="{Binding ConnectionLoadingVisibility}">
+            <Border Background="#99111A2C"/>
+            <Border Width="430" Padding="30" CornerRadius="26" Background="White" BorderBrush="#DCE7F7" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border.Effect>
+                    <DropShadowEffect Color="#111827" BlurRadius="34" ShadowDepth="10" Opacity="0.28"/>
+                </Border.Effect>
+                <StackPanel HorizontalAlignment="Center">
+                    <Grid Width="92" Height="92" Margin="0,0,0,20">
+                        <Ellipse Width="76" Height="76" Stroke="#DFE8F6" StrokeThickness="7"/>
+                        <Ellipse Width="76" Height="76" Stroke="{StaticResource Accent}" StrokeThickness="7" StrokeDashArray="2 8" StrokeStartLineCap="Round" StrokeEndLineCap="Round">
+                            <Ellipse.RenderTransform>
+                                <RotateTransform x:Name="DiscoverySpinnerRotation" CenterX="38" CenterY="38"/>
+                            </Ellipse.RenderTransform>
+                            <Ellipse.Triggers>
+                                <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+                                    <BeginStoryboard>
+                                        <Storyboard RepeatBehavior="Forever">
+                                            <DoubleAnimation Storyboard.TargetName="DiscoverySpinnerRotation" Storyboard.TargetProperty="Angle" From="0" To="360" Duration="0:0:1.1"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                            </Ellipse.Triggers>
+                        </Ellipse>
+                        <Border Width="42" Height="42" CornerRadius="14" Background="#EEF4FF" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <TextBlock Text="↯" Foreground="{StaticResource Accent}" FontSize="23" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </Grid>
+                    <TextBlock Text="{Binding ConnectionLoadingTitle}" FontSize="21" FontWeight="SemiBold" Foreground="{StaticResource Ink}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding ConnectionLoadingStage}" FontSize="13" Foreground="{StaticResource Muted}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0" MaxWidth="340"/>
+                    <Border Height="4" Width="250" CornerRadius="2" Background="#E8EEF8" Margin="0,22,0,0" ClipToBounds="True">
+                        <Rectangle Width="90" Fill="{StaticResource Accent}" RadiusX="2" RadiusY="2" HorizontalAlignment="Left">
+                            <Rectangle.RenderTransform><TranslateTransform x:Name="DiscoveryProgressTransform" X="-90"/></Rectangle.RenderTransform>
+                            <Rectangle.Triggers>
+                                <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+                                    <BeginStoryboard>
+                                        <Storyboard RepeatBehavior="Forever">
+                                            <DoubleAnimation Storyboard.TargetName="DiscoveryProgressTransform" Storyboard.TargetProperty="X" From="-90" To="250" Duration="0:0:1.35"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                            </Rectangle.Triggers>
+                        </Rectangle>
+                    </Border>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

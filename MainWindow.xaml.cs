@@ -56,14 +56,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private long _lastObservedModbusReadCount;
     private DateTime _lastActivityPulse = DateTime.MinValue;
     private bool _openConfigWizardAfterDiscovery;
+    private bool _isConnectionLoading;
+    private string _connectionLoadingTitle = "Connecting to IED";
+    private string _connectionLoadingStage = "Preparing secure MMS session…";
     private Window? _activeWizardWindow;
     private bool _navigatingToDiagnosticsForException;
     private readonly List<System.Windows.Controls.Button> _navButtons = new();
     private readonly DispatcherTimer _activityResetTimer = new() { Interval = TimeSpan.FromMilliseconds(420) };
     private readonly DispatcherTimer _runtimeSnapshotTimer = new() { Interval = TimeSpan.FromMilliseconds(350) };
     private readonly ConcurrentDictionary<string, RuntimeValueSnapshot> _pendingRuntimeSnapshots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ExplorerSessionHandle> _explorerSessions = new(StringComparer.OrdinalIgnoreCase);
     private DateTime _lastIecActivityAt = DateTime.MinValue;
     private DateTime _lastModbusActivityAt = DateTime.MinValue;
+
+    private sealed class ExplorerSessionHandle
+    {
+        public required IIec61850Client Client { get; init; }
+        public required CancellationTokenSource Cancellation { get; init; }
+        public Task? PollTask { get; set; }
+    }
 
     public ObservableCollection<SignalDefinition> Signals { get; } = new();
     public ObservableCollection<BindingItem> Bindings { get; } = new(); // Legacy/mirror collection. Do not bind Modbus grid/runtime directly to relay workspace state.
@@ -162,6 +173,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string LastStatusLevel { get => _lastStatusLevel; set => Set(ref _lastStatusLevel, value); }
     public string LastStatusText { get => _lastStatusText; set => Set(ref _lastStatusText, value); }
     public string EventStrategyStatus { get => _eventStrategyStatus; set => Set(ref _eventStrategyStatus, value); }
+    public Visibility ConnectionLoadingVisibility => _isConnectionLoading ? Visibility.Visible : Visibility.Collapsed;
+    public string ConnectionLoadingTitle { get => _connectionLoadingTitle; private set => Set(ref _connectionLoadingTitle, value); }
+    public string ConnectionLoadingStage { get => _connectionLoadingStage; private set => Set(ref _connectionLoadingStage, value); }
     public int SignalCount => Signals.Count;
     public int BindingCount => PublishedModbusBindings.Count;
     public int ModbusClientCount
@@ -416,12 +430,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async void ConnectDiscover_Click(object sender, RoutedEventArgs e)
     {
         var relayIp = GetRelayIpForOperation();
+        var preserveTabAfterWizard = _openConfigWizardAfterDiscovery;
+        ShowConnectionLoading("Connecting to IED", $"Opening TCP {relayIp}:{MmsPort}…");
+        await Dispatcher.Yield(DispatcherPriority.Render);
         try
         {
             if (IsRuntimeRunning)
             {
                 AddLog("WARN", "Runtime", "IEC discovery/reconnect is blocked while runtime is running. Stop Runtime before changing the active IED/MMS session.");
-                NavigateToTab(1);
+                if (!preserveTabAfterWizard)
+                    NavigateToTab(1);
                 return;
             }
 
@@ -430,7 +448,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 IedConnectionStatus = "Missing IP";
                 EventStrategyStatus = "Waiting for relay IP";
                 AddLog("ERROR", "IEC61850", "Relay IP address is empty. Type or select a relay IP before Connect & Discover.");
-                NavigateToTab(0);
+                if (!preserveTabAfterWizard)
+                    NavigateToTab(0);
                 return;
             }
 
@@ -449,6 +468,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             EventStrategyStatus = "Scanning...";
             AddLog("INFO", "IEC61850", $"Connecting to {relayIp}:{MmsPort} using native IEC 61850 MMS engine.");
 
+            UpdateConnectionLoading("Checking TCP reachability…");
             var tcpProbe = await ProbeTcpEndpointAsync(relayIp, MmsPort, TimeSpan.FromSeconds(3), CancellationToken.None).ConfigureAwait(true);
             if (!tcpProbe.IsOpen)
             {
@@ -462,7 +482,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     AddLog("WARN", "IEC61850", $"Selected endpoint is not reachable, but recent successful endpoint {reachableRecent} is reachable from this PC. Check that the IP typed in ArServer matches the relay IP shown in IEDScout.");
 
                 AddLog("INFO", "Operator Hint", "Connect/Discover stopped before MMS because TCP 102 is not reachable for the selected endpoint. Correct the IED IP/port, then run Add IED again.");
-                NavigateToTab(3);
+                if (!preserveTabAfterWizard)
+                    NavigateToTab(3);
                 return;
             }
 
@@ -474,6 +495,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 AddLog("INFO", "Runtime", "Modbus server remains running. Refreshing active IEC 61850 session for this IED only.");
             }
 
+            UpdateConnectionLoading("Negotiating ACSE / MMS association…");
             await ConnectActiveIecClientAsync(relayIp, MmsPort, CancellationToken.None);
             var activeClient = _iecClient ?? throw new InvalidOperationException("IEC client was not created.");
             IedConnectionStatus = GetClientConnectedDisplayStatus(activeClient);
@@ -492,10 +514,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     AddLog("ERROR", "IEC61850", "IEC61850 connection failed.");
 
                 AddLog("INFO", "Operator Hint", "No live signals are shown until the IED answers MMS discovery. Check IP address, port 102, firewall, network route, and IED MMS service state.");
-                NavigateToTab(3);
+                if (!preserveTabAfterWizard)
+                    NavigateToTab(3);
                 return;
             }
 
+            UpdateConnectionLoading("Discovering IEC 61850 objects and data types…");
             var discovered = await activeClient.DiscoverSignalsAsync(CancellationToken.None);
             Signals.Clear();
             foreach (var signal in discovered)
@@ -540,10 +564,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             if (_openConfigWizardAfterDiscovery)
             {
+                UpdateConnectionLoading("Preparing signal selection wizard…");
                 _openConfigWizardAfterDiscovery = false;
                 var suggestedIedName = InferIedNameFromSignals() ?? "IED";
                 var draftSignals = CloneSignals(Signals);
                 RestoreWorkspaceAfterDraftCancel();
+                HideConnectionLoading();
                 var saved = OpenDraftIedConfigurationWizardAndCommit(
                     context: $"IP-only discovered IED {relayIp}:{MmsPort}",
                     draftSignals: draftSignals,
@@ -562,6 +588,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 {
                     PulseIecActivity();
                     await RememberRelayIpAsync(relayIp);
+                    await DisposeActiveIecClientAsync();
+                    if (SelectedRelay != null)
+                    {
+                        SelectedRelay.IsSessionRunning = false;
+                        SelectedRelay.Status = "Stopped";
+                        SelectedRelay.HeartbeatText = "Ready to start Explorer session";
+                        SelectedRelay.StatusBrush = RelayEndpointView.BrushForStatus("Stopped");
+                        SelectedRelay.ActivityBrush = RelayEndpointView.BrushForStatus("Stopped");
+                        SelectedRelay.RefreshComputed();
+                        IedConnectionStatus = "Stopped";
+                    }
                     AddLog("INFO", "Preferences", $"Successful relay endpoint saved after Save to Runtime: {relayIp}:{MmsPort}");
                 }
                 else
@@ -575,7 +612,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 AddLog("INFO", "UX Flow", "IEC 61850 Explorer updated in viewing mode. Use Edit IED Wizard to change selected signals or binding.");
             }
 
-            NavigateToTab(0);
+            if (!preserveTabAfterWizard)
+                NavigateToTab(0);
         }
         catch (Exception ex)
         {
@@ -586,6 +624,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             AddExceptionLog("IEC61850", ex, $"Connect/Discover failed for {relayIp}:{MmsPort}");
             AddLog("INFO", "Operator Hint", "Cek IP relay, VLAN/subnet, firewall Windows, port TCP 102, MMS server di relay, dan pastikan belum ada client lain yang mengunci association/RCB.");
         }
+        finally
+        {
+            HideConnectionLoading();
+        }
+    }
+
+    private void ShowConnectionLoading(string title, string stage)
+    {
+        ConnectionLoadingTitle = title;
+        ConnectionLoadingStage = stage;
+        if (_isConnectionLoading) return;
+        _isConnectionLoading = true;
+        Raise(nameof(ConnectionLoadingVisibility));
+    }
+
+    private void UpdateConnectionLoading(string stage) => ConnectionLoadingStage = stage;
+
+    private void HideConnectionLoading()
+    {
+        if (!_isConnectionLoading) return;
+        _isConnectionLoading = false;
+        Raise(nameof(ConnectionLoadingVisibility));
     }
 
     private static string GetClientConnectedDisplayStatus(IIec61850Client client)
@@ -763,6 +823,49 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ValidateBindings(showMessage: false);
         AddLog("INFO", "Binding", $"Added {added} new Modbus binding(s). Published map total: {PublishedModbusBindings.Count}.");
         NavigateToTab(1);
+    }
+
+    private void AssignSignalsToModbus_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsRuntimeRunning)
+        {
+            AddLog("WARN", "Runtime", "Assign Signal to Modbus is locked while the gateway runtime is running. Stop the gateway before changing addresses.");
+            return;
+        }
+
+        if (!Relays.Any(r => r.Signals.Any(s => s.IsSelected && s.CanPublishToRuntime)))
+        {
+            MessageBox.Show("No IEC Explorer signal is available. Add or edit an IED and manually select Explorer signals first.", "No Explorer signals", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var dialog = new AssignSignalsToModbusWindow(Relays, SelectedRelay) { Owner = this };
+        TrackActiveWizard(dialog);
+        if (dialog.ShowDialog() != true || dialog.SelectedRelay == null)
+            return;
+
+        var relay = dialog.SelectedRelay;
+        var added = 0;
+        foreach (var item in BindingAutoMapper.CreateBindings(dialog.SelectedSignals, GetRelayBlockIndex(relay)))
+        {
+            if (relay.ModbusBindings.Any(b => string.Equals(b.IecReference, item.IecReference, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            ApplyDefaultTimingToBinding(item);
+            item.PublishToModbus = true;
+            item.PublishToMqtt = false;
+            item.ModbusAddress = FindNextFreeModbusAddress(item.ModbusArea, item.ModbusDataType);
+            item.RelayId = relay.RelayId;
+            item.IedName = relay.DisplayName;
+            item.RelayIpAddress = relay.IpAddress;
+            relay.ModbusBindings.Add(item);
+            added++;
+        }
+
+        RebuildPublishedBindingsFromRelays();
+        SelectedBinding = PublishedModbusBindings.LastOrDefault(b => string.Equals(b.RelayId, relay.RelayId, StringComparison.OrdinalIgnoreCase));
+        ValidateBindings(showMessage: false);
+        AddLog("INFO", "Binding", $"Assigned {added} Explorer signal(s) from {relay.DisplayName} to Modbus. Explorer selection was not changed.");
     }
 
     private void RemoveSelectedBinding_Click(object sender, RoutedEventArgs e)
@@ -1058,7 +1161,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Relays.Clear();
             foreach (var relay in project.Relays)
             {
+                relay.IsSessionRunning = false;
+                relay.IsSessionBusy = false;
+                if (relay.IsConnectedLike)
+                {
+                    relay.Status = "Stopped";
+                    relay.HeartbeatText = "Session stopped after project load";
+                }
                 relay.StatusBrush = RelayEndpointView.BrushForStatus(relay.Status);
+                relay.ActivityBrush = RelayEndpointView.BrushForStatus(relay.Status);
                 relay.RefreshComputed();
                 Relays.Add(relay);
             }
@@ -1107,17 +1218,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             if (PublishedModbusBindings.Count == 0)
             {
-                AutoMap_Click(sender, e);
-                PreparePublishedModbusMapForRuntime();
-                ApplyProjectPollingIntervalToPublishedMap(logChanges: true);
-                NormalizePublishedBindingTiming(logChanges: true);
-                if (PublishedModbusBindings.Count == 0)
-                {
-                    RuntimeStatusText = "Stopped";
-                    MoveRuntimeToggle(false, true);
-                    AddLog("ERROR", "Runtime", "Runtime blocked. No published Modbus binding exists after rebuilding from all IED sessions.");
-                    return;
-                }
+                RuntimeStatusText = "Stopped";
+                MoveRuntimeToggle(false, true);
+                AddLog("ERROR", "Runtime", "Runtime blocked. No Modbus signal has been assigned. Use Assign Signal to Modbus in the Modbus Server tab.");
+                NavigateToTab(1);
+                return;
             }
 
             if (!ValidateBindings(showMessage: false))
@@ -1406,9 +1511,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (value is Iec61850ReadValue rich)
         {
-            signal.Value = rich.Value is string || rich.Value == null
-                ? rich.ToString()
-                : MockIec61850Client.Format(rich.Value, signal.DataType, signal.Unit);
+            signal.Value = MockIec61850Client.Format(rich.Value ?? rich.ToString(), signal.DataType, signal.Unit);
             signal.Quality = rich.HasQuality ? rich.Quality : "Good";
             signal.DeviceTimestamp = rich.HasDeviceTimestamp ? rich.DeviceTimestamp : "-";
             return;
@@ -1532,7 +1635,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        OpenConfigurationWizardInternal($"auto report plan for {SelectedRelay.DisplayName}", initialStep: 2);
+        OpenConfigurationWizardInternal($"auto report plan for {SelectedRelay.DisplayName}", initialStep: 1);
     }
 
     private async void ProbeSelectedReportControl_Click(object sender, RoutedEventArgs e)
@@ -1689,7 +1792,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             SetActiveRelay(duplicate);
             AddLog("WARN", "Relay", $"IED endpoint already exists: {duplicate.EndpointText}. ArServer selected the existing IED instead of creating a duplicate. Use Edit IED Wizard to change its mapping.");
-            NavigateToTab(0);
             return;
         }
 
@@ -1790,7 +1892,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         AddLog("INFO", "SCL Import", $"Selected RCB plan committed: {(chosenRcb == null ? "None" : chosenRcb.Reference)} / {reportRuntimeMode}. SCL file is not modified; only ArServer runtime endpoint is overridden.");
-        NavigateToTab(0);
     }
 
     private bool OpenDraftIedConfigurationWizardAndCommit(
@@ -1815,7 +1916,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         string rcbMode = "MMS polling",
         NativeReportInventory? reportInventory = null)
     {
-        var wizard = new IedConfigurationWizardWindow(draftSignals, draftBindings, _iecClient, reportInventory, selectedRcbReference)
+        var normalizedRuntimePort = runtimePort > 0 ? runtimePort : 102;
+        var isNewIed = !Relays.Any(r =>
+            string.Equals(NormalizeRelayIp(r.IpAddress), NormalizeRelayIp(runtimeIpAddress), StringComparison.OrdinalIgnoreCase) &&
+            r.MmsPort == normalizedRuntimePort);
+        var wizard = new IedConfigurationWizardWindow(draftSignals, draftBindings, _iecClient, reportInventory, selectedRcbReference, isNewIed: isNewIed)
         {
             Owner = this
         };
@@ -2181,6 +2286,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         SetActiveRelay(relay);
 
+        if (relay.IsSessionRunning || relay.IsSessionBusy)
+        {
+            AddLog("WARN", "IED Session", $"Stop the Explorer session for {relay.DisplayName} before editing its signal configuration.");
+            return;
+        }
+
         if (IsRuntimeRunning)
         {
             AddLog("WARN", "Runtime", "Edit IED Wizard is blocked while runtime is running. Stop Runtime first before changing selected signals or Modbus mapping.");
@@ -2191,7 +2302,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (Signals.Count > 0)
         {
             OpenConfigurationWizardInternal($"existing IED {relay.DisplayName}");
-            NavigateToTab(0);
             return;
         }
 
@@ -2218,40 +2328,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         AddLog("INFO", "Relay", $"Edit wizard closed for {relay.DisplayName}. Existing binding remains unchanged.");
-        NavigateToTab(0);
     }
 
     private async void ToggleRelayConnection_Click(object sender, RoutedEventArgs e)
     {
         var relay = GetRelayFromSender(sender);
         if (relay == null) return;
+        e.Handled = true;
         SetActiveRelay(relay);
 
-        if (relay.IsConnectedLike)
+        if (relay.IsSessionRunning || _explorerSessions.ContainsKey(relay.RelayId))
         {
-            relay.Status = "Disconnected";
-            relay.HeartbeatText = "Disabled by user";
-            relay.StatusBrush = RelayEndpointView.BrushForStatus("Disconnected");
-            relay.RefreshComputed();
-
-            // There is currently one active IEC client instance. Disconnecting the active IED
-            // closes the IEC session but intentionally does NOT stop the Modbus TCP server/runtime.
-            if (_iecClient != null && string.Equals(RelayIpAddress, relay.IpAddress, StringComparison.OrdinalIgnoreCase))
-            {
-                await DisposeActiveIecClientAsync();
-                IedConnectionStatus = "Disconnected";
-                foreach (var binding in Bindings)
-                {
-                    binding.Status = "IED disabled";
-                    binding.Quality = "Disabled";
-                }
-            }
-
-            AddLog("INFO", "Relay", $"IED disconnected individually: {relay.DisplayName} {relay.EndpointText}. Modbus gateway runtime state was not changed.");
-            Raise(nameof(IecInsightText));
-            Raise(nameof(ActiveRelaySubtitle));
+            await StopExplorerSessionAsync(relay, "Stopped by user");
             return;
         }
+
+        await StartExplorerSessionAsync(relay);
+    }
+
+    private async Task StartExplorerSessionAsync(RelayEndpointView relay)
+    {
+        if (relay.IsSessionBusy || _explorerSessions.ContainsKey(relay.RelayId))
+            return;
 
         if (string.IsNullOrWhiteSpace(relay.IpAddress))
         {
@@ -2259,17 +2357,183 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        var selectedSignals = relay.Signals.Where(s => s.IsSelected && s.CanPublishToRuntime).ToList();
+        if (selectedSignals.Count == 0)
+        {
+            AddLog("WARN", "Relay", $"{relay.DisplayName} has no selected Explorer signal. Use Edit IED Wizard and check signals manually first.");
+            return;
+        }
+
+        relay.IsSessionBusy = true;
         relay.Status = "Connecting";
-        relay.HeartbeatText = "MMS reconnecting";
+        relay.HeartbeatText = "Starting Explorer session";
         relay.StatusBrush = RelayEndpointView.BrushForStatus("Connecting");
+        relay.ActivityBrush = RelayEndpointView.BrushForStatus("Connecting");
+        relay.RefreshComputed();
+        Raise(nameof(ActiveRelaySubtitle));
+
+        IIec61850Client? client = null;
+        try
+        {
+            if (IsActiveIecClientFor(relay.IpAddress, relay.MmsPort))
+                await DisposeActiveIecClientAsync();
+
+            client = CreateConfiguredIecClient();
+            await client.ConnectAsync(relay.IpAddress, relay.MmsPort, CancellationToken.None);
+            if (!client.IsConnected)
+                throw new InvalidOperationException(client is NativeIec61850Client native && !string.IsNullOrWhiteSpace(native.LastErrorMessage)
+                    ? native.LastErrorMessage
+                    : "MMS association did not become ready.");
+
+            var cancellation = new CancellationTokenSource();
+            var handle = new ExplorerSessionHandle { Client = client, Cancellation = cancellation };
+            _explorerSessions[relay.RelayId] = handle;
+            relay.IsSessionRunning = true;
+            relay.Status = "Connected";
+            relay.HeartbeatText = $"Explorer polling {selectedSignals.Count} signal(s)";
+            relay.StatusBrush = RelayEndpointView.BrushForStatus("Connected");
+            relay.ActivityBrush = RelayEndpointView.BrushForStatus("Connected");
+            relay.IsSessionBusy = false;
+            relay.RefreshComputed();
+            if (ReferenceEquals(relay, SelectedRelay))
+                IedConnectionStatus = "Connected";
+            Raise(nameof(IecInsightText));
+            Raise(nameof(ActiveRelaySubtitle));
+            AddLog("INFO", "IED Session", $"Started independent Explorer session for {relay.DisplayName} {relay.EndpointText}. Selected signals: {selectedSignals.Count}.");
+
+            handle.PollTask = RunExplorerSessionAsync(relay, handle, cancellation.Token);
+        }
+        catch (Exception ex)
+        {
+            if (client != null)
+            {
+                try { await client.DisposeAsync(); } catch { }
+            }
+            _explorerSessions.Remove(relay.RelayId);
+            relay.IsSessionRunning = false;
+            relay.IsSessionBusy = false;
+            relay.Status = "Failed";
+            relay.HeartbeatText = "Explorer session failed";
+            relay.StatusBrush = RelayEndpointView.BrushForStatus("Failed");
+            relay.ActivityBrush = RelayEndpointView.BrushForStatus("Failed");
+            relay.RefreshComputed();
+            AddExceptionLog("IED Session", ex, $"Failed to start {relay.DisplayName}");
+        }
+    }
+
+    private async Task RunExplorerSessionAsync(RelayEndpointView relay, ExplorerSessionHandle handle, CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                var selectedSignals = relay.Signals
+                    .Where(s => s.IsSelected && s.CanPublishToRuntime && !string.Equals(s.DataType, "Directory", StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(s => s.SortPriority)
+                    .ThenBy(s => s.ObjectReference)
+                    .ToList();
+
+                foreach (var signal in selectedSignals)
+                {
+                    token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        var value = await handle.Client.ReadValueAsync(signal.ObjectReference, signal.FunctionalConstraint, signal.DataType, token).ConfigureAwait(false);
+                        if (value == null) continue;
+                        await Dispatcher.InvokeAsync(() => ApplyExplorerSessionValue(relay, signal, value), DispatcherPriority.Background, token);
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            signal.Quality = "Bad";
+                            signal.ProbeStatus = ex.GetType().Name;
+                        }, DispatcherPriority.Background);
+                    }
+                }
+
+                await Dispatcher.InvokeAsync(() => PulseRelayActivity(relay), DispatcherPriority.Background, token);
+                await Task.Delay(BridgeRuntime.NormalizeMmsPollingIntervalMs(MmsPollingIntervalMs), token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            // Expected per-IED stop.
+        }
+        catch (Exception ex)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                relay.Status = "Failed";
+                relay.HeartbeatText = "Session interrupted";
+                relay.StatusBrush = RelayEndpointView.BrushForStatus("Failed");
+                relay.ActivityBrush = RelayEndpointView.BrushForStatus("Failed");
+                relay.IsSessionRunning = false;
+                relay.RefreshComputed();
+                AddExceptionLog("IED Session", ex, $"Polling interrupted for {relay.DisplayName}");
+            });
+        }
+    }
+
+    private void ApplyExplorerSessionValue(RelayEndpointView relay, SignalDefinition signal, object value)
+    {
+        ApplyReadValueToSignal(signal, value);
+        signal.ProbeStatus = "Readable";
+        signal.Timestamp = DateTime.Now;
+        foreach (var binding in relay.ModbusBindings.Where(b => string.Equals(b.IecReference, signal.ObjectReference, StringComparison.OrdinalIgnoreCase)))
+        {
+            binding.CurrentValue = signal.Value;
+            binding.Quality = signal.Quality;
+            binding.DeviceTimestamp = signal.DeviceTimestamp;
+            binding.LastUpdate = signal.Timestamp;
+            binding.AgeMs = 0;
+            binding.Status = "Explorer session live";
+        }
+        relay.LastMmsActivityUtc = DateTime.UtcNow;
+    }
+
+    private async Task StopExplorerSessionAsync(RelayEndpointView relay, string reason)
+    {
+        relay.IsSessionBusy = true;
+        relay.Status = "Stopping";
+        relay.HeartbeatText = "Closing Explorer session";
         relay.RefreshComputed();
 
-        RelayIpAddress = NormalizeRelayIp(relay.IpAddress);
-        MmsPort = relay.MmsPort;
-        if (RelayIpTextBox != null)
-            RelayIpTextBox.Text = RelayIpAddress;
-        AddLog("INFO", "Relay", $"Reconnecting IED individually: {relay.DisplayName} {relay.EndpointText}. Modbus server remains under the main Runtime Start/Stop control.");
-        ConnectDiscover_Click(sender, e);
+        if (_explorerSessions.Remove(relay.RelayId, out var handle))
+        {
+            handle.Cancellation.Cancel();
+            if (handle.PollTask != null)
+            {
+                try { await handle.PollTask; } catch { }
+            }
+            try { await handle.Client.DisposeAsync(); } catch { }
+            handle.Cancellation.Dispose();
+        }
+
+        relay.IsSessionRunning = false;
+        relay.IsSessionBusy = false;
+        relay.Status = "Stopped";
+        relay.HeartbeatText = reason;
+        relay.StatusBrush = RelayEndpointView.BrushForStatus("Stopped");
+        relay.ActivityBrush = RelayEndpointView.BrushForStatus("Stopped");
+        relay.RefreshComputed();
+        if (ReferenceEquals(relay, SelectedRelay))
+            IedConnectionStatus = "Stopped";
+        Raise(nameof(IecInsightText));
+        Raise(nameof(ActiveRelaySubtitle));
+        AddLog("INFO", "IED Session", $"Stopped independent Explorer session for {relay.DisplayName}. Gateway runtime was not changed.");
+    }
+
+    private async void PulseRelayActivity(RelayEndpointView relay)
+    {
+        relay.ActivityBrush = RelayEndpointView.BrushForStatus("Live");
+        await Task.Delay(220);
+        if (relay.IsSessionRunning)
+            relay.ActivityBrush = RelayEndpointView.BrushForStatus("Connected");
     }
 
     private async void DisconnectRelay_Click(object sender, RoutedEventArgs e)
@@ -2295,7 +2559,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         AddLog("INFO", "Relay", $"IED paused/disconnected: {relay.DisplayName} {relay.EndpointText}. Configuration remains available for reconnect/edit.");
     }
 
-    private void DeleteRelay_Click(object sender, RoutedEventArgs e)
+    private async void DeleteRelay_Click(object sender, RoutedEventArgs e)
     {
         var relay = GetRelayFromSender(sender);
         if (relay == null) return;
@@ -2306,6 +2570,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             NavigateToTab(1);
             return;
         }
+
+        if (relay.IsSessionRunning || _explorerSessions.ContainsKey(relay.RelayId))
+            await StopExplorerSessionAsync(relay, "Stopped before delete");
 
         var wasActive = relay.IsActive;
         var relayId = relay.RelayId;
@@ -3284,6 +3551,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     protected override async void OnClosed(EventArgs e)
     {
+        foreach (var relay in Relays.Where(r => r.IsSessionRunning || _explorerSessions.ContainsKey(r.RelayId)).ToList())
+            await StopExplorerSessionAsync(relay, "Application closing");
         if (_runtime != null) await _runtime.DisposeAsync();
         if (_iecClient != null) await _iecClient.DisposeAsync();
         base.OnClosed(e);

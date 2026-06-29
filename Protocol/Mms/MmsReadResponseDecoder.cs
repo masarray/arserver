@@ -298,10 +298,10 @@ public static class MmsReadResponseDecoder
                 var code = (bytes[0] >> 6) & 0x03;
                 value = code switch
                 {
-                    0 => "Intermediate",
-                    1 => "Open",
-                    2 => "Closed",
-                    3 => "Bad-state",
+                    0 => "Intermediate [00]",
+                    1 => "Open [01]",
+                    2 => "Close [10]",
+                    3 => "Invalid [11]",
                     _ => code.ToString(CultureInfo.InvariantCulture)
                 };
                 return true;

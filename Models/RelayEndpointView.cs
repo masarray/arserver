@@ -25,6 +25,8 @@ public class RelayEndpointView : ObservableObject
     private int _reportControlCount;
     private string _heartbeatText = "Idle";
     private bool _isActive;
+    private bool _isSessionRunning;
+    private bool _isSessionBusy;
     private MediaBrush _statusBrush = new SolidColorBrush(MediaColor.FromRgb(148, 163, 184));
     private MediaBrush _activityBrush = new SolidColorBrush(MediaColor.FromRgb(148, 163, 184));
 
@@ -65,6 +67,43 @@ public class RelayEndpointView : ObservableObject
     public string HeartbeatText { get => _heartbeatText; set => Set(ref _heartbeatText, value); }
     public bool IsActive { get => _isActive; set => Set(ref _isActive, value); }
     [JsonIgnore]
+    public bool IsSessionRunning
+    {
+        get => _isSessionRunning;
+        set
+        {
+            if (Set(ref _isSessionRunning, value))
+            {
+                Raise(nameof(SessionActionGlyph));
+                Raise(nameof(SessionActionToolTip));
+            }
+        }
+    }
+    [JsonIgnore]
+    public bool IsSessionBusy
+    {
+        get => _isSessionBusy;
+        set
+        {
+            if (Set(ref _isSessionBusy, value))
+            {
+                Raise(nameof(IsSessionActionEnabled));
+                Raise(nameof(SessionActionGlyph));
+                Raise(nameof(SessionActionToolTip));
+            }
+        }
+    }
+    [JsonIgnore]
+    public bool IsSessionActionEnabled => !IsSessionBusy;
+    [JsonIgnore]
+    public string SessionActionGlyph => IsSessionBusy ? "…" : IsSessionRunning ? "■" : "▶";
+    [JsonIgnore]
+    public string SessionActionToolTip => IsSessionBusy
+        ? "IED session transition in progress"
+        : IsSessionRunning
+            ? $"Stop Explorer session for {DisplayName}"
+            : $"Start Explorer session for {DisplayName}";
+    [JsonIgnore]
     public MediaBrush StatusBrush { get => _statusBrush; set => Set(ref _statusBrush, value); }
     [JsonIgnore]
     public MediaBrush ActivityBrush { get => _activityBrush; set => Set(ref _activityBrush, value); }
@@ -90,6 +129,9 @@ public class RelayEndpointView : ObservableObject
         Raise(nameof(ConnectionActionText));
         Raise(nameof(RcbSummaryText));
         Raise(nameof(SclIpSummaryText));
+        Raise(nameof(SessionActionGlyph));
+        Raise(nameof(SessionActionToolTip));
+        Raise(nameof(IsSessionActionEnabled));
     }
 
     public static MediaBrush BrushForStatus(string status)

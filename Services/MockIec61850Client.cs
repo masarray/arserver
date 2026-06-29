@@ -1,4 +1,6 @@
 using Ari61850Bridge.Models;
+using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace Ari61850Bridge.Services;
 
@@ -120,17 +122,15 @@ public sealed class MockIec61850Client : IIec61850Client
 
     public static string Format(object? value, string dataType, string unit)
     {
+        if (IsDbposDataType(dataType) && TryNormalizeDbpos(value, out var dbpos))
+            return FormatDbpos(dbpos);
+
         return value switch
         {
             null => "-",
             bool b => b ? "True" : "False",
-            int i when IsDbposDataType(dataType) && i == 0 => "Intermediate",
-            int i when IsDbposDataType(dataType) && i == 1 => "Open",
-            int i when IsDbposDataType(dataType) && i == 2 => "Closed",
-            int i when IsDbposDataType(dataType) && i == 3 => "Bad-state",
             int i when dataType == "Enum" && i == 1 => "Open",
             int i when dataType == "Enum" && i == 2 => "Closed",
-            string text when IsDbposDataType(dataType) => FormatDbposText(text),
             int i => i.ToString(),
             double d => string.IsNullOrWhiteSpace(unit) ? d.ToString("0.###") : $"{d:0.###} {unit}",
             float f => string.IsNullOrWhiteSpace(unit) ? f.ToString("0.###") : $"{f:0.###} {unit}",
@@ -142,17 +142,100 @@ public sealed class MockIec61850Client : IIec61850Client
         dataType.Equals("Dbpos", StringComparison.OrdinalIgnoreCase) ||
         dataType.Equals("DPC", StringComparison.OrdinalIgnoreCase);
 
-    private static string FormatDbposText(string text)
+    private static string FormatDbpos(int code) => code switch
     {
-        var compact = text.Trim().Replace(" ", "").Replace("_", "").Replace("-", "").ToLowerInvariant();
-        return compact switch
+        0 => "Intermediate [00]",
+        1 => "Open [01]",
+        2 => "Close [10]",
+        3 => "Invalid [11]",
+        _ => code.ToString(CultureInfo.InvariantCulture)
+    };
+
+    internal static bool TryNormalizeDbpos(object? value, out int code)
+    {
+        code = 0;
+        switch (value)
         {
-            "0" or "00" => "Intermediate",
-            "1" or "01" or "open" or "off" => "Open",
-            "2" or "10" or "closed" or "close" or "on" => "Closed",
-            "3" or "11" or "bad" => "Bad-state",
-            _ => text
+            case byte b when b <= 3: code = b; return true;
+            case sbyte b when b is >= 0 and <= 3: code = b; return true;
+            case short s when s is >= 0 and <= 3: code = s; return true;
+            case ushort s when s <= 3: code = s; return true;
+            case int i when i is >= 0 and <= 3: code = i; return true;
+            case uint i when i <= 3: code = (int)i; return true;
+            case long l when l is >= 0 and <= 3: code = (int)l; return true;
+            case ulong l when l <= 3: code = (int)l; return true;
+            case bool b: code = b ? 2 : 1; return true;
+            case string text: return TryParseDbposText(text, out code);
+            default: return false;
+        }
+    }
+
+    private static bool TryParseDbposText(string text, out int code)
+    {
+        code = 0;
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var bracketCode = Regex.Match(text, @"\[(00|01|10|11)\]", RegexOptions.CultureInvariant);
+        if (bracketCode.Success)
+            return TryParseDbposBits(bracketCode.Groups[1].Value, out code);
+
+        // MmsDataValueRenderer uses this shape for BIT STRING values. For Dbpos,
+        // exactly two bits are significant and occupy the high bits of the first byte.
+        var renderedBits = Regex.Match(
+            text,
+            @"bits\(\s*(?:0x)?([0-9a-f]{2})\s*,\s*unused\s*=\s*(\d+)\s*\)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (renderedBits.Success &&
+            byte.TryParse(renderedBits.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var raw) &&
+            int.TryParse(renderedBits.Groups[2].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var unused) &&
+            unused == 6)
+        {
+            code = (raw >> unused) & 0x03;
+            return true;
+        }
+
+        var compact = text.Trim().Replace(" ", "").Replace("_", "").Replace("-", "").ToLowerInvariant();
+        switch (compact)
+        {
+            case "0":
+            case "00":
+            case "intermediate":
+            case "intermediatestate":
+                code = 0; return true;
+            case "1":
+            case "01":
+            case "open":
+            case "off":
+                code = 1; return true;
+            case "2":
+            case "10":
+            case "closed":
+            case "close":
+            case "on":
+                code = 2; return true;
+            case "3":
+            case "11":
+            case "bad":
+            case "badstate":
+            case "invalid":
+                code = 3; return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryParseDbposBits(string bits, out int code)
+    {
+        code = bits switch
+        {
+            "00" => 0,
+            "01" => 1,
+            "10" => 2,
+            "11" => 3,
+            _ => -1
         };
+        return code >= 0;
     }
 
     private static object ParseValue(string display, string dataType)

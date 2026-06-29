@@ -403,7 +403,9 @@ public sealed class BridgeRuntime : IAsyncDisposable
             var old = binding.CurrentValue;
             var oldQuality = binding.Quality;
             var oldStatus = binding.Status;
-            var display = string.IsNullOrWhiteSpace(update.Value) ? "-" : update.Value.Trim();
+            var display = string.IsNullOrWhiteSpace(update.Value)
+                ? "-"
+                : FormatBindingDisplay(update.Value.Trim(), binding);
 
             if (LooksLikeMmsReferenceEcho(display, update.Reference, binding.IecReference))
             {
@@ -702,9 +704,9 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
                     var richValue = value as Iec61850ReadValue;
                     var rawValue = Iec61850ReadValue.Unwrap(value);
-                    var display = richValue?.Value is string || richValue?.Value == null && richValue != null
-                        ? richValue.ToString()
-                        : FormatBindingDisplay(rawValue, binding);
+                    var display = richValue == null
+                        ? FormatBindingDisplay(rawValue, binding)
+                        : FormatBindingDisplay(richValue.Value ?? richValue.ToString(), binding);
                     var changed = old != display;
 
                     binding.CurrentValue = display;
@@ -1129,18 +1131,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
     {
         if (IsPositionStatus(binding))
         {
-            var dbpos = NormalizeDbposForDisplay(value);
-            if (dbpos.HasValue)
-            {
-                return dbpos.Value switch
-                {
-                    0 => "Intermediate",
-                    1 => "Open",
-                    2 => "Closed",
-                    3 => "Bad-state",
-                    _ => dbpos.Value.ToString(CultureInfo.InvariantCulture)
-                };
-            }
+            return MockIec61850Client.Format(value, "Dbpos", binding.Unit);
         }
 
         return MockIec61850Client.Format(value, binding.IecDataType, binding.Unit);
@@ -1156,6 +1147,9 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
     private static int? NormalizeDbposForDisplay(object? value)
     {
+        if (MockIec61850Client.TryNormalizeDbpos(value, out var code))
+            return code;
+
         switch (value)
         {
             case null:
@@ -1178,6 +1172,9 @@ public sealed class BridgeRuntime : IAsyncDisposable
 
     private static bool TryParseDbposString(string? text, out int value)
     {
+        if (MockIec61850Client.TryNormalizeDbpos(text, out value))
+            return true;
+
         value = 0;
         if (string.IsNullOrWhiteSpace(text)) return false;
         var compact = text.Trim().Replace(" ", "").Replace("_", "").Replace("-", "").ToLowerInvariant();

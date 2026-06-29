@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -48,7 +49,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         get => _stepIndex;
         set
         {
-            var next = Math.Max(0, Math.Min(3, value));
+            var next = Math.Max(0, Math.Min(2, value));
             if (_stepIndex == next) return;
             _stepIndex = next;
             Raise(nameof(StepIndex));
@@ -63,32 +64,29 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
     }
 
     public Visibility Step1Visibility => StepIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility Step2Visibility => StepIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility StepReportVisibility => StepIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility Step3Visibility => StepIndex == 3 ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility Step2Visibility => Visibility.Collapsed;
+    public Visibility StepReportVisibility => StepIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility Step3Visibility => StepIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
 
     public string StepTitle => StepIndex switch
     {
         0 => "Step 1 — Select IEC 61850 SCADA Signals",
-        1 => "Step 2 — Build Modbus TCP Binding",
-        2 => "Step 3 — Auto Report Plan Review",
-        _ => "Step 4 — Add IED Configuration to Runtime"
+        1 => "Step 2 — Auto Report Plan Review",
+        _ => "Step 3 — Add IEC Signals to Explorer"
     };
 
     public string StepSubtitle => StepIndex switch
     {
         0 => "Select SCADA signals only. q/t, Health, Beh and engineering attributes stay out of selection and are shown as Quality/Timestamp columns.",
-        1 => "Review or edit the Modbus address map. Position uses Input Register, protection uses Discrete Input, measurement uses Holding Register Float32.",
-        2 => "No manual RCB/DataSet choice is required. Review the read-only auto transport plan per selected signal.",
-        _ => "Validate once more, then save. Explorer and Modbus Server will show only the saved runtime view."
+        1 => "No manual RCB/DataSet choice is required. Review the read-only auto transport plan per selected signal.",
+        _ => "Save the Explorer selection. Modbus routes are assigned later from the Modbus Server tab."
     };
 
     public string PrimaryActionText => StepIndex switch
     {
-        0 => "Save Selection → Binding",
-        1 => "Save Binding → Auto Plan",
-        2 => "Review Auto Plan → Finish",
-        _ => "Add to Runtime"
+        0 => "Review Auto Plan →",
+        1 => "Review Selection →",
+        _ => "Add to Explorer"
     };
 
     public NativeReportControlCandidate? SelectedReportControl
@@ -234,11 +232,16 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         ? $"Showing {SignalsView.Cast<object>().Count()} of {Signals.Count} MMS leaves/attributes"
         : $"Showing {SignalsView.Cast<object>().Count()} smart SCADA signals ({Signals.Count(s => s.IsRawAttribute || !s.CanPublishAsSignal)} raw attributes hidden)";
 
-    public IedConfigurationWizardWindow(ObservableCollection<SignalDefinition> signals, ObservableCollection<BindingItem> bindings, IIec61850Client? probeClient = null, NativeReportInventory? reportInventory = null, string selectedReportControlReference = "")
+    public IedConfigurationWizardWindow(ObservableCollection<SignalDefinition> signals, ObservableCollection<BindingItem> bindings, IIec61850Client? probeClient = null, NativeReportInventory? reportInventory = null, string selectedReportControlReference = "", bool isNewIed = false)
     {
         Signals = signals;
         Bindings = bindings;
         _probeClient = probeClient;
+        if (isNewIed)
+        {
+            foreach (var signal in signals)
+                signal.IsSelected = false;
+        }
         _originalSignalSelection = signals.ToDictionary(s => s, s => s.IsSelected);
         _originalBindings = bindings.Select(CloneBinding).ToList();
         SignalsView = CollectionViewSource.GetDefaultView(Signals);
@@ -266,11 +269,6 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
 
         DataContext = this;
         InitializeComponent();
-
-        if (!Signals.Any(s => s.IsSelected && s.CanPublishToRuntime))
-            SelectRecommendedSignals();
-        if (Bindings.Count == 0 && Signals.Any(s => s.IsSelected && s.CanPublishToRuntime))
-            RebuildBindingFromSelection();
 
         RefreshCounts();
         StepIndex = 0;
@@ -318,20 +316,8 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
     {
         if (targetStep >= 1 && SelectedSignalCount == 0)
         {
-            StatusMessage = "Select at least one IEC 61850 signal before moving to Modbus Binding.";
+            StatusMessage = "Select at least one IEC 61850 signal before reviewing the auto report plan.";
             return false;
-        }
-        if (targetStep >= 2)
-        {
-            if (Bindings.Count == 0) RebuildBindingFromSelection();
-            var errors = ValidateBindings();
-            if (errors.Count > 0)
-            {
-                ValidationState = "Warning";
-                StatusMessage = $"Fix binding before review: {errors[0]}";
-                return false;
-            }
-            ValidationState = "OK";
         }
         return true;
     }
@@ -350,32 +336,17 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
                 StatusMessage = "Select at least one IEC 61850 signal.";
                 return;
             }
-            RebuildBindingFromSelection();
-            StatusMessage = $"Selection saved. {SelectedSignalCount} signal(s) prepared for Modbus binding.";
+            ApplySelectedReportPlanToWorkspace();
+            StatusMessage = $"{SelectedSignalCount} Explorer signal(s) selected. Review the automatic transport plan.";
             StepIndex = 1;
             return;
         }
 
         if (StepIndex == 1)
         {
-            var errors = ValidateBindings();
-            if (errors.Count > 0)
-            {
-                ValidationState = "Warning";
-                StatusMessage = $"Fix binding before report plan: {errors[0]}";
-                return;
-            }
-            ValidationState = "OK";
-            StatusMessage = "Binding saved. Auto report plan prepared; no RCB/DataSet selection is required.";
-            StepIndex = 2;
-            return;
-        }
-
-        if (StepIndex == 2)
-        {
             ApplySelectedReportPlanToWorkspace();
             StatusMessage = BuildAutoReportPlanStatus();
-            StepIndex = 3;
+            StepIndex = 2;
             return;
         }
 
@@ -698,6 +669,26 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         }
     }
 
+    private void SignalsGrid_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        var source = e.OriginalSource as DependencyObject;
+        if (FindVisualParent<CheckBox>(source) != null || FindVisualParent<DataGridColumnHeader>(source) != null)
+            return;
+
+        var row = FindVisualParent<DataGridRow>(source);
+        if (row?.Item is not SignalDefinition signal || !signal.CanPublishAsSignal)
+            return;
+
+        signal.IsSelected = !signal.IsSelected;
+        row.IsSelected = true;
+        SelectedSignal = signal;
+        SignalsView.Refresh();
+        AutoPlanSignalsView.Refresh();
+        RefreshCounts();
+        StatusMessage = signal.IsSelected ? "Signal selected." : "Signal deselected.";
+        e.Handled = true;
+    }
+
 
     private void SignalsGrid_KeyDown(object sender, KeyEventArgs e)
     {
@@ -896,7 +887,6 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         finally
         {
             IsProbing = false;
-            PruneBindingsToRuntimeReadySelection();
             SignalsView.Refresh();
         }
     }
@@ -1091,22 +1081,8 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
 
     private void SaveAndClose()
     {
-        PruneBindingsToRuntimeReadySelection();
-
-        if (Bindings.Count == 0 && Signals.Any(s => s.IsSelected && s.CanPublishToRuntime))
-            RebuildBindingFromSelection();
-
-        var errors = ValidateBindings();
-        if (errors.Count > 0)
-        {
-            ValidationState = "Warning";
-            StatusMessage = $"Fix binding before save: {errors[0]}";
-            StepIndex = 1;
-            return;
-        }
-
         ValidationState = "OK";
-        StatusMessage = "IED configuration saved.";
+        StatusMessage = "IEC Explorer selection saved. Modbus assignment remains unchanged.";
         _saved = true;
         DialogResult = true;
         Close();
