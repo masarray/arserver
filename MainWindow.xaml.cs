@@ -1398,6 +1398,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (relay != null)
             {
                 SaveWorkspaceToRelay(relay, wizardSignals, wizardBindings);
+                SaveSignalSelectionMemory(relay.IedName, relay.Signals);
                 ApplyWizardReportPlanToRelay(relay, wizard);
                 SetActiveRelay(relay);
                 RebuildPublishedBindingsFromRelays();
@@ -1451,8 +1452,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             try
             {
-                var value = await _iecClient.ReadValueAsync(signal.ObjectReference, signal.FunctionalConstraint, signal.DataType, CancellationToken.None);
-                if (value == null)
+                var resolved = await IecSignalReadResolver.ReadAsync(_iecClient, signal, CancellationToken.None);
+                if (resolved == null)
                 {
                     signal.Value = "-";
                     signal.Quality = "Bad";
@@ -1466,7 +1467,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     continue;
                 }
 
-                ApplyReadValueToSignal(signal, value);
+                ApplyResolvedSignalReference(signal, resolved.EffectiveReference);
+                ApplyReadValueToSignal(signal, resolved.Value);
                 signal.ProbeStatus = "Readable";
                 signal.Timestamp = DateTime.Now;
                 UpdateBindingFromSignal(signal);
@@ -1917,14 +1919,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         NativeReportInventory? reportInventory = null)
     {
         var normalizedRuntimePort = runtimePort > 0 ? runtimePort : 102;
-        var isNewIed = !Relays.Any(r =>
+        var endpointExists = Relays.Any(r =>
             string.Equals(NormalizeRelayIp(r.IpAddress), NormalizeRelayIp(runtimeIpAddress), StringComparison.OrdinalIgnoreCase) &&
             r.MmsPort == normalizedRuntimePort);
-        var wizard = new IedConfigurationWizardWindow(draftSignals, draftBindings, _iecClient, reportInventory, selectedRcbReference, isNewIed: isNewIed)
+        var restoredSelectionCount = RestoreSignalSelectionMemory(
+            suggestedIedName,
+            runtimeIpAddress,
+            normalizedRuntimePort,
+            draftSignals,
+            out var selectionProfileFound);
+        var wizard = new IedConfigurationWizardWindow(
+            draftSignals,
+            draftBindings,
+            _iecClient,
+            reportInventory,
+            selectedRcbReference,
+            isNewIed: !endpointExists && !selectionProfileFound)
         {
             Owner = this
         };
 
+        if (selectionProfileFound)
+            AddLog("INFO", "Selection Memory", $"Restored {restoredSelectionCount} previously selected IEC signal(s) for IEDName '{suggestedIedName}'. Signals no longer present in the current model were ignored.");
         AddLog("INFO", "Wizard", $"Draft configuration wizard opened for {context}. Workspace IEC/Modbus remains unchanged until Add to Runtime is pressed.");
         TrackActiveWizard(wizard);
         if (wizard.ShowDialog() != true)
@@ -1967,6 +1983,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ApplyReportInventoryToRelay(relay, reportInventory);
 
         SaveWorkspaceToRelay(relay, wizard.Signals, wizard.Bindings);
+        SaveSignalSelectionMemory(suggestedIedName, relay.Signals, relay.IedName);
         ApplyWizardReportPlanToRelay(relay, wizard);
         if (!string.IsNullOrWhiteSpace(selectedRcbName) && !selectedRcbName.Equals("Polling", StringComparison.OrdinalIgnoreCase))
             relay.RcbName = selectedRcbName;
@@ -2438,9 +2455,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     token.ThrowIfCancellationRequested();
                     try
                     {
-                        var value = await handle.Client.ReadValueAsync(signal.ObjectReference, signal.FunctionalConstraint, signal.DataType, token).ConfigureAwait(false);
-                        if (value == null) continue;
-                        await Dispatcher.InvokeAsync(() => ApplyExplorerSessionValue(relay, signal, value), DispatcherPriority.Background, token);
+                        var resolved = await IecSignalReadResolver.ReadAsync(handle.Client, signal, token).ConfigureAwait(false);
+                        if (resolved == null) continue;
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            ApplyResolvedSignalReference(signal, resolved.EffectiveReference, relay);
+                            ApplyExplorerSessionValue(relay, signal, resolved.Value);
+                        }, DispatcherPriority.Background, token);
                     }
                     catch (OperationCanceledException) when (token.IsCancellationRequested)
                     {
@@ -2494,6 +2515,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             binding.Status = "Explorer session live";
         }
         relay.LastMmsActivityUtc = DateTime.UtcNow;
+    }
+
+    private void ApplyResolvedSignalReference(SignalDefinition signal, string effectiveReference, RelayEndpointView? ownerRelay = null)
+    {
+        var previousReference = signal.ObjectReference;
+        if (!IecSignalReadResolver.ApplyEffectiveReference(signal, effectiveReference))
+            return;
+
+        foreach (var binding in PublishedModbusBindings.Where(binding =>
+                     string.Equals(NormalizeSignalMemoryReference(binding.IecReference), NormalizeSignalMemoryReference(previousReference), StringComparison.OrdinalIgnoreCase)))
+            binding.IecReference = effectiveReference;
+
+        foreach (var relay in Relays)
+        {
+            foreach (var binding in relay.ModbusBindings.Where(binding =>
+                         string.Equals(NormalizeSignalMemoryReference(binding.IecReference), NormalizeSignalMemoryReference(previousReference), StringComparison.OrdinalIgnoreCase)))
+                binding.IecReference = effectiveReference;
+        }
+
+        ownerRelay?.RefreshComputed();
+        AddLog("INFO", "IEC61850", $"Readable measurement sibling selected automatically: {previousReference} -> {effectiveReference}.");
     }
 
     private async Task StopExplorerSessionAsync(RelayEndpointView relay, string reason)
@@ -2735,10 +2777,37 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private string? InferIedNameFromSignals()
     {
-        var firstRef = Signals.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s.ObjectReference))?.ObjectReference;
-        if (string.IsNullOrWhiteSpace(firstRef)) return null;
-        var slash = firstRef.IndexOf('/');
-        return slash > 0 ? firstRef[..slash] : null;
+        var existingRelayName = Relays
+            .FirstOrDefault(relay =>
+                relay.IsActive &&
+                string.Equals(NormalizeRelayIp(relay.IpAddress), NormalizeRelayIp(RelayIpAddress), StringComparison.OrdinalIgnoreCase))?
+            .IedName;
+        if (!string.IsNullOrWhiteSpace(existingRelayName))
+            return existingRelayName;
+
+        var logicalDevices = Signals
+            .Select(signal => signal.ObjectReference)
+            .Where(reference => !string.IsNullOrWhiteSpace(reference) && reference.Contains('/'))
+            .Select(reference => reference[..reference.IndexOf('/')])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (logicalDevices.Count == 0) return null;
+        if (logicalDevices.Count == 1) return logicalDevices[0];
+
+        var commonPrefix = logicalDevices[0];
+        foreach (var logicalDevice in logicalDevices.Skip(1))
+        {
+            var length = Math.Min(commonPrefix.Length, logicalDevice.Length);
+            var index = 0;
+            while (index < length && char.ToUpperInvariant(commonPrefix[index]) == char.ToUpperInvariant(logicalDevice[index]))
+                index++;
+            commonPrefix = commonPrefix[..index];
+            if (commonPrefix.Length == 0) break;
+        }
+
+        // MMS domains normally concatenate IEDName + LDevice.inst. With several logical
+        // devices, their stable common prefix is therefore the best online IEDName key.
+        return commonPrefix.Length >= 3 ? commonPrefix.TrimEnd('-', '.', '/') : logicalDevices[0];
     }
 
     private void UpdateActiveRelayHeartbeat(string text)
@@ -3040,6 +3109,83 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         relay.DataSetCount = Math.Max(relay.DataSets.Count, relay.Signals.Select(s => s.DataSetReference).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         relay.RefreshComputed();
     }
+
+    private int RestoreSignalSelectionMemory(
+        string iedName,
+        string runtimeIpAddress,
+        int runtimePort,
+        IEnumerable<SignalDefinition> signals,
+        out bool profileFound)
+    {
+        profileFound = false;
+        IReadOnlyCollection<string>? rememberedReferences = null;
+
+        try
+        {
+            rememberedReferences = UserPreferenceStore.LoadSignalSelectionProfile(iedName);
+        }
+        catch (Exception ex)
+        {
+            AddExceptionLog("Selection Memory", ex, $"Could not load saved signal selection for {iedName}");
+        }
+
+        if (rememberedReferences == null)
+        {
+            var existingRelay = Relays.FirstOrDefault(relay =>
+                string.Equals(relay.IedName, iedName, StringComparison.OrdinalIgnoreCase))
+                ?? Relays.FirstOrDefault(relay =>
+                    string.Equals(NormalizeRelayIp(relay.IpAddress), NormalizeRelayIp(runtimeIpAddress), StringComparison.OrdinalIgnoreCase) &&
+                    relay.MmsPort == (runtimePort > 0 ? runtimePort : 102));
+            if (existingRelay != null)
+            {
+                rememberedReferences = existingRelay.Signals
+                    .Where(signal => signal.IsSelected && signal.CanPublishAsSignal)
+                    .Select(signal => signal.ObjectReference)
+                    .ToList();
+            }
+        }
+
+        if (rememberedReferences == null)
+            return 0;
+
+        profileFound = true;
+        var selectedReferences = rememberedReferences
+            .Select(reference => IecSignalReadResolver.GetPreferredSelectionReference(NormalizeSignalMemoryReference(reference)))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var restored = 0;
+        foreach (var signal in signals)
+        {
+            var currentReference = NormalizeSignalMemoryReference(signal.ObjectReference);
+            var preferredReference = IecSignalReadResolver.GetPreferredSelectionReference(currentReference);
+            signal.IsSelected = signal.CanPublishAsSignal &&
+                                currentReference.Equals(preferredReference, StringComparison.OrdinalIgnoreCase) &&
+                                selectedReferences.Contains(preferredReference);
+            if (signal.IsSelected) restored++;
+        }
+        return restored;
+    }
+
+    private void SaveSignalSelectionMemory(string iedName, IEnumerable<SignalDefinition> signals, string aliasIedName = "")
+    {
+        var selectedReferences = signals
+            .Where(signal => signal.IsSelected && signal.CanPublishAsSignal)
+            .Select(signal => signal.ObjectReference)
+            .ToList();
+        try
+        {
+            UserPreferenceStore.SaveSignalSelectionProfile(iedName, selectedReferences);
+            if (!string.IsNullOrWhiteSpace(aliasIedName) && !string.Equals(iedName, aliasIedName, StringComparison.OrdinalIgnoreCase))
+                UserPreferenceStore.SaveSignalSelectionProfile(aliasIedName, selectedReferences);
+            AddLog("INFO", "Selection Memory", $"Autosaved {selectedReferences.Count} selected IEC signal(s) for IEDName '{iedName}'.");
+        }
+        catch (Exception ex)
+        {
+            AddExceptionLog("Selection Memory", ex, $"Could not autosave signal selection for {iedName}");
+        }
+    }
+
+    private static string NormalizeSignalMemoryReference(string reference)
+        => (reference ?? string.Empty).Trim().Replace('$', '.').Replace("..", ".");
 
     private void SyncLiveWorkspaceToRelay(RelayEndpointView relay)
     {

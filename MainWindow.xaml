@@ -164,18 +164,43 @@
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="Auto"/>
                                                         <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <Border Grid.Row="0" Grid.Column="0" Width="10" Height="10" CornerRadius="5" Background="{Binding ActivityBrush}" Margin="0,4,9,0" ToolTip="Single MMS state LED: blue = connected idle, green flash = MMS activity, red = failed"/>
-                                                    <StackPanel Grid.Row="0" Grid.Column="1">
+                                                    <Border Grid.Row="0" Grid.Column="0" Width="10" Height="10" CornerRadius="5" Background="{Binding ActivityBrush}" Margin="0,5,9,0"/>
+                                                    <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,8,0">
                                                         <TextBlock Text="{Binding DisplayName}" FontSize="12.7" FontWeight="SemiBold" Foreground="{StaticResource Ink}" TextTrimming="CharacterEllipsis"/>
                                                         <TextBlock Text="{Binding EndpointText}" FontSize="11.8" Foreground="{StaticResource Muted}" Margin="0,2,0,0"/>
                                                         <TextBlock Text="{Binding SummaryText}" FontSize="11.8" Foreground="{StaticResource Muted}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
                                                         <TextBlock Text="{Binding RcbSummaryText}" FontSize="11.4" Foreground="{StaticResource Muted}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
                                                      </StackPanel>
-                                                     <Button Grid.Row="0" Grid.Column="2" Content="{Binding SessionActionGlyph}" Width="34" Height="34" Padding="0" Margin="8,0,0,0"
-                                                             Style="{StaticResource MiniChipButton}" Click="ToggleRelayConnection_Click"
-                                                             IsEnabled="{Binding IsSessionActionEnabled}" ToolTip="{Binding SessionActionToolTip}" FontSize="13" FontWeight="SemiBold"/>
-                                                     <WrapPanel Grid.Row="1" Grid.Column="1" Margin="0,9,0,0">
+                                                     <Button Grid.Row="0" Grid.Column="2" MinWidth="70" Height="30" Padding="10,0"
+                                                             Click="ToggleRelayConnection_Click" IsEnabled="{Binding IsSessionActionEnabled}"
+                                                             HorizontalAlignment="Right" VerticalAlignment="Top" FontSize="11.5" FontWeight="SemiBold">
+                                                         <Button.Style>
+                                                             <Style TargetType="Button" BasedOn="{StaticResource MiniChipButton}">
+                                                                 <Setter Property="Background" Value="#EAF2FF"/>
+                                                                 <Setter Property="Foreground" Value="#1D4ED8"/>
+                                                                 <Setter Property="BorderBrush" Value="#C7DAFF"/>
+                                                                 <Style.Triggers>
+                                                                     <DataTrigger Binding="{Binding IsSessionRunning}" Value="True">
+                                                                         <Setter Property="Background" Value="#FFF1F2"/>
+                                                                         <Setter Property="Foreground" Value="#BE123C"/>
+                                                                         <Setter Property="BorderBrush" Value="#FECDD3"/>
+                                                                     </DataTrigger>
+                                                                     <DataTrigger Binding="{Binding IsSessionBusy}" Value="True">
+                                                                         <Setter Property="Background" Value="#F1F5F9"/>
+                                                                         <Setter Property="Foreground" Value="#64748B"/>
+                                                                         <Setter Property="BorderBrush" Value="#E2E8F0"/>
+                                                                     </DataTrigger>
+                                                                 </Style.Triggers>
+                                                             </Style>
+                                                         </Button.Style>
+                                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                             <TextBlock Text="{Binding SessionActionGlyph}" FontSize="10.5" VerticalAlignment="Center"/>
+                                                             <TextBlock Text="{Binding SessionActionLabel}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                                         </StackPanel>
+                                                     </Button>
+                                                     <WrapPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,9,0,0">
                                                         <Button Content="✎ Edit" Style="{StaticResource MiniChipButton}" Click="EditRelay_Click" Margin="0,0,6,6" IsEnabled="{Binding DataContext.IsProjectEditable, RelativeSource={RelativeSource AncestorType=Window}}"/>
                                                         <Button Content="🗑 Delete" Style="{StaticResource MiniChipButton}" Click="DeleteRelay_Click" Margin="0,0,0,6" IsEnabled="{Binding DataContext.IsProjectEditable, RelativeSource={RelativeSource AncestorType=Window}}"/>
                                                     </WrapPanel>

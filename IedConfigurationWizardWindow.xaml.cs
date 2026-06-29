@@ -848,8 +848,8 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
 
                 try
                 {
-                    var value = await _probeClient.ReadValueAsync(signal.ObjectReference, signal.FunctionalConstraint, signal.DataType, _probeCts.Token).ConfigureAwait(true);
-                    if (value == null)
+                    var resolved = await IecSignalReadResolver.ReadAsync(_probeClient, signal, _probeCts.Token).ConfigureAwait(true);
+                    if (resolved == null)
                     {
                         failed++;
                         signal.Value = "-";
@@ -860,10 +860,17 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
                         continue;
                     }
 
-                    ApplyReadValueToSignal(signal, value);
+                    var previousReference = signal.ObjectReference;
+                    if (IecSignalReadResolver.ApplyEffectiveReference(signal, resolved.EffectiveReference))
+                    {
+                        foreach (var binding in Bindings.Where(binding =>
+                                     ReferencesMatch(binding.IecReference, previousReference)))
+                            binding.IecReference = resolved.EffectiveReference;
+                    }
+                    ApplyReadValueToSignal(signal, resolved.Value);
                     signal.ProbeStatus = "Readable";
                     signal.Timestamp = DateTime.Now;
-                    if (value is not Iec61850ReadValue rich || !rich.HasQuality || !rich.HasDeviceTimestamp)
+                    if (resolved.Value is not Iec61850ReadValue rich || !rich.HasQuality || !rich.HasDeviceTimestamp)
                         await TryProbeCompanionQualityAndTimestampAsync(signal, _probeClient, _probeCts.Token).ConfigureAwait(true);
                     ok++;
                 }
@@ -960,6 +967,7 @@ public partial class IedConfigurationWizardWindow : Window, INotifyPropertyChang
         if (parent.EndsWith(".valWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
         else if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
         else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
+        else if (parent.EndsWith(".instCVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^15];
         else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];
         else if (parent.EndsWith(".mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
         else

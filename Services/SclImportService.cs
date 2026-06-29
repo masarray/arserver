@@ -59,6 +59,8 @@ public static class SclImportService
             {
                 var lnName = ComposeLogicalNodeName(ln);
                 var lnType = Attr(ln, "lnType");
+                var lnClass = Attr(ln, "lnClass", ln.Name.LocalName == "LN0" ? "LLN0" : string.Empty);
+                var engineeringUnits = ReadEngineeringUnits(ln, ns);
                 if (!string.IsNullOrWhiteSpace(lnType) && templates.LNodeTypes.TryGetValue(lnType, out var lNodeType))
                 {
                     foreach (var doDef in lNodeType.DataObjects)
@@ -66,23 +68,27 @@ public static class SclImportService
                         foreach (var leaf in ExpandDoLeaves(templates, doDef.TypeId, doDef.Name, string.Empty, null, 0))
                         {
                             var objectRef = $"{ldName}/{lnName}.{leaf.Path}";
+                            var dataType = NormalizeDataType(leaf.BasicType, leaf.CommonDataClass, leaf.Path);
+                            var category = CategorizeSignal(objectRef);
                             var signal = new SignalDefinition
                             {
                                 Name = BuildSignalName(lnName, leaf.Path),
                                 ObjectReference = objectRef,
                                 FunctionalConstraint = leaf.FunctionalConstraint,
-                                DataType = NormalizeDataType(leaf.BasicType),
-                                Category = CategorizeSignal(objectRef),
-                                Unit = GuessUnit(objectRef),
+                                DataType = dataType,
+                                Category = category,
+                                Unit = ResolveEngineeringUnit(leaf.Path, engineeringUnits, objectRef),
                                 Confidence = "SCL",
                                 Quality = "SCL imported",
                                 ReportCoverage = "Polling fallback",
                                 ReportCoverageReason = "Imported from SCL. DataSet coverage will be assigned from FCDA membership if available.",
-                                IsSelected = SignalDefinition.IsCoreScadaSignal(objectRef, SignalDefinition.DetectLogicalNodeClass(SignalDefinitionExtractLogicalNode(objectRef)), NormalizeDataType(leaf.BasicType), CategorizeSignal(objectRef))
+                                IsSelected = SignalDefinition.IsCoreScadaSignal(objectRef, SignalDefinition.DetectLogicalNodeClass(SignalDefinitionExtractLogicalNode(objectRef)), dataType, category)
                             };
                             result.Signals.Add(signal);
                         }
                     }
+
+                    EnsurePrimaryEquipmentPositionSignal(result.Signals, lNodeType, lnClass, ldName, lnName);
                 }
 
                 foreach (var dataSet in ln.Elements(ns + "DataSet"))
@@ -123,6 +129,16 @@ public static class SclImportService
                 }
             }
         }
+
+        result.Signals = new ObservableCollection<SignalDefinition>(result.Signals
+            .GroupBy(signal => NormalizeReference(signal.ObjectReference), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderByDescending(signal => signal.IsScadaCoreSignal)
+                .ThenByDescending(signal => signal.CanPublishAsSignal)
+                .First())
+            .OrderBy(signal => signal.SortPriority)
+            .ThenBy(signal => signal.LogicalNode, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(signal => signal.ObjectReference, StringComparer.OrdinalIgnoreCase));
 
         MarkReportCapableSignals(result);
         return result;
@@ -227,17 +243,17 @@ public static class SclImportService
                 continue;
             }
 
-            foreach (var leaf in ExpandDaLeaves(templates, child.TypeId, path, fc, child.BasicType, depth + 1))
+            foreach (var leaf in ExpandDaLeaves(templates, child.TypeId, path, fc, child.BasicType, doType.Cdc, depth + 1))
                 yield return leaf;
         }
     }
 
-    private static IEnumerable<SclLeaf> ExpandDaLeaves(SclTemplates templates, string typeId, string path, string fc, string basicType, int depth)
+    private static IEnumerable<SclLeaf> ExpandDaLeaves(SclTemplates templates, string typeId, string path, string fc, string basicType, string commonDataClass, int depth)
     {
         if (depth > 10) yield break;
         if (IsPrimitiveBasicType(basicType) || string.IsNullOrWhiteSpace(typeId) || !templates.DaTypes.TryGetValue(typeId, out var daType))
         {
-            yield return new SclLeaf { Path = path, FunctionalConstraint = fc, BasicType = basicType };
+            yield return new SclLeaf { Path = path, FunctionalConstraint = fc, BasicType = basicType, CommonDataClass = commonDataClass };
             yield break;
         }
 
@@ -245,9 +261,130 @@ public static class SclImportService
         {
             if (string.IsNullOrWhiteSpace(child.Name)) continue;
             var childPath = $"{path}.{child.Name}";
-            foreach (var leaf in ExpandDaLeaves(templates, child.TypeId, childPath, fc, child.BasicType, depth + 1))
+            foreach (var leaf in ExpandDaLeaves(templates, child.TypeId, childPath, fc, child.BasicType, commonDataClass, depth + 1))
                 yield return leaf;
         }
+    }
+
+    private static Dictionary<string, string> ReadEngineeringUnits(XElement logicalNode, XNamespace ns)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var doi in logicalNode.Elements(ns + "DOI"))
+        {
+            var name = Attr(doi, "name");
+            if (!string.IsNullOrWhiteSpace(name))
+                ReadEngineeringUnitsRecursive(doi, name, ns, result);
+        }
+        return result;
+    }
+
+    private static void ReadEngineeringUnitsRecursive(XElement instance, string ownerPath, XNamespace ns, IDictionary<string, string> result)
+    {
+        var units = instance.Elements(ns + "SDI")
+            .FirstOrDefault(child => string.Equals(Attr(child, "name"), "units", StringComparison.OrdinalIgnoreCase));
+        if (units != null)
+        {
+            var siUnit = ReadInstantiatedValue(units, ns, "SIUnit");
+            var multiplier = ReadInstantiatedValue(units, ns, "multiplier");
+            var composedUnit = ComposeEngineeringUnit(siUnit, multiplier);
+            if (!string.IsNullOrWhiteSpace(composedUnit))
+                result[ownerPath] = composedUnit;
+        }
+
+        foreach (var child in instance.Elements(ns + "SDI"))
+        {
+            var name = Attr(child, "name");
+            if (string.IsNullOrWhiteSpace(name) || name.Equals("units", StringComparison.OrdinalIgnoreCase))
+                continue;
+            ReadEngineeringUnitsRecursive(child, $"{ownerPath}.{name}", ns, result);
+        }
+    }
+
+    private static string ReadInstantiatedValue(XElement parent, XNamespace ns, string name)
+        => parent.Elements(ns + "DAI")
+            .FirstOrDefault(child => string.Equals(Attr(child, "name"), name, StringComparison.OrdinalIgnoreCase))?
+            .Element(ns + "Val")?.Value.Trim() ?? string.Empty;
+
+    private static string ComposeEngineeringUnit(string siUnit, string multiplier)
+    {
+        siUnit = (siUnit ?? string.Empty).Trim();
+        multiplier = (multiplier ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(siUnit)) return string.Empty;
+        if (multiplier is "none" or "None" or "NONE") multiplier = string.Empty;
+        return $"{multiplier}{siUnit}";
+    }
+
+    private static string ResolveEngineeringUnit(string leafPath, IReadOnlyDictionary<string, string> units, string objectReference)
+    {
+        if (leafPath.EndsWith(".ang.f", StringComparison.OrdinalIgnoreCase))
+            return "deg";
+
+        var owner = GetEngineeringUnitOwnerPath(leafPath);
+        if (!string.IsNullOrWhiteSpace(owner))
+        {
+            if (units.TryGetValue(owner, out var exact))
+                return exact;
+
+            var inherited = units
+                .Where(pair => owner.StartsWith(pair.Key + ".", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(pair => pair.Key.Length)
+                .Select(pair => pair.Value)
+                .FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(inherited))
+                return inherited;
+        }
+
+        return GuessUnit(objectReference);
+    }
+
+    private static string GetEngineeringUnitOwnerPath(string path)
+    {
+        var suffixes = new[]
+        {
+            ".instCVal.mag.f",
+            ".cVal.mag.f",
+            ".mag.f",
+            ".instMag.f",
+            ".f"
+        };
+        foreach (var suffix in suffixes)
+        {
+            if (path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                return path[..^suffix.Length];
+        }
+        return string.Empty;
+    }
+
+    private static void EnsurePrimaryEquipmentPositionSignal(
+        ICollection<SignalDefinition> signals,
+        LNodeTypeDef lNodeType,
+        string declaredLnClass,
+        string logicalDevice,
+        string logicalNode)
+    {
+        var lnClass = string.IsNullOrWhiteSpace(declaredLnClass) ? lNodeType.LnClass : declaredLnClass;
+        if (lnClass is not ("XCBR" or "CSWI" or "XSWI"))
+            return;
+        if (!lNodeType.DataObjects.Any(dataObject => dataObject.Name.Equals("Pos", StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        var objectReference = $"{logicalDevice}/{logicalNode}.Pos.stVal";
+        if (signals.Any(signal => NormalizeReference(signal.ObjectReference).Equals(NormalizeReference(objectReference), StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        signals.Add(new SignalDefinition
+        {
+            Name = BuildSignalName(logicalNode, "Pos.stVal"),
+            ObjectReference = objectReference,
+            FunctionalConstraint = "ST",
+            DataType = "Dbpos",
+            Category = "Position",
+            Confidence = "SCL primary-equipment fallback",
+            Quality = "SCL imported",
+            ReportCoverage = "Polling fallback",
+            ReportCoverageReason = "The SCL logical node declares Pos; the standard DPC status leaf was restored because its nested template was incomplete.",
+            IsSelected = true
+        });
     }
 
     private static bool IsPrimitiveBasicType(string bType)
@@ -339,7 +476,7 @@ public static class SclImportService
     {
         var r = objectReference.ToLowerInvariant();
         if (r.Contains(".pos.stval")) return "Position";
-        if (r.Contains(".op.general") || r.Contains(".str.general") || r.Contains(".tr.general")) return "Protection";
+        if (r.Contains(".op.general") || r.Contains(".opex.general") || r.Contains(".str.general") || r.Contains(".tr.general")) return "Protection";
         if (r.Contains(".setmag") || r.EndsWith(".setval")) return "Setting";
         if (r.Contains(".cval.mag.f") || r.Contains(".instcval.mag.f") || r.EndsWith(".mag.f") || r.EndsWith(".ang.f")) return "Measurement";
         if (r.Contains(".valwtr.posval") || r.EndsWith(".stval") || r.EndsWith(".general")) return "Status";
@@ -356,9 +493,10 @@ public static class SclImportService
         return string.Empty;
     }
 
-    private static string NormalizeDataType(string basicType)
+    private static string NormalizeDataType(string basicType, string commonDataClass = "", string path = "")
     {
         var t = (basicType ?? string.Empty).Trim();
+        if (commonDataClass.Equals("DPC", StringComparison.OrdinalIgnoreCase) && path.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) return "Dbpos";
         if (t.Equals("Dbpos", StringComparison.OrdinalIgnoreCase)) return "Dbpos";
         if (t.Equals("BOOLEAN", StringComparison.OrdinalIgnoreCase)) return "Boolean";
         if (t.Contains("FLOAT", StringComparison.OrdinalIgnoreCase)) return "Float32";
@@ -435,5 +573,6 @@ public static class SclImportService
         public string Path { get; set; } = string.Empty;
         public string FunctionalConstraint { get; set; } = string.Empty;
         public string BasicType { get; set; } = string.Empty;
+        public string CommonDataClass { get; set; } = string.Empty;
     }
 }

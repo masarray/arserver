@@ -210,15 +210,16 @@ public class SignalDefinition : ObservableObject
         if ((cls is "CSWI" or "XCBR" or "XSWI") && r.EndsWith(".pos.stval"))
             return true;
 
-        // Measurements: expose cVal magnitude by default for HMI/SCADA.
-        // instCVal is intentionally kept out of the default shortlist to avoid duplicate
-        // Phase A/B/C current-voltage tags when both cVal and instCVal exist in a relay model.
+        // Normal measurement groups use cVal. Siemens OperationalValues groups expose
+        // the directly readable instantaneous leaf as instCVal, while cVal can reject
+        // direct MMS reads even though the parent DO is visible in an engineering tool.
         if (cls is "MMXU" or "MMXN")
             return IsDefaultScadaMeasurementMagnitude(r);
 
         // Protection HMI points: operate/trip/start general flags only.
         if (cls == "PTOC" && (r.EndsWith(".op.general") || r.EndsWith(".str.general"))) return true;
         if (cls == "PTRC" && r.EndsWith(".tr.general")) return true;
+        if (cls == "RBRF" && (r.EndsWith(".opex.general") || r.EndsWith(".op.general"))) return true;
         if ((cls is "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF") && r.EndsWith(".op.general")) return true;
 
         if (cls is "ATCC" or "AVC" or "AVCO")
@@ -397,8 +398,16 @@ public class SignalDefinition : ObservableObject
         var r = NormalizeRef(normalizedReference);
         if (IsStatisticsOrHarmonicNoise(r)) return false;
         if (!r.EndsWith(".mag.f")) return false;
-        if (!r.Contains(".cval.mag.f")) return false;
-        if (r.Contains(".instcval.")) return false;
+
+        var operationalValues = r.Contains("operationalvalues") || r.Contains("operational_values");
+        if (operationalValues)
+        {
+            if (!r.Contains(".instcval.mag.f")) return false;
+        }
+        else
+        {
+            if (!r.Contains(".cval.mag.f") || r.Contains(".instcval.")) return false;
+        }
 
         return r.Contains(".a.phsa.") ||
                r.Contains(".a.phsb.") ||

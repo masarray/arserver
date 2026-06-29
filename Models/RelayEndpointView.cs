@@ -75,6 +75,7 @@ public class RelayEndpointView : ObservableObject
             if (Set(ref _isSessionRunning, value))
             {
                 Raise(nameof(SessionActionGlyph));
+                Raise(nameof(SessionActionLabel));
                 Raise(nameof(SessionActionToolTip));
             }
         }
@@ -89,6 +90,7 @@ public class RelayEndpointView : ObservableObject
             {
                 Raise(nameof(IsSessionActionEnabled));
                 Raise(nameof(SessionActionGlyph));
+                Raise(nameof(SessionActionLabel));
                 Raise(nameof(SessionActionToolTip));
             }
         }
@@ -97,6 +99,8 @@ public class RelayEndpointView : ObservableObject
     public bool IsSessionActionEnabled => !IsSessionBusy;
     [JsonIgnore]
     public string SessionActionGlyph => IsSessionBusy ? "…" : IsSessionRunning ? "■" : "▶";
+    [JsonIgnore]
+    public string SessionActionLabel => IsSessionBusy ? "Wait" : IsSessionRunning ? "Stop" : "Start";
     [JsonIgnore]
     public string SessionActionToolTip => IsSessionBusy
         ? "IED session transition in progress"
@@ -130,6 +134,7 @@ public class RelayEndpointView : ObservableObject
         Raise(nameof(RcbSummaryText));
         Raise(nameof(SclIpSummaryText));
         Raise(nameof(SessionActionGlyph));
+        Raise(nameof(SessionActionLabel));
         Raise(nameof(SessionActionToolTip));
         Raise(nameof(IsSessionActionEnabled));
     }

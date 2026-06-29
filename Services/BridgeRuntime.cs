@@ -643,7 +643,22 @@ public sealed class BridgeRuntime : IAsyncDisposable
                     var old = binding.CurrentValue;
                     var oldQuality = binding.Quality;
                     var oldStatus = binding.Status;
-                    var value = await client.ReadValueAsync(binding.IecReference, binding.FunctionalConstraint, binding.IecDataType, token);
+                    var readSignal = new SignalDefinition
+                    {
+                        ObjectReference = binding.IecReference,
+                        FunctionalConstraint = binding.FunctionalConstraint,
+                        DataType = binding.IecDataType,
+                        Unit = binding.Unit
+                    };
+                    var resolvedRead = await IecSignalReadResolver.ReadAsync(client, readSignal, token);
+                    var value = resolvedRead?.Value;
+                    if (resolvedRead != null &&
+                        !string.Equals(binding.IecReference.Replace('$', '.'), resolvedRead.EffectiveReference.Replace('$', '.'), StringComparison.OrdinalIgnoreCase))
+                    {
+                        var previousReference = binding.IecReference;
+                        binding.IecReference = resolvedRead.EffectiveReference;
+                        Log("INFO", "IEC61850", $"{binding.IedName}: readable OperationalValues reference corrected: {previousReference} -> {binding.IecReference}.");
+                    }
 
                     if (value == null)
                     {
@@ -930,6 +945,7 @@ public sealed class BridgeRuntime : IAsyncDisposable
         if (parent.EndsWith(".valWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
         else if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
         else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
+        else if (parent.EndsWith(".instCVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^15];
         else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];
         else if (parent.EndsWith(".mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
         else

@@ -116,7 +116,17 @@ public sealed class NativeIec61850Client : IIec61850Client
                 signals,
                 cancellationToken).ConfigureAwait(false);
 
+            var primaryEquipmentProbeCount = await AddPrimaryEquipmentDomainProbeSignalsAsync(
+                signals,
+                snapshot,
+                cancellationToken).ConfigureAwait(false);
+
+            var operationalValueReplacementCount = await ResolveOperationalValueReferencesAsync(
+                signals,
+                cancellationToken).ConfigureAwait(false);
+
             signals = FinalizeDiscoveredSignals(signals).ToList();
+            var engineeringUnitCount = await EnrichEngineeringUnitsAsync(signals, cancellationToken).ConfigureAwait(false);
             NativeReportDiscoveryMapper.ApplyReportHints(signals, LastReportInventory);
 
             var discoveredLogicalNodes = signals
@@ -126,7 +136,7 @@ public sealed class NativeIec61850Client : IIec61850Client
                 .Count();
             var primaryVariableCount = primarySnapshot.DomainVariables.Values.Sum(v => v.Count);
             var supplementalVariableCount = supplementalSnapshot.DomainVariables.Values.Sum(v => v.Count);
-            LastDiscoverySummary = $"{discovery.Summary} {_liveModel.Summary} LN={discoveredLogicalNodes}, SCADA candidates={signals.Count}, MMS names={primaryVariableCount}, supplemental names={supplementalVariableCount}, adaptive sibling probes={adaptiveSiblingProbeCount}. Engine=ARIEC61850 live model + full GetNameList directory + VAA type-tree + adaptive LN sibling proof-probe.";
+            LastDiscoverySummary = $"{discovery.Summary} {_liveModel.Summary} LN={discoveredLogicalNodes}, SCADA candidates={signals.Count}, MMS names={primaryVariableCount}, supplemental names={supplementalVariableCount}, adaptive sibling probes={adaptiveSiblingProbeCount}, primary-equipment probes={primaryEquipmentProbeCount}, operational references corrected={operationalValueReplacementCount}, engineering units resolved={engineeringUnitCount}. Engine=ARIEC61850 live model + full GetNameList directory + VAA type-tree + adaptive LN sibling proof-probe + IEC unit metadata.";
             LastErrorMessage = LastDiscoverySummary;
             return signals;
         }
@@ -870,12 +880,330 @@ public sealed class NativeIec61850Client : IIec61850Client
         return addedSignals;
     }
 
+    private async Task<int> AddPrimaryEquipmentDomainProbeSignalsAsync(
+        ICollection<SignalDefinition> signals,
+        NativeMmsDiscoverySnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        if (!_session.IsMmsInitiated)
+            return 0;
+
+        var domains = snapshot.DomainVariables.Keys
+            .Concat(snapshot.DomainVariableLists.Keys)
+            .Concat(signals.Select(s => ExtractDomain(s.ObjectReference)))
+            .Where(d => !string.IsNullOrWhiteSpace(d))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var added = 0;
+
+        foreach (var domain in domains)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var match = System.Text.RegularExpressions.Regex.Match(
+                domain,
+                @"CB(?<instance>\d+)$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            if (!match.Success)
+                continue;
+
+            var instance = match.Groups["instance"].Value.TrimStart('0');
+            if (string.IsNullOrWhiteSpace(instance)) instance = "1";
+            var logicalNode = $"XCBR{instance}";
+            var reference = $"{domain}/{logicalNode}.Pos.stVal";
+            if (!signals.Any(s => ReferencesEqual(s.ObjectReference, reference)))
+            {
+                try
+                {
+                    var value = await ReadValueAsync(reference, "ST", "Dbpos", cancellationToken).ConfigureAwait(false);
+                    if (value != null)
+                    {
+                        var signal = CreateArIecSignal(
+                            reference,
+                            "ST",
+                            "DoublePointStatus",
+                            "XCBR",
+                            "Pos",
+                            "DPC",
+                            DateTime.Now,
+                            "Primary-equipment logical-device proof-probe");
+                        ApplyDiscoveryReadValue(signal, value);
+                        signals.Add(signal);
+                        added++;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // A CB-like logical-device name is only a hint. Keep it out of the list unless Pos.stVal is proven readable.
+                }
+            }
+
+            var breakerFailureReference = $"{domain}/RBRF1.OpEx.general";
+            if (!signals.Any(s => ReferencesEqual(s.ObjectReference, breakerFailureReference)))
+            {
+                try
+                {
+                    var value = await ReadValueAsync(breakerFailureReference, "ST", "Boolean", cancellationToken).ConfigureAwait(false);
+                    if (value != null)
+                    {
+                        var signal = CreateArIecSignal(
+                            breakerFailureReference,
+                            "ST",
+                            "Protection",
+                            "RBRF",
+                            "OpEx",
+                            "ACT",
+                            DateTime.Now,
+                            "Breaker-failure proof-probe");
+                        ApplyDiscoveryReadValue(signal, value);
+                        signals.Add(signal);
+                        added++;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // RBRF is optional. It is exposed only when the standard OpEx leaf is proven readable.
+                }
+            }
+        }
+
+        return added;
+    }
+
+    private async Task<int> ResolveOperationalValueReferencesAsync(
+        IEnumerable<SignalDefinition> signals,
+        CancellationToken cancellationToken)
+    {
+        var candidates = signals
+            .Where(signal => signal.IsScadaCoreSignal &&
+                             signal.ObjectReference.Contains("OperationalValues/", StringComparison.OrdinalIgnoreCase) &&
+                             signal.ObjectReference.Contains("/PPRE_MMXU", StringComparison.OrdinalIgnoreCase) &&
+                             signal.ObjectReference.EndsWith(".mag.f", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var corrected = 0;
+
+        foreach (var signal in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var requestedReference = signal.ObjectReference;
+                var resolved = await IecSignalReadResolver.ReadAsync(this, signal, cancellationToken).ConfigureAwait(false);
+                if (resolved == null)
+                    continue;
+
+                if (IecSignalReadResolver.ApplyEffectiveReference(signal, resolved.EffectiveReference))
+                    corrected++;
+                ApplyDiscoveryReadValue(signal, resolved.Value);
+                signal.ReportCoverageReason = $"Online proof-read resolved the readable OperationalValues leaf from {requestedReference}.";
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Leave the original discovery evidence available in Advanced raw; it will not be auto-selected after a failed proof-read.
+                signal.IsSelected = false;
+                signal.ProbeStatus = "Not readable";
+            }
+        }
+
+        return corrected;
+    }
+
+    private async Task<int> EnrichEngineeringUnitsAsync(IReadOnlyCollection<SignalDefinition> signals, CancellationToken cancellationToken)
+    {
+        if (!_session.IsMmsInitiated)
+            return 0;
+
+        var groups = signals
+            .Where(s => s.DataType.Equals("Float32", StringComparison.OrdinalIgnoreCase))
+            .Select(s => new { Signal = s, Owner = GetEngineeringUnitOwner(s.ObjectReference) })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Owner))
+            .GroupBy(x => x.Owner, StringComparer.OrdinalIgnoreCase)
+            .Take(160)
+            .ToList();
+        var resolved = 0;
+
+        foreach (var group in groups)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var siUnitValue = await ReadValueAsync($"{group.Key}.units.SIUnit", "CF", "Enum", cancellationToken).ConfigureAwait(false);
+                var multiplierValue = await ReadValueAsync($"{group.Key}.units.multiplier", "CF", "Enum", cancellationToken).ConfigureAwait(false);
+
+                var fallbackBaseUnit = group.Select(x => x.Signal.Unit).FirstOrDefault(u => !string.IsNullOrWhiteSpace(u)) ?? string.Empty;
+                if (!TryResolveSiUnit(siUnitValue, fallbackBaseUnit, out var baseUnit))
+                    continue;
+
+                var prefix = TryResolveUnitMultiplier(multiplierValue, out var resolvedPrefix)
+                    ? resolvedPrefix
+                    : string.Empty;
+                var unit = prefix + baseUnit;
+                if (string.IsNullOrWhiteSpace(unit))
+                    continue;
+
+                foreach (var item in group)
+                {
+                    var previousUnit = item.Signal.Unit;
+                    item.Signal.Unit = unit;
+                    item.Signal.Value = ReplaceFormattedUnit(item.Signal.Value, previousUnit, unit);
+                }
+                resolved++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Unit metadata is optional on vendor models. Keep the conservative inferred unit if CF read is rejected.
+            }
+        }
+
+        return resolved;
+    }
+
+    private static string ReplaceFormattedUnit(string value, string previousUnit, string resolvedUnit)
+    {
+        var text = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text) || text is "-" or "Pending read" or "Read failed")
+            return value ?? string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(previousUnit))
+        {
+            var suffix = $" {previousUnit}";
+            if (text.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                return $"{text[..^suffix.Length]} {resolvedUnit}";
+        }
+
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out _)
+            ? $"{text} {resolvedUnit}"
+            : value ?? string.Empty;
+    }
+
+    private static string GetEngineeringUnitOwner(string reference)
+    {
+        var text = (reference ?? string.Empty).Trim().Replace('$', '.');
+        foreach (var suffix in new[] { ".instCVal.mag.f", ".cVal.mag.f", ".mag.f" })
+        {
+            if (text.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                return text[..^suffix.Length];
+        }
+        return string.Empty;
+    }
+
+    private static void ApplyDiscoveryReadValue(SignalDefinition signal, object value)
+    {
+        if (value is Iec61850ReadValue rich)
+        {
+            signal.Value = MockIec61850Client.Format(rich.Value ?? rich.ToString(), signal.DataType, signal.Unit);
+            signal.Quality = rich.HasQuality ? rich.Quality : "Good";
+            signal.DeviceTimestamp = rich.HasDeviceTimestamp ? rich.DeviceTimestamp : "-";
+        }
+        else
+        {
+            signal.Value = MockIec61850Client.Format(value, signal.DataType, signal.Unit);
+            signal.Quality = "Good";
+        }
+        signal.ProbeStatus = "Readable";
+        signal.Timestamp = DateTime.Now;
+    }
+
+    private static bool TryResolveSiUnit(object? value, string fallback, out string unit)
+    {
+        unit = string.Empty;
+        var raw = Iec61850ReadValue.Unwrap(value);
+        var text = Convert.ToString(raw, CultureInfo.InvariantCulture)?.Trim() ?? string.Empty;
+        if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ordinal))
+        {
+            unit = ordinal switch
+            {
+                5 => "A",
+                9 => "deg",
+                23 => "°C",
+                29 => "V",
+                30 => "Ω",
+                33 => "Hz",
+                38 => "W",
+                55 => "VA",
+                57 => "var",
+                _ => string.Empty
+            };
+        }
+        else
+        {
+            var normalized = text.Replace(" ", string.Empty).ToLowerInvariant();
+            unit = normalized switch
+            {
+                "a" or "amp" or "ampere" => "A",
+                "v" or "volt" => "V",
+                "hz" or "hertz" => "Hz",
+                "w" or "watt" => "W",
+                "va" => "VA",
+                "var" => "var",
+                "deg" or "degree" => "deg",
+                "°c" or "celsius" => "°C",
+                "ohm" or "ω" => "Ω",
+                _ => string.Empty
+            };
+        }
+
+        if (string.IsNullOrWhiteSpace(unit))
+            unit = fallback;
+        return !string.IsNullOrWhiteSpace(unit);
+    }
+
+    private static bool TryResolveUnitMultiplier(object? value, out string prefix)
+    {
+        prefix = string.Empty;
+        if (value == null)
+            return false;
+
+        var raw = Iec61850ReadValue.Unwrap(value);
+        var text = Convert.ToString(raw, CultureInfo.InvariantCulture)?.Trim() ?? string.Empty;
+        if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var exponent))
+        {
+            prefix = exponent switch
+            {
+                -12 => "p",
+                -9 => "n",
+                -6 => "µ",
+                -3 => "m",
+                -2 => "c",
+                -1 => "d",
+                0 => string.Empty,
+                1 => "da",
+                2 => "h",
+                3 => "k",
+                6 => "M",
+                9 => "G",
+                12 => "T",
+                _ => string.Empty
+            };
+            return exponent is -12 or -9 or -6 or -3 or -2 or -1 or 0 or 1 or 2 or 3 or 6 or 9 or 12;
+        }
+
+        var normalized = text.Replace(" ", string.Empty).ToLowerInvariant();
+        prefix = normalized switch
+        {
+            "" or "none" or "null" => string.Empty,
+            "p" or "pico" => "p",
+            "n" or "nano" => "n",
+            "u" or "µ" or "micro" => "µ",
+            "m" or "milli" => "m",
+            "c" or "centi" => "c",
+            "d" or "deci" => "d",
+            "da" or "deca" => "da",
+            "h" or "hecto" => "h",
+            "k" or "kilo" => "k",
+            "mega" => "M",
+            "g" or "giga" => "G",
+            "t" or "tera" => "T",
+            _ => string.Empty
+        };
+        return normalized is "" or "none" or "null" or "p" or "pico" or "n" or "nano" or "u" or "µ" or "micro" or "m" or "milli" or "c" or "centi" or "d" or "deci" or "da" or "deca" or "h" or "hecto" or "k" or "kilo" or "mega" or "g" or "giga" or "t" or "tera";
+    }
+
     private static bool ShouldAdaptiveProbeLogicalNodeClass(string logicalNodeClass)
     {
         var cls = (logicalNodeClass ?? string.Empty).Trim().ToUpperInvariant();
         return cls is "MMXU" or "MMXN" or "MSQI" or "GGIO" or
                "CSWI" or "XCBR" or "XSWI" or
-               "PTOC" or "PTRC" or "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF";
+               "PTOC" or "PTRC" or "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF" or "RBRF";
     }
 
     private async Task<bool> ProbeLogicalNodeInstanceExistsAsync(
@@ -912,8 +1240,11 @@ public sealed class NativeIec61850Client : IIec61850Client
         if (cls is "MMXU" or "MMXN" or "MSQI")
         {
             yield return new("PhV.phsA.cVal.mag.f", "MX", "Float32");
+            yield return new("PhV.phsA.instCVal.mag.f", "MX", "Float32");
             yield return new("A.phsA.cVal.mag.f", "MX", "Float32");
+            yield return new("A.phsA.instCVal.mag.f", "MX", "Float32");
             yield return new("PPV.phsAB.cVal.mag.f", "MX", "Float32");
+            yield return new("PPV.phsAB.instCVal.mag.f", "MX", "Float32");
             yield break;
         }
 
@@ -936,6 +1267,12 @@ public sealed class NativeIec61850Client : IIec61850Client
             yield break;
         }
 
+        if (cls == "RBRF")
+        {
+            yield return new("OpEx.general", "ST", "Boolean");
+            yield break;
+        }
+
         if (cls.StartsWith("P", StringComparison.OrdinalIgnoreCase))
         {
             yield return new("Op.general", "ST", "Boolean");
@@ -953,7 +1290,7 @@ public sealed class NativeIec61850Client : IIec61850Client
         var classes = new[]
         {
             "MMXU", "MMXN", "MSQI", "GGIO", "CSWI", "XCBR", "XSWI",
-            "PTOC", "PTRC", "PDIF", "PDIS", "PIOC", "PTOV", "PTUV", "PTEF", "PDEF"
+            "PTOC", "PTRC", "PDIF", "PDIS", "PIOC", "PTOV", "PTUV", "PTEF", "PDEF", "RBRF"
         };
 
         foreach (var cls in classes.OrderByDescending(c => c.Length))
@@ -1247,6 +1584,10 @@ public sealed class NativeIec61850Client : IIec61850Client
 
         foreach (var hint in hints.Values.OrderBy(h => h.Domain, StringComparer.OrdinalIgnoreCase).ThenBy(h => h.LogicalNode, StringComparer.OrdinalIgnoreCase))
         {
+            var logicalNodeSignals = signals
+                .Where(s => ExtractDomain(s.ObjectReference).Equals(hint.Domain, StringComparison.OrdinalIgnoreCase) &&
+                            s.LogicalNode.Equals(hint.LogicalNode, StringComparison.OrdinalIgnoreCase))
+                .ToList();
             var hasCoreSignalForLn = signals.Any(s =>
                 ExtractDomain(s.ObjectReference).Equals(hint.Domain, StringComparison.OrdinalIgnoreCase) &&
                 s.LogicalNode.Equals(hint.LogicalNode, StringComparison.OrdinalIgnoreCase) &&
@@ -1257,6 +1598,11 @@ public sealed class NativeIec61850Client : IIec61850Client
 
             foreach (var point in BuildArIecLogicalNodeFallbackPoints(hint.LogicalNodeClass))
             {
+                if (hint.LogicalNodeClass is "MMXU" or "MMXN" &&
+                    logicalNodeSignals.Count > 0 &&
+                    !logicalNodeSignals.Any(signal => HasDataObjectPath(signal.ObjectReference, point.DataObject)))
+                    continue;
+
                 var reference = $"{hint.Domain}/{hint.LogicalNode}.{point.Path}";
                 if (signals.Any(s => ReferencesEqual(s.ObjectReference, reference)))
                     continue;
@@ -1278,8 +1624,20 @@ public sealed class NativeIec61850Client : IIec61850Client
     {
         var cls = (logicalNodeClass ?? string.Empty).ToUpperInvariant();
         return cls is "GGIO" or "MMXU" or "MMXN" or "CSWI" or "XCBR" or "XSWI" or
-               "PTOC" or "PTRC" or "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF" or
+               "PTOC" or "PTRC" or "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF" or "RBRF" or
                "ATCC" or "AVC" or "AVCO" or "YPTR";
+    }
+
+    private static bool HasDataObjectPath(string reference, string dataObject)
+    {
+        var text = (reference ?? string.Empty).Replace('$', '.');
+        var slash = text.IndexOf('/');
+        if (slash < 0) return false;
+        var firstDot = text.IndexOf('.', slash + 1);
+        if (firstDot < 0 || firstDot == text.Length - 1) return false;
+        var secondDot = text.IndexOf('.', firstDot + 1);
+        var discoveredDataObject = secondDot < 0 ? text[(firstDot + 1)..] : text[(firstDot + 1)..secondDot];
+        return discoveredDataObject.Equals(dataObject, StringComparison.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<LogicalNodeHint> ExtractLogicalNodeHintsFromText(string text, string defaultDomain, string source)
@@ -1288,7 +1646,7 @@ public sealed class NativeIec61850Client : IIec61850Client
             yield break;
 
         var normalized = text.Trim().Replace('$', '.').Replace('\\', '/');
-        var pattern = @"(?:(?<domain>[A-Za-z0-9_.-]+)/)?(?<ln>[A-Za-z0-9_]*(?:LLN0|LPHD\d*|GGIO\d+|MMXU\d+|MMXN\d+|CSWI\d+|XCBR\d+|XSWI\d+|PTOC\d+|PTRC\d+|PDIF\d+|PDIS\d+|PIOC\d+|PTOV\d+|PTUV\d+|PTEF\d+|PDEF\d+|ATCC\d+|AVCO\d+|AVC\d+|YPTR\d+))(?:[.$/]|$)";
+        var pattern = @"(?:(?<domain>[A-Za-z0-9_.-]+)/)?(?<ln>[A-Za-z0-9_]*(?:LLN0|LPHD\d*|GGIO\d+|MMXU\d+|MMXN\d+|CSWI\d+|XCBR\d+|XSWI\d+|PTOC\d+|PTRC\d+|PDIF\d+|PDIS\d+|PIOC\d+|PTOV\d+|PTUV\d+|PTEF\d+|PDEF\d+|RBRF\d+|ATCC\d+|AVCO\d+|AVC\d+|YPTR\d+))(?:[.$/]|$)";
         foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(normalized, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
         {
             var ln = match.Groups["ln"].Value;
@@ -1489,7 +1847,7 @@ public sealed class NativeIec61850Client : IIec61850Client
         DateTime now)
     {
         var lnClass = (logicalNode.LnClass ?? string.Empty).ToUpperInvariant();
-        if (lnClass is not ("MMXU" or "MMXN" or "GGIO" or "CSWI" or "XCBR" or "XSWI" or "PTOC" or "PTRC" or "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF"))
+        if (lnClass is not ("MMXU" or "MMXN" or "GGIO" or "CSWI" or "XCBR" or "XSWI" or "PTOC" or "PTRC" or "PDIF" or "PDIS" or "PIOC" or "PTOV" or "PTUV" or "PTEF" or "PDEF" or "RBRF"))
             return;
 
         var lnReference = ResolveArIecLogicalNodeReference(logicalDevice, logicalNode, logicalDeviceDomainHint);
@@ -1498,6 +1856,11 @@ public sealed class NativeIec61850Client : IIec61850Client
 
         foreach (var point in BuildArIecLogicalNodeFallbackPoints(lnClass))
         {
+            if (lnClass is "MMXU" or "MMXN" &&
+                logicalNode.DataObjects.Count > 0 &&
+                !logicalNode.DataObjects.Any(dataObject => dataObject.Name.Equals(point.DataObject, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
             var reference = $"{lnReference}.{point.Path}";
             if (signals.Any(s => ReferencesEqual(s.ObjectReference, reference)))
                 continue;
@@ -1521,14 +1884,23 @@ public sealed class NativeIec61850Client : IIec61850Client
         if (lnClass is "MMXU" or "MMXN")
         {
             yield return new("PhV", "PhV.phsA.cVal.mag.f", "MX", "Measurement");
+            yield return new("PhV", "PhV.phsA.instCVal.mag.f", "MX", "Measurement");
             yield return new("PhV", "PhV.phsB.cVal.mag.f", "MX", "Measurement");
+            yield return new("PhV", "PhV.phsB.instCVal.mag.f", "MX", "Measurement");
             yield return new("PhV", "PhV.phsC.cVal.mag.f", "MX", "Measurement");
+            yield return new("PhV", "PhV.phsC.instCVal.mag.f", "MX", "Measurement");
             yield return new("A", "A.phsA.cVal.mag.f", "MX", "Measurement");
+            yield return new("A", "A.phsA.instCVal.mag.f", "MX", "Measurement");
             yield return new("A", "A.phsB.cVal.mag.f", "MX", "Measurement");
+            yield return new("A", "A.phsB.instCVal.mag.f", "MX", "Measurement");
             yield return new("A", "A.phsC.cVal.mag.f", "MX", "Measurement");
+            yield return new("A", "A.phsC.instCVal.mag.f", "MX", "Measurement");
             yield return new("PPV", "PPV.phsAB.cVal.mag.f", "MX", "Measurement");
+            yield return new("PPV", "PPV.phsAB.instCVal.mag.f", "MX", "Measurement");
             yield return new("PPV", "PPV.phsBC.cVal.mag.f", "MX", "Measurement");
+            yield return new("PPV", "PPV.phsBC.instCVal.mag.f", "MX", "Measurement");
             yield return new("PPV", "PPV.phsCA.cVal.mag.f", "MX", "Measurement");
+            yield return new("PPV", "PPV.phsCA.instCVal.mag.f", "MX", "Measurement");
             yield return new("Hz", "Hz.mag.f", "MX", "Measurement");
             yield break;
         }
@@ -1551,6 +1923,12 @@ public sealed class NativeIec61850Client : IIec61850Client
         if (lnClass == "PTRC")
         {
             yield return new("Tr", "Tr.general", "ST", "Protection");
+            yield break;
+        }
+
+        if (lnClass == "RBRF")
+        {
+            yield return new("OpEx", "OpEx.general", "ST", "Protection");
             yield break;
         }
 
@@ -1914,6 +2292,7 @@ public sealed class NativeIec61850Client : IIec61850Client
         if (parent.EndsWith(".valWTr.posVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^14];
         else if (parent.EndsWith(".stVal", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
         else if (parent.EndsWith(".general", StringComparison.OrdinalIgnoreCase)) parent = parent[..^8];
+        else if (parent.EndsWith(".instCVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^15];
         else if (parent.EndsWith(".cVal.mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^11];
         else if (parent.EndsWith(".mag.f", StringComparison.OrdinalIgnoreCase)) parent = parent[..^6];
         else

@@ -90,6 +90,65 @@ public static class UserPreferenceStore
         await File.WriteAllTextAsync(PreferencesPath, json);
     }
 
+    public static IReadOnlyCollection<string>? LoadSignalSelectionProfile(string iedName)
+    {
+        var key = NormalizeIedName(iedName);
+        if (string.IsNullOrWhiteSpace(key)) return null;
+
+        var prefs = LoadPreferences();
+        var profile = prefs.SignalSelectionProfiles.FirstOrDefault(item =>
+            string.Equals(NormalizeIedName(item.IedName), key, StringComparison.OrdinalIgnoreCase));
+        if (profile == null) return null;
+
+        return profile.SelectedObjectReferences
+            .Where(reference => !string.IsNullOrWhiteSpace(reference))
+            .Select(NormalizeObjectReference)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public static void SaveSignalSelectionProfile(string iedName, IEnumerable<string> selectedObjectReferences)
+    {
+        var key = NormalizeIedName(iedName);
+        if (string.IsNullOrWhiteSpace(key)) return;
+
+        Directory.CreateDirectory(DefaultFolder);
+        var prefs = LoadPreferences();
+        var profile = prefs.SignalSelectionProfiles.FirstOrDefault(item =>
+            string.Equals(NormalizeIedName(item.IedName), key, StringComparison.OrdinalIgnoreCase));
+        if (profile == null)
+        {
+            profile = new SignalSelectionProfile { IedName = iedName.Trim() };
+            prefs.SignalSelectionProfiles.Add(profile);
+        }
+
+        profile.IedName = iedName.Trim();
+        profile.SelectedObjectReferences = selectedObjectReferences
+            .Where(reference => !string.IsNullOrWhiteSpace(reference))
+            .Select(NormalizeObjectReference)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(reference => reference, StringComparer.OrdinalIgnoreCase)
+            .Take(12000)
+            .ToList();
+        profile.LastSavedUtc = DateTime.UtcNow;
+
+        prefs.SignalSelectionProfiles = prefs.SignalSelectionProfiles
+            .Where(item => !string.IsNullOrWhiteSpace(item.IedName))
+            .GroupBy(item => NormalizeIedName(item.IedName), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(item => item.LastSavedUtc).First())
+            .OrderByDescending(item => item.LastSavedUtc)
+            .Take(50)
+            .ToList();
+
+        var json = JsonSerializer.Serialize(prefs, Options);
+        File.WriteAllText(PreferencesPath, json);
+    }
+
+    private static string NormalizeIedName(string value) => (value ?? string.Empty).Trim();
+
+    private static string NormalizeObjectReference(string value)
+        => (value ?? string.Empty).Trim().Replace('$', '.').Replace("..", ".");
+
     private static UserPreferences LoadPreferences()
     {
         try
@@ -108,6 +167,14 @@ public static class UserPreferenceStore
     {
         public List<string> RecentRelayIps { get; set; } = new(); // legacy compatibility only
         public List<SuccessfulRelayEndpoint> SuccessfulRelays { get; set; } = new();
+        public List<SignalSelectionProfile> SignalSelectionProfiles { get; set; } = new();
+    }
+
+    private sealed class SignalSelectionProfile
+    {
+        public string IedName { get; set; } = "";
+        public List<string> SelectedObjectReferences { get; set; } = new();
+        public DateTime LastSavedUtc { get; set; } = DateTime.UtcNow;
     }
 
     private sealed class SuccessfulRelayEndpoint
