@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version without leading v, for example 1.0.1-public-beta'
+        description: 'Release version, with or without leading v, for example 1.0.2 or v1.0.2'
         required: true
-        default: '1.0.2-public-beta'
+        default: '1.0.2'
       publish_release:
         description: 'Create or update GitHub Release and upload assets'
         required: true
@@ -68,22 +68,26 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ github.event_name }}" -eq "push") {
-            $version = "${{ github.ref_name }}" -replace '^v', ''
+            $rawVersion = "${{ github.ref_name }}"
             $publishRelease = "true"
             $preRelease = "false"
             $draft = "false"
             $releaseNotesFile = "docs/RELEASE_NOTES_v1.0.2.md"
           }
           else {
-            $version = "${{ inputs.version }}"
+            $rawVersion = "${{ inputs.version }}"
             $publishRelease = "${{ inputs.publish_release }}".ToLowerInvariant()
             $preRelease = "${{ inputs.prerelease }}".ToLowerInvariant()
             $draft = "${{ inputs.draft }}".ToLowerInvariant()
             $releaseNotesFile = "${{ inputs.release_notes_file }}"
           }
 
+          $version = $rawVersion.Trim() -replace '^[vV]', ''
           if ([string]::IsNullOrWhiteSpace($version)) {
-            throw "Version cannot be empty."
+            throw "Version cannot be empty. Use a value such as 1.0.2 or v1.0.2."
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?$') {
+            throw "Invalid version '$rawVersion'. Use SemVer such as 1.0.2, v1.0.2, or 1.0.2-public-beta."
           }
 
           "version=$version" >> $env:GITHUB_OUTPUT

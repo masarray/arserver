@@ -1,6 +1,6 @@
 # Release Notes
 
-## ARServer v1.0.2-public-beta
+## ARServer v1.0.2
 
 - Smart IEC 61850 discovery now applies AVR-aware data object mapping instead of relying on broad heuristic leaf names.
 - AVR tap changer status uses the BSC `valWTr.posVal` structure, with legacy `TapChg.stVal` references normalized for compatibility.

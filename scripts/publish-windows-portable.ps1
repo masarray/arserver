@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
-    [string]$Version = "1.0.2-public-beta",
+    [string]$Version = "1.0.2",
 
     [Parameter(Mandatory = $false)]
     [ValidateSet("Release", "Debug")]
@@ -24,22 +24,59 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $projectPath = Join-Path $repoRoot "ARServer.csproj"
 $appName = "ARServer"
 $exeName = "ArServer.exe"
-$artifactRoot = Join-Path $repoRoot "artifacts"
-$publishRoot = Join-Path $artifactRoot "publish"
-$packageRoot = Join-Path $artifactRoot "package"
-$releaseRoot = Join-Path $artifactRoot "release"
-$publishDir = Join-Path $publishRoot "$appName-$Version-$Runtime"
-$packageDir = Join-Path $packageRoot "$appName-v$Version-$Runtime-portable"
-$zipPath = Join-Path $releaseRoot "$appName-v$Version-$Runtime-portable.zip"
-$shaPath = Join-Path $releaseRoot "SHA256SUMS.txt"
 
 function Write-Step([string]$Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
+}
+
+function Invoke-DotNetChecked {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    & dotnet @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
+    }
+}
+
+function Normalize-ReleaseVersion {
+    param([Parameter(Mandatory = $true)][string]$RawVersion)
+
+    $normalized = $RawVersion.Trim() -replace '^[vV]', ''
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        throw "Version cannot be empty. Use a SemVer value such as 1.0.2 or v1.0.2."
+    }
+
+    # MSBuild/NuGet Version must be SemVer-like and must not contain a leading 'v'.
+    # Examples accepted: 1.0.2, 1.0.2-public-beta, 1.0.2+build.5
+    if ($normalized -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?$') {
+        throw "Invalid version '$RawVersion'. Use SemVer without a leading v for build metadata, for example 1.0.2 or 1.0.2-public-beta."
+    }
+
+    return $normalized
+}
+
+function Convert-ToWindowsFileVersion {
+    param([Parameter(Mandatory = $true)][string]$SemanticVersion)
+
+    $match = [regex]::Match($SemanticVersion, '^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?')
+    if (-not $match.Success) {
+        return "1.0.0.0"
+    }
+
+    $major = $match.Groups[1].Value
+    $minor = $match.Groups[2].Value
+    $patch = $match.Groups[3].Value
+    $revision = if ($match.Groups[4].Success) { $match.Groups[4].Value } else { "0" }
+    return "$major.$minor.$patch.$revision"
 }
 
 if (-not (Test-Path $projectPath)) {
@@ -50,34 +87,52 @@ if ($SingleFile -and -not $SelfContained) {
     throw "Single-file Windows portable publishing requires SelfContained=true."
 }
 
+$buildVersion = Normalize-ReleaseVersion -RawVersion $Version
+$releaseTag = "v$buildVersion"
+$fileVersion = Convert-ToWindowsFileVersion -SemanticVersion $buildVersion
+
+$artifactRoot = Join-Path $repoRoot "artifacts"
+$publishRoot = Join-Path $artifactRoot "publish"
+$packageRoot = Join-Path $artifactRoot "package"
+$releaseRoot = Join-Path $artifactRoot "release"
+$publishDir = Join-Path $publishRoot "$appName-$buildVersion-$Runtime"
+$packageDir = Join-Path $packageRoot "$appName-$releaseTag-$Runtime-portable"
+$zipPath = Join-Path $releaseRoot "$appName-$releaseTag-$Runtime-portable.zip"
+$shaPath = Join-Path $releaseRoot "SHA256SUMS.txt"
+
 New-Item -ItemType Directory -Force -Path $artifactRoot, $publishRoot, $packageRoot, $releaseRoot | Out-Null
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $publishDir, $packageDir, $zipPath, $shaPath
 
 if (-not $SkipBuild) {
     Write-Step "Restoring project"
-    dotnet restore $projectPath
+    Invoke-DotNetChecked -Arguments @("restore", $projectPath)
 
-    Write-Step "Publishing $appName $Version for $Runtime"
+    Write-Step "Publishing $appName $releaseTag for $Runtime"
     $selfContainedText = $SelfContained.ToString().ToLowerInvariant()
     $singleFileText = $SingleFile.ToString().ToLowerInvariant()
     $compressSingleFileText = $CompressSingleFile.ToString().ToLowerInvariant()
 
-    dotnet publish $projectPath `
-        -c $Configuration `
-        -r $Runtime `
-        --self-contained $selfContainedText `
-        -p:Version=$Version `
-        -p:AssemblyVersion=1.0.0.0 `
-        -p:FileVersion=1.0.0.0 `
-        -p:PublishSingleFile=$singleFileText `
-        -p:SelfContained=$selfContainedText `
-        -p:IncludeNativeLibrariesForSelfExtract=true `
-        -p:EnableCompressionInSingleFile=$compressSingleFileText `
-        -p:PublishTrimmed=false `
-        -p:PublishReadyToRun=false `
-        -p:DebugType=None `
-        -p:DebugSymbols=false `
-        -o $publishDir
+    $publishArgs = @(
+        "publish", $projectPath,
+        "-c", $Configuration,
+        "-r", $Runtime,
+        "--self-contained", $selfContainedText,
+        "-p:Version=$buildVersion",
+        "-p:PackageVersion=$buildVersion",
+        "-p:InformationalVersion=$releaseTag",
+        "-p:AssemblyVersion=$fileVersion",
+        "-p:FileVersion=$fileVersion",
+        "-p:PublishSingleFile=$singleFileText",
+        "-p:SelfContained=$selfContainedText",
+        "-p:IncludeNativeLibrariesForSelfExtract=true",
+        "-p:EnableCompressionInSingleFile=$compressSingleFileText",
+        "-p:PublishTrimmed=false",
+        "-p:PublishReadyToRun=false",
+        "-p:DebugType=None",
+        "-p:DebugSymbols=false",
+        "-o", $publishDir
+    )
+    Invoke-DotNetChecked -Arguments $publishArgs
 }
 
 $publishedExe = Join-Path $publishDir $exeName
@@ -97,7 +152,7 @@ else {
 
 $quickStartPath = Join-Path $packageDir "README_QUICK_START.txt"
 @"
-ARServer v$Version - Windows portable package
+ARServer $releaseTag - Windows portable package
 
 ARServer is a local Windows desktop gateway for IEC 61850 MMS to Modbus TCP and MQTT workflows.
 
