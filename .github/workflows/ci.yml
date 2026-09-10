@@ -46,14 +46,42 @@ jobs:
       - name: Build
         run: dotnet build ARServer.sln --configuration Release --no-restore
 
-      - name: Run tests when test projects exist
+      - name: Run repository tests when test projects exist
         shell: pwsh
         run: |
-          $testProjects = Get-ChildItem -Recurse -Filter *.csproj | Where-Object { $_.FullName -match '(?i)(test|tests)' }
+          $workspace = (Resolve-Path $env:GITHUB_WORKSPACE).Path
+          $excludedRoots = @(
+            (Join-Path $workspace '.deps'),
+            (Join-Path $workspace 'bin'),
+            (Join-Path $workspace 'obj')
+          )
+
+          $testProjects = Get-ChildItem -Path $workspace -Recurse -Filter *.csproj -File |
+            Where-Object {
+              $fullName = $_.FullName
+              $isExcluded = $false
+              foreach ($root in $excludedRoots) {
+                if ($fullName.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+                  $isExcluded = $true
+                  break
+                }
+              }
+
+              (-not $isExcluded) -and (
+                $_.BaseName -match '(?i)(^|[._-])(test|tests)([._-]|$)' -or
+                $_.DirectoryName -match '(?i)(^|[\\/])(test|tests)([\\/]|$)'
+              )
+            }
+
           if (-not $testProjects) {
-            Write-Host "No test projects found. Skipping dotnet test."
+            Write-Host "No ARServer-owned test projects found. Dependency tests are validated in their owning repository."
             return
           }
+
           foreach ($project in $testProjects) {
-            dotnet test $project.FullName --configuration Release --no-build --verbosity normal
+            Write-Host "Testing $($project.FullName)"
+            dotnet test $project.FullName --configuration Release --verbosity normal
+            if ($LASTEXITCODE -ne 0) {
+              throw "Test project failed: $($project.FullName)"
+            }
           }
